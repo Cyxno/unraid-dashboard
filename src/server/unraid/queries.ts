@@ -11,8 +11,8 @@ export const SERVER_IDENTITY_QUERY = /* GraphQL */ `
       username
     }
     vars {
+      name
       version
-      regTitle
     }
     services {
       name

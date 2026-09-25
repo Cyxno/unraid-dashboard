@@ -31,7 +31,7 @@ export function mapIdentity(payload: any): SystemIdentity {
     ? payload.services.find((service: any) => service?.name === "api")
     : null;
   return {
-    serverName: payload?.owner?.username ?? "Unraid server",
+    serverName: payload?.vars?.name ?? payload?.owner?.username ?? "Unraid server",
     osVersion: payload?.vars?.version ?? null,
     uptimeSeconds: parseUptimeSeconds(apiService?.uptime?.timestamp),
   };
