@@ -42,7 +42,7 @@ describe("mapTemperature", () => {
     const temperature = mapTemperature({
       metrics: {
         temperature: {
-          summary: { hottest: { value: 69 }, warningCount: 1, criticalCount: 0 },
+          summary: { hottest: { current: { value: 69 } }, warningCount: 1, criticalCount: 0 },
           sensors: [
             { type: "CPU_PACKAGE", current: { value: 66 }, warning: 70, critical: 85 },
             { type: "CPU_PACKAGE", current: { value: 68 }, warning: 70, critical: 85 },
