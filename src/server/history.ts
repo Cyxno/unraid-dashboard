@@ -1,9 +1,10 @@
 import type { HistoryWindow, ResourceSample } from "@/lib/api-types";
 
 /**
- * In-memory rolling metrics history, tracked by the dashboard server
- * process while it runs. Intentionally not persisted: history resets when
- * the container restarts, and this is stated in the UI and README.
+ * In-memory rolling metrics history. Since v0.3 this is only the
+ * fallback for the Overview chart while Prometheus is unavailable
+ * (Prometheus range queries are the source of historical truth);
+ * the buffer still resets when the container restarts.
  */
 
 const MIN_SAMPLE_INTERVAL_MS = 5_000;
@@ -13,6 +14,9 @@ const WINDOW_MS: Record<HistoryWindow, number> = {
   "5m": 5 * 60_000,
   "15m": 15 * 60_000,
   "1h": 60 * 60_000,
+  "6h": 6 * 60 * 60_000,
+  "24h": 24 * 60 * 60_000,
+  "7d": 7 * 24 * 60 * 60_000,
 };
 
 /** Never render more points than this — charts stay cheap. */

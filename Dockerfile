@@ -11,8 +11,22 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# Build-time telemetry off only; UNRAID_* secrets are runtime-only.
+# Build-time telemetry off only; UNRAID_*/PROMETHEUS_* secrets are runtime-only.
 ENV NEXT_TELEMETRY_DISABLED=1
+# Build provenance (overridable); baked into the image and exposed via /api/version.
+ARG APP_VERSION=0.3.0
+ARG GIT_SHA=dev
+ARG BUILD_TIME
+LABEL org.opencontainers.image.title=unraid-dashboard \
+      org.opencontainers.image.description=Self-hosted Unraid server dashboard (Unraid GraphQL + Prometheus) \
+      org.opencontainers.image.vendor=Cyxno \
+      org.opencontainers.image.source=https://github.com/Cyxno/unraid-dashboard \
+      org.opencontainers.image.licenses=MIT \
+      org.opencontainers.image.version=${APP_VERSION} \
+      org.opencontainers.image.revision=${GIT_SHA}
+ENV APP_VERSION=${APP_VERSION} \
+    GIT_SHA=${GIT_SHA} \
+    BUILD_TIME=${BUILD_TIME}
 RUN npm run build
 
 # ---------- runtime ----------

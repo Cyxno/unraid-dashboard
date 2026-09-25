@@ -1,0 +1,196 @@
+import {
+  CONTAINER_CPU_QUERY,
+  CONTAINER_MEMORY_LIMIT_QUERY,
+  CONTAINER_MEMORY_PERCENT_QUERY,
+  CONTAINER_MEMORY_USED_QUERY,
+  HOST_MEM_TOTAL_CACHE_KEY,
+  MEMORY_TOTAL_QUERY,
+} from "./queries";
+import { PromClient, withCache } from "./client";
+import {
+  CONTAINER_HIGH_CPU_PERCENT,
+  CONTAINER_HIGH_MEMORY_BYTES,
+  CONTAINER_HIGH_MEMORY_PERCENT_OF_LIMIT,
+  MEMORY_LIMIT_HOST_TOLERANCE_BYTES,
+} from "@/server/thresholds";
+import type {
+  ContainerMetrics,
+  HistoryPoint,
+  TopConsumers,
+} from "@/lib/api-types";
+
+/**
+ * Per-container runtime metrics from the `docker_stats_*` textfile gauges
+ * (refreshed every 15s by docker-stats-textfile → node-exporter). These
+ * are name-keyed and join 1:1 with Unraid's container names.
+ *
+ * cAdvisor also runs here but exposes only cgroup-id labels (no
+ * name/image), so it is deliberately not used for these metrics.
+ */
+
+/** Escapes a container name for an exact-match PromQL string literal. */
+export function promqlString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function byName(
+  samples: Array<{ metric: Record<string, string>; v: number | null }>,
+): Map<string, number | null> {
+  const map = new Map<string, number | null>();
+  for (const sample of samples) {
+    const name = sample.metric.name;
+    if (typeof name === "string" && name.length > 0) {
+      map.set(name, sample.v);
+    }
+  }
+  return map;
+}
+
+/** Host total RAM — used to detect "no limit" containers. Cached 60s. */
+export async function getHostMemoryTotal(
+  client: PromClient,
+): Promise<number | null> {
+  return withCache(HOST_MEM_TOTAL_CACHE_KEY, 60_000, async () => {
+    const samples = await client.instant(MEMORY_TOTAL_QUERY);
+    return samples[0]?.v ?? null;
+  });
+}
+
+/**
+ * Container metric rows for all containers. Missing metrics (e.g. the
+ * textfile collector has not seen a container) yield nulls — never zeros.
+ */
+export async function getContainerMetrics(
+  client: PromClient,
+): Promise<Map<string, ContainerMetrics>> {
+  return withCache("containers:instant", 3_000, async () => {
+    const [cpu, memUsed, memLimit, memPercent, hostTotal] = await Promise.all([
+      client.instant(CONTAINER_CPU_QUERY),
+      client.instant(CONTAINER_MEMORY_USED_QUERY),
+      client.instant(CONTAINER_MEMORY_LIMIT_QUERY),
+      client.instant(CONTAINER_MEMORY_PERCENT_QUERY),
+      getHostMemoryTotal(client),
+    ]);
+
+    const cpuMap = byName(cpu);
+    const usedMap = byName(memUsed);
+    const limitMap = byName(memLimit);
+    const percentMap = byName(memPercent);
+
+    const names = new Set<string>([
+      ...cpuMap.keys(),
+      ...usedMap.keys(),
+      ...limitMap.keys(),
+      ...percentMap.keys(),
+    ]);
+
+    const result = new Map<string, ContainerMetrics>();
+    for (const name of names) {
+      const limit = limitMap.get(name) ?? null;
+      const hasLimit =
+        limit !== null &&
+        hostTotal !== null &&
+        Math.abs(limit - hostTotal) > MEMORY_LIMIT_HOST_TOLERANCE_BYTES;
+      result.set(name, {
+        cpuPercent: cpuMap.get(name) ?? null,
+        memoryUsedBytes: usedMap.get(name) ?? null,
+        memoryLimitBytes: limit,
+        memoryPercentOfLimit:
+          hasLimit && limit !== null && limit > 0
+            ? ((usedMap.get(name) ?? 0) / limit) * 100
+            : null,
+        hasMemoryLimit: hasLimit,
+        memoryPercentOfHost: percentMap.get(name) ?? null,
+      });
+    }
+    return result;
+  });
+}
+
+/**
+ * Top consumers (running containers only — docker stats only reports
+ * running containers, so stopped ones are naturally absent).
+ */
+export async function getTopConsumers(
+  client: PromClient,
+  limit = 5,
+): Promise<TopConsumers> {
+  return withCache(`containers:top:${limit}`, 5_000, async () => {
+    const [cpu, used] = await Promise.all([
+      client.instant(CONTAINER_CPU_QUERY),
+      client.instant(CONTAINER_MEMORY_USED_QUERY),
+    ]);
+    const top = (
+      samples: Array<{ metric: Record<string, string>; v: number | null }>,
+      key: "percent" | "bytes",
+    ) =>
+      samples
+        .filter((sample) => sample.v !== null)
+        .sort((a, b) => (b.v ?? 0) - (a.v ?? 0))
+        .slice(0, limit)
+        .map((sample) => ({
+          name: sample.metric.name ?? "?",
+          percent: key === "percent" ? sample.v : null,
+          bytes: key === "bytes" ? sample.v : null,
+        }));
+    return {
+      meta: { source: "prometheus", status: "live", sampledAt: new Date().toISOString() },
+      cpu: top(cpu, "percent") as TopConsumers["cpu"],
+      memory: top(used, "bytes") as TopConsumers["memory"],
+    };
+  });
+}
+
+export interface ContainerHistory {
+  cpu: HistoryPoint[];
+  memoryBytes: HistoryPoint[];
+}
+
+/** Range history for one container by exact name. */
+export async function getContainerHistory(
+  client: PromClient,
+  name: string,
+  queries: { cpu: string; memory: string },
+  startSeconds: number,
+  endSeconds: number,
+  stepSeconds: number,
+): Promise<ContainerHistory> {
+  const [cpuMatrix, memMatrix] = await Promise.all([
+    client.range(queries.cpu, startSeconds, endSeconds, stepSeconds),
+    client.range(queries.memory, startSeconds, endSeconds, stepSeconds),
+  ]);
+  const first = (
+    matrix: Awaited<ReturnType<PromClient["range"]>>,
+  ): HistoryPoint[] =>
+    (matrix[0]?.points ?? []).map((point) => ({
+      t: point.t * 1000,
+      v: point.v,
+    }));
+  return {
+    cpu: first(cpuMatrix),
+    memoryBytes: first(memMatrix),
+  };
+}
+
+/** True when a container passes the "high CPU" observation threshold. */
+export function isHighCpu(metrics: ContainerMetrics | undefined): boolean {
+  return (metrics?.cpuPercent ?? 0) >= CONTAINER_HIGH_CPU_PERCENT;
+}
+
+/**
+ * True when a container passes the "high memory" observation: over the
+ * absolute byte threshold, or over the %-of-limit threshold when a real
+ * (non-host) limit exists.
+ */
+export function isHighMemory(
+  metrics: ContainerMetrics | undefined | null,
+): boolean {
+  if (!metrics) return false;
+  const { memoryUsedBytes, memoryPercentOfLimit, hasMemoryLimit } = metrics;
+  if (hasMemoryLimit && memoryPercentOfLimit !== null) {
+    if (memoryPercentOfLimit >= CONTAINER_HIGH_MEMORY_PERCENT_OF_LIMIT) {
+      return true;
+    }
+  }
+  return memoryUsedBytes !== null && memoryUsedBytes >= CONTAINER_HIGH_MEMORY_BYTES;
+}

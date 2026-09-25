@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyRound, Plug, RotateCcw } from "lucide-react";
+import { KeyRound, Plug, RotateCcw, Stethoscope } from "lucide-react";
 import { usePoll } from "@/hooks/use-poll";
 import {
   PAGE_INTERVAL_MS,
@@ -18,7 +18,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDateTimeIso } from "@/lib/utils";
 import { useOverview } from "@/components/layout/overview-provider";
-import type { ConnectionStatus } from "@/lib/api-types";
+import type {
+  BuildInfoDto,
+  ConnectionStatus,
+  DiagnosticsPayload,
+} from "@/lib/api-types";
 
 function Choice<T extends string>({
   label,
@@ -48,6 +52,151 @@ function Choice<T extends string>({
           </Button>
         ))}
       </div>
+    </div>
+  );
+}
+
+function Toggle({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center justify-between gap-4 border-b py-3 last:border-0">
+      <span className="text-sm">{label}</span>
+      <input
+        type="checkbox"
+        checked={value}
+        onChange={(event) => onChange(event.target.checked)}
+        className="size-4 accent-[var(--color-primary)]"
+      />
+    </label>
+  );
+}
+
+/* About + diagnostics ------------------------------------------------------- */
+
+function AboutAndDiagnostics() {
+  const version = usePoll<BuildInfoDto>("/api/version", 60_000);
+  const diagnostics = usePoll<DiagnosticsPayload>(
+    "/api/diagnostics",
+    PAGE_INTERVAL_MS.connection,
+  );
+  const diag = diagnostics.data;
+
+  return (
+    <div className="space-y-3">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Stethoscope className="size-4 text-muted-foreground" aria-hidden="true" />
+            Diagnostics
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-1 text-sm">
+          {diagnostics.loading && !diag ? (
+            <LoadingPanel rows={3} />
+          ) : diag ? (
+            <dl className="space-y-2">
+              <div className="flex items-center justify-between gap-4">
+                <dt className="text-muted-foreground">Unraid API</dt>
+                <dd className="flex items-center gap-2">
+                  <Badge variant={diag.sources.unraid.reachable ? "success" : "destructive"}>
+                    {diag.sources.unraid.reachable ? "reachable" : "unreachable"}
+                  </Badge>
+                  <span className="font-mono text-xs">
+                    {diag.sources.unraid.latencyMs != null
+                      ? `${diag.sources.unraid.latencyMs} ms`
+                      : "—"}
+                  </span>
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <dt className="text-muted-foreground">Prometheus</dt>
+                <dd className="flex items-center gap-2">
+                  {!diag.sources.prometheus.configured ? (
+                    <Badge variant="muted">not configured</Badge>
+                  ) : (
+                    <Badge
+                      variant={diag.sources.prometheus.reachable ? "success" : "destructive"}
+                    >
+                      {diag.sources.prometheus.reachable ? "reachable" : "unreachable"}
+                    </Badge>
+                  )}
+                  <span className="font-mono text-xs">
+                    {diag.sources.prometheus.latencyMs != null
+                      ? `${diag.sources.prometheus.latencyMs} ms`
+                      : "—"}
+                  </span>
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">Last Unraid success</dt>
+                <dd className="text-xs">
+                  {formatDateTimeIso(
+                    diag.sections.metrics ?? diag.sources.unraid.lastSuccessAt,
+                  )}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">Last Prometheus success</dt>
+                <dd className="text-xs">
+                  {formatDateTimeIso(
+                    diag.sections["history:cpu"] ?? diag.sources.prometheus.lastSuccessAt,
+                  )}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">Generated</dt>
+                <dd className="text-xs">{formatDateTimeIso(diag.generatedAt)}</dd>
+              </div>
+            </dl>
+          ) : (
+            <p className="text-muted-foreground">Diagnostics unavailable.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>About</CardTitle>
+        </CardHeader>
+        <CardContent className="pt-1">
+          {version.data ? (
+            <dl className="space-y-2 text-sm">
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">Version</dt>
+                <dd className="font-mono text-xs">v{version.data.version}</dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">Build</dt>
+                <dd className="font-mono text-xs">
+                  {version.data.gitSha
+                    ? version.data.gitSha.slice(0, 7)
+                    : "dev"}
+                  {version.data.buildTime
+                    ? ` · ${formatDateTimeIso(version.data.buildTime)}`
+                    : ""}
+                </dd>
+              </div>
+              {version.data.imageRef && (
+                <div className="flex justify-between gap-4">
+                  <dt className="text-muted-foreground">Image</dt>
+                  <dd className="max-w-[220px] truncate font-mono text-xs" title={version.data.imageRef}>
+                    {version.data.imageRef}
+                  </dd>
+                </div>
+              )}
+            </dl>
+          ) : (
+            <p className="text-muted-foreground">Version information unavailable.</p>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -109,16 +258,25 @@ export default function SettingsPage() {
                 { value: "5m", label: "5 min" },
                 { value: "15m", label: "15 min" },
                 { value: "1h", label: "1 hour" },
+                { value: "6h", label: "6 hours" },
+                { value: "24h", label: "24 hours" },
+                { value: "7d", label: "7 days" },
               ]}
             />
-            <Choice<"hide" | "show">
+            <Toggle
+              label="Show per-core CPU (System page)"
+              value={prefs.showPerCore}
+              onChange={(value) => setPref("showPerCore", value)}
+            />
+            <Toggle
+              label="Show Docker metric columns"
+              value={prefs.dockerMetrics}
+              onChange={(value) => setPref("dockerMetrics", value)}
+            />
+            <Toggle
               label="Show virtual network interfaces"
-              value={prefs.showVirtualIfaces ? "show" : "hide"}
-              onChange={(value) => setPref("showVirtualIfaces", value === "show")}
-              options={[
-                { value: "hide", label: "Hide" },
-                { value: "show", label: "Show" },
-              ]}
+              value={prefs.showVirtualIfaces}
+              onChange={(value) => setPref("showVirtualIfaces", value)}
             />
             <div className="pt-3">
               <Button variant="outline" size="sm" onClick={reset}>
@@ -198,6 +356,8 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
+          <AboutAndDiagnostics />
+
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -208,7 +368,9 @@ export default function SettingsPage() {
             <CardContent className="space-y-2 text-sm text-muted-foreground">
               <p>
                 The Unraid API key is configured server-side and never sent to
-                the browser. These settings contain appearance preferences only.
+                the browser. Prometheus is queried server-side too; the browser
+                can never run arbitrary PromQL. These settings contain
+                appearance preferences only.
               </p>
               <p>
                 The dashboard uses a read-only (VIEWER) API key; no write or

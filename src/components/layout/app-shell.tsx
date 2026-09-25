@@ -9,6 +9,24 @@ import { cn } from "@/lib/utils";
 
 const COLLAPSE_KEY = "unraid-dashboard.sidebar.collapsed";
 
+/** Fetches /api/version once; renders nothing on failure (dev or old build). */
+function VersionFooter() {
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/version", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((info: { version?: string } | null) => {
+        if (!cancelled && info?.version) setVersion(info.version);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return version ? ` · v${version}` : null;
+}
+
 function Shell({ children }: { children: React.ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -54,8 +72,10 @@ function Shell({ children }: { children: React.ReactNode }) {
         <main className="mx-auto w-full max-w-7xl p-4 sm:p-6">{children}</main>
         <footer className="mx-auto w-full max-w-7xl px-4 pb-6 sm:px-6">
           <p className="text-[11px] text-muted-foreground">
-            Metrics history is tracked in dashboard process memory and resets when
-            the container restarts.
+            History is served from Prometheus (7-day retention on this host);
+            during Prometheus outages the overview chart falls back to an
+            in-memory buffer that resets when the container restarts.
+            <VersionFooter />
           </p>
         </footer>
       </div>

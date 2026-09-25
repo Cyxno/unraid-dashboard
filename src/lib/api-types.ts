@@ -55,6 +55,8 @@ export interface MemoryUsage {
 
 export interface ArrayDiskUsage {
   name: string;
+  /** Kernel device (e.g. "sdb") — the join key for Prometheus disk I/O. */
+  device: string | null;
   role: "parity" | "data" | "cache" | "flash";
   state: string;
   fsType: string | null;
@@ -104,12 +106,21 @@ export interface DockerContainerSummary {
   webUiUrl: string | null;
   createdEpochSeconds: number | null;
   ports: PortMapping[];
+  /** Compose project from com.docker.compose.project label, if any. */
+  composeProject: string | null;
+  /**
+   * Runtime metrics joined from Prometheus by container name. Null when
+   * Prometheus is unavailable or the container has no metric rows.
+   */
+  metrics: ContainerMetrics | null;
 }
 
 export interface DockerSummary {
   running: number;
   total: number;
   containers: DockerContainerSummary[];
+  /** Provenance for the joined runtime metrics (absent pre-v0.3 shape). */
+  metricsMeta?: MetricMeta;
 }
 
 export interface DashboardNotification {
@@ -218,7 +229,8 @@ export interface ResourceSample {
   tx: number;
 }
 
-export type HistoryWindow = "5m" | "15m" | "1h";
+/** Time windows for history views (Prometheus-backed since v0.3). */
+export type HistoryWindow = "5m" | "15m" | "1h" | "6h" | "24h" | "7d";
 
 export interface OverviewPayload {
   identity: Section<SystemIdentity>;
@@ -237,6 +249,301 @@ export interface OverviewPayload {
     /** True once the buffer holds a full window; before that charts cover less time. */
     windowFilled: boolean;
     samples: ResourceSample[];
+    /** Where this history came from; "in-memory" only during Prometheus outages. */
+    source: MetricSource;
+    status: LiveStatus;
+    reason?: string;
   };
+  /** v0.3 Prometheus-derived enrichments. Absent fields = unavailable. */
+  extras: OverviewExtras | null;
   generatedAt: string;
+}
+
+/* ==========================================================================
+ * v0.3 observability types — Prometheus-derived metrics
+ * ==========================================================================
+ * History and runtime metrics come from a Prometheus server (PROMETHEUS_URL).
+ * When Prometheus is not configured or unreachable these sections carry
+ * status "unavailable"/"stale" with a reason — the UI shows them as such
+ * and never fabricates replacement data.
+ */
+
+/** Where a metric (or metric family) comes from. */
+export type MetricSource = "unraid" | "prometheus" | "derived";
+
+export type LiveStatus = "live" | "stale" | "unavailable";
+
+/** Provenance + freshness block attached to Prometheus-derived payloads. */
+export interface MetricMeta {
+  source: MetricSource;
+  status: LiveStatus;
+  /** ISO timestamp of the successful Prometheus fetch behind this data. */
+  sampledAt: string;
+  /** Present when status is "stale"/"unavailable". */
+  reason?: string;
+}
+
+/** One point in a time series. Null = no sample (gap) at that time. */
+export interface HistoryPoint {
+  /** Epoch milliseconds. */
+  t: number;
+  /** Value, or null when Prometheus had no sample. */
+  v: number | null;
+}
+
+/** A labeled series (e.g. per core, per device, per sensor). */
+export interface NamedSeries {
+  /** Display name, e.g. "cpu0", "sda", "Package id 0". */
+  name: string;
+  /** Extra labels (device, chip, …) for tooltips/debug. */
+  labels?: Record<string, string>;
+  points: HistoryPoint[];
+}
+
+/* System snapshot ---------------------------------------------------------- */
+
+export interface PerCoreCpu {
+  /** Core/thread identifier as reported ("0", "1", …). */
+  id: string;
+  percent: number | null;
+}
+
+export type LoadLevel = "normal" | "elevated" | "high" | null;
+
+export interface LoadInfo {
+  one: number | null;
+  five: number | null;
+  fifteen: number | null;
+  /** CPU thread count used to contextualize load. */
+  threads: number | null;
+  /** Thread-count-relative classification (see server/thresholds.ts). */
+  level: LoadLevel;
+}
+
+export interface MemoryBreakdown {
+  totalBytes: number | null;
+  usedBytes: number | null;
+  availableBytes: number | null;
+  cachedBytes: number | null;
+  buffersBytes: number | null;
+  swapTotalBytes: number | null;
+  swapUsedBytes: number | null;
+}
+
+export type ThermalCategory =
+  | "package"
+  | "core"
+  | "board"
+  | "disk"
+  | "other";
+
+export interface ThermalSensor {
+  /** Stable id: `${chip}/${sensor}`. */
+  id: string;
+  /** Human-readable sensor name ("Package id 0", "temp1", …). */
+  name: string;
+  chip: string;
+  category: ThermalCategory;
+  currentC: number | null;
+}
+
+export interface ThermalSnapshot {
+  packageC: number | null;
+  boardC: number | null;
+  /** Hottest sensor reading across all categories. */
+  hottestC: number | null;
+  /** Hottest sensor name (for the Overview card). */
+  hottestName: string | null;
+  /** Platform power draw in watts, when the exporter reports it. */
+  powerWatts: number | null;
+  sensors: ThermalSensor[];
+}
+
+export interface SystemMetricsSnapshot {
+  meta: MetricMeta;
+  cpuPercent: number | null;
+  perCore: PerCoreCpu[];
+  load: LoadInfo;
+  memory: MemoryBreakdown;
+  thermal: ThermalSnapshot;
+  /** Host uptime seconds from node_exporter (cross-check for Unraid). */
+  uptimeSeconds: number | null;
+}
+
+/** Payload of /api/system/history — one metric family per request. */
+export type SystemHistoryMetric =
+  | "cpu"
+  | "memory"
+  | "load"
+  | "network"
+  | "disk"
+  | "temps";
+
+export interface SystemHistoryPayload {
+  meta: MetricMeta;
+  window: string;
+  stepSeconds: number;
+  metric: SystemHistoryMetric;
+  /** Primary aggregate series (units noted per metric). */
+  series: NamedSeries[];
+  /** Per-entity series (cores, devices, sensors, interfaces). */
+  breakdown: NamedSeries[];
+  /** min/max over the window where computable (temps, cpu). */
+  summary?: {
+    min: number | null;
+    max: number | null;
+    avg: number | null;
+  };
+  /** For metric="temps": per-sensor stats over the window. */
+  sensorStats?: Array<{
+    id: string;
+    name: string;
+    category: string;
+    min: number | null;
+    max: number | null;
+    current: number | null;
+  }>;
+}
+
+/* Container runtime metrics ------------------------------------------------- */
+
+export interface ContainerMetrics {
+  /** Live CPU% from docker stats (textfile gauge). */
+  cpuPercent: number | null;
+  memoryUsedBytes: number | null;
+  memoryLimitBytes: number | null;
+  /**
+   * Percent of the container's own limit. Null when the limit is the
+   * host total (unlimited) — never a fake percentage of host RAM.
+   */
+  memoryPercentOfLimit: number | null;
+  /** True when the container has a real (non-host) memory limit. */
+  hasMemoryLimit: boolean;
+  /** Absolute memory percent of host RAM (docker stats semantics). */
+  memoryPercentOfHost: number | null;
+}
+
+export interface ContainerHistoryPayload {
+  meta: MetricMeta;
+  window: string;
+  stepSeconds: number;
+  name: string;
+  cpu: HistoryPoint[];
+  memoryBytes: HistoryPoint[];
+}
+
+/** Top consumers widget payload. */
+export interface TopConsumers {
+  meta: MetricMeta;
+  cpu: Array<{ name: string; percent: number | null }>;
+  memory: Array<{ name: string; bytes: number | null }>;
+}
+
+/* Network / storage history -------------------------------------------------- */
+
+export interface InterfaceHistoryPayload {
+  meta: MetricMeta;
+  window: string;
+  stepSeconds: number;
+  interfaces: Array<{
+    name: string;
+    rxPoints: HistoryPoint[];
+    txPoints: HistoryPoint[];
+  }>;
+}
+
+export interface DiskIoSnapshot {
+  meta: MetricMeta;
+  devices: Array<{
+    device: string;
+    readBytesPerSec: number | null;
+    writeBytesPerSec: number | null;
+    readIops: number | null;
+    writeIops: number | null;
+  }>;
+  /** Sum across physical devices (array + pools + boot excluded by filter). */
+  totals: {
+    readBytesPerSec: number | null;
+    writeBytesPerSec: number | null;
+  };
+}
+
+export interface StorageHistoryPayload {
+  meta: MetricMeta;
+  window: string;
+  stepSeconds: number;
+  read: NamedSeries[];
+  write: NamedSeries[];
+  readIops: NamedSeries[];
+  writeIops: NamedSeries[];
+  totals: {
+    read: HistoryPoint[];
+    write: HistoryPoint[];
+  };
+}
+
+/* Diagnostics / version ------------------------------------------------------ */
+
+export interface DataSourceStatus {
+  unraid: {
+    reachable: boolean;
+    latencyMs: number | null;
+    lastSuccessAt: string | null;
+    targetHost: string | null;
+  };
+  prometheus: {
+    configured: boolean;
+    reachable: boolean;
+    latencyMs: number | null;
+    url: string | null;
+    lastSuccessAt: string | null;
+  };
+}
+
+export interface DiagnosticsPayload {
+  version: BuildInfoDto;
+  sources: DataSourceStatus;
+  /** ISO timestamps of last successful fetch per server-side domain. */
+  sections: Record<string, string | null>;
+  generatedAt: string;
+}
+
+export interface BuildInfoDto {
+  version: string;
+  gitSha: string | null;
+  buildTime: string | null;
+  imageRef: string | null;
+}
+
+/* Overview additions ---------------------------------------------------------- */
+
+export interface OverviewExtras {
+  /** Prometheus availability for the whole payload. */
+  prometheus: {
+    configured: boolean;
+    status: LiveStatus;
+    reason?: string;
+  };
+  load: LoadInfo | null;
+  /** 5-minute average host CPU% — sustained load, not a spike. */
+  sustainedCpuPercent: number | null;
+  /** Package temp + 1h peak, when Prometheus is available. */
+  thermal: {
+    packageC: number | null;
+    peak1hC: number | null;
+    hottestC: number | null;
+    hottestName: string | null;
+  } | null;
+  /** Aggregate physical disk throughput. */
+  diskIo: {
+    readBytesPerSec: number | null;
+    writeBytesPerSec: number | null;
+  } | null;
+  /** Primary interface name used for the RX/TX card. */
+  primaryInterface: string | null;
+  primaryRx: number | null;
+  primaryTx: number | null;
+  unhealthyContainers: number | null;
+  highMemoryContainers: number | null;
+  topConsumers: TopConsumers | null;
 }

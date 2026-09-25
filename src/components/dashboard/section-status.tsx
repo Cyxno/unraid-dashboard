@@ -1,7 +1,7 @@
 import { CircleAlert, DatabaseZap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatAge } from "@/lib/utils";
-import type { Section } from "@/lib/api-types";
+import type { MetricMeta, Section } from "@/lib/api-types";
 
 const STATUS_META = {
   live: { label: "Live", variant: "success" as const },
@@ -58,5 +58,29 @@ export function LastUpdated({ section }: { section: Section<unknown> }) {
         ? `last good ${formatAge(section.ageMs)}`
         : "no data yet"}
     </span>
+  );
+}
+
+/**
+ * Provenance badge for Prometheus-derived payloads (MetricMeta shape):
+ * shows nothing while live, warns on stale/unavailable with the reason.
+ */
+export function MetricStatus({
+  meta,
+  className,
+}: {
+  meta: MetricMeta | null | undefined;
+  className?: string;
+}) {
+  if (!meta || meta.status === "live") return null;
+  return (
+    <Badge
+      variant={meta.status === "stale" ? "warning" : "destructive"}
+      className={cn("gap-1", className)}
+    >
+      <CircleAlert aria-hidden="true" />
+      {meta.status === "stale" ? "Stale metrics" : "Metrics unavailable"}
+      {meta.reason ? ` — ${meta.reason}` : ""}
+    </Badge>
   );
 }

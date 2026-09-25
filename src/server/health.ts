@@ -6,6 +6,13 @@ import type {
   Section,
   StorageUsage,
 } from "@/lib/api-types";
+import {
+  CPU_TEMP_CRITICAL_C,
+  CPU_TEMP_WARNING_C,
+  HOST_CPU_SUSTAINED_HIGH_PERCENT,
+  HOST_MEM_CRITICAL_PERCENT,
+  HOST_MEM_WARNING_PERCENT,
+} from "@/server/thresholds";
 
 /**
  * Derives a coarse health level from real conditions only.
@@ -18,6 +25,14 @@ export interface HealthInputs {
   notifications: Section<NotificationsSummary>;
   memoryPercent: number | null;
   temperatureCriticalCount: number | null;
+  /** CPU package temperature in °C (Prometheus, when available). */
+  cpuPackageC: number | null;
+  /** 5-minute average host CPU% (Prometheus, when available). */
+  sustainedCpuPercent: number | null;
+  /** Thread-count-relative load classification (null = unknown). */
+  loadLevel: "normal" | "elevated" | "high" | null;
+  /** Prometheus connectivity: null when not configured. */
+  prometheusStatus: "live" | "stale" | "unavailable" | null;
 }
 
 /** Array states that are nominal; anything else deserves attention. */
@@ -103,19 +118,53 @@ export function deriveHealth(inputs: HealthInputs): HealthSummary {
 
   // Resource pressure
   if (inputs.memoryPercent !== null) {
-    if (inputs.memoryPercent >= 95) {
+    if (inputs.memoryPercent >= HOST_MEM_CRITICAL_PERCENT) {
       escalate("critical", `Memory at ${Math.round(inputs.memoryPercent)}%`);
-    } else if (inputs.memoryPercent >= 90) {
+    } else if (inputs.memoryPercent >= HOST_MEM_WARNING_PERCENT) {
       escalate("attention", `Memory at ${Math.round(inputs.memoryPercent)}%`);
     }
   }
 
-  // Temperature
+  // Temperature (Unraid critical counts, then Prometheus package temps)
   if (inputs.temperatureCriticalCount !== null && inputs.temperatureCriticalCount > 0) {
     escalate(
       "critical",
       `${inputs.temperatureCriticalCount} temperature sensor(s) past critical threshold`,
     );
+  }
+  if (inputs.cpuPackageC !== null) {
+    if (inputs.cpuPackageC >= CPU_TEMP_CRITICAL_C) {
+      escalate(
+        "critical",
+        `CPU package at ${Math.round(inputs.cpuPackageC)}°C (critical threshold ${CPU_TEMP_CRITICAL_C}°C)`,
+      );
+    } else if (inputs.cpuPackageC >= CPU_TEMP_WARNING_C) {
+      escalate(
+        "attention",
+        `CPU package at ${Math.round(inputs.cpuPackageC)}°C`,
+      );
+    }
+  }
+
+  // Sustained CPU (5m average, not instantaneous spikes)
+  if (
+    inputs.sustainedCpuPercent !== null &&
+    inputs.sustainedCpuPercent >= HOST_CPU_SUSTAINED_HIGH_PERCENT
+  ) {
+    escalate(
+      "attention",
+      `CPU averaging ${Math.round(inputs.sustainedCpuPercent)}% over the last 5 minutes`,
+    );
+  }
+
+  // Load, judged relative to thread count (neutral labels only)
+  if (inputs.loadLevel === "high") {
+    escalate("attention", "Load average is high relative to CPU threads");
+  }
+
+  // Prometheus connectivity — degraded metrics, never a dead dashboard
+  if (inputs.prometheusStatus === "unavailable") {
+    escalate("attention", "Prometheus unavailable — live metrics degraded");
   }
 
   return { level, reasons };

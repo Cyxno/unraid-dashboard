@@ -3,12 +3,34 @@ import assert from "node:assert/strict";
 import { deriveHealth } from "../src/server/health";
 import { MetricsHistory } from "../src/server/history";
 import { formatBytes, formatPercent, formatTemp, formatUptime, humanState } from "../src/lib/utils";
+import type { HealthInputs } from "../src/server/health";
 
 function section<T>(data: T, status: "live" | "stale" | "unavailable" | "demo" = "live") {
   return { status, data, fetchedAt: new Date().toISOString(), ageMs: 0 };
 }
 
-describe("deriveHealth", () => {
+function container(overrides: Partial<import("../src/lib/api-types").DockerContainerSummary> = {}) {
+  return {
+    id: "1",
+    name: "api",
+    image: "x",
+    state: "RUNNING" as const,
+    status: "Up",
+    health: null,
+    autoStart: true,
+    updateAvailable: false,
+    iconUrl: null,
+    webUiUrl: null,
+    createdEpochSeconds: null,
+    composeProject: null,
+    metrics: null,
+    ports: [],
+    ...overrides,
+  };
+}
+
+/** Base inputs: all Prometheus-derived fields null (Prometheus offline). */
+function healthInputs(overrides: Partial<HealthInputs> = {}): HealthInputs {
   const baseStorage: import("../src/lib/api-types").StorageUsage = {
     state: "STARTED",
     totalBytes: 1,
@@ -16,128 +38,156 @@ describe("deriveHealth", () => {
     freeBytes: 1,
     parityStatus: "COMPLETED",
     parityProgressPercent: null,
-    disks: [{ name: "disk1", role: "data", state: "DISK_OK", fsType: null, sizeBytes: 1, usedBytes: 0, freeBytes: 1, temperatureC: 30, fsColor: "GREEN" }],
+    disks: [{ name: "disk1", device: "sdb", role: "data", state: "DISK_OK", fsType: null, sizeBytes: 1, usedBytes: 0, freeBytes: 1, temperatureC: 30, fsColor: "GREEN" }],
   };
-  const baseDocker = { running: 1, total: 1, containers: [] };
-  const baseNotifications = { unreadCounts: { info: 0, warning: 0, alert: 0 }, recent: [] };
+  return {
+    storage: section(baseStorage),
+    docker: section({ running: 0, total: 0, containers: [] }),
+    notifications: section({ unreadCounts: { info: 0, warning: 0, alert: 0 }, recent: [] }),
+    memoryPercent: 40,
+    temperatureCriticalCount: 0,
+    cpuPackageC: null,
+    sustainedCpuPercent: null,
+    loadLevel: null,
+    prometheusStatus: null,
+    ...overrides,
+  };
+}
 
+describe("deriveHealth", () => {
   it("is healthy when nothing is wrong", () => {
-    const health = deriveHealth({
-      storage: section(baseStorage),
-      docker: section(baseDocker),
-      notifications: section(baseNotifications),
-      memoryPercent: 40,
-      temperatureCriticalCount: 0,
-    });
+    const health = deriveHealth(healthInputs());
     assert.equal(health.level, "healthy");
     assert.deepEqual(health.reasons, []);
   });
 
   it("escalates to critical on a stopped array", () => {
-    const health = deriveHealth({
-      storage: section({ ...baseStorage, state: "STOPPED" }),
-      docker: section(baseDocker),
-      notifications: section(baseNotifications),
-      memoryPercent: 40,
-      temperatureCriticalCount: 0,
+    const storage = section({
+      state: "STOPPED",
+      totalBytes: 1,
+      usedBytes: 0,
+      freeBytes: 1,
+      parityStatus: "COMPLETED",
+      parityProgressPercent: null,
+      disks: [],
     });
+    const health = deriveHealth(healthInputs({ storage }));
     assert.equal(health.level, "critical");
     assert.ok(health.reasons.some((reason) => reason.includes("Array state")));
   });
 
   it("escalates to critical on a red disk", () => {
-    const health = deriveHealth({
-      storage: section({
-        ...baseStorage,
-        disks: [{ ...baseStorage.disks[0]!, fsColor: "RED" }],
-      }),
-      docker: section(baseDocker),
-      notifications: section(baseNotifications),
-      memoryPercent: null,
-      temperatureCriticalCount: null,
+    const storage = section({
+      state: "STARTED",
+      totalBytes: 1,
+      usedBytes: 0,
+      freeBytes: 1,
+      parityStatus: "COMPLETED",
+      parityProgressPercent: null,
+      disks: [{ name: "disk1", device: "sdb", role: "data" as const, state: "DISK_OK", fsType: null, sizeBytes: 1, usedBytes: 0, freeBytes: 1, temperatureC: 30, fsColor: "RED" }],
     });
+    const health = deriveHealth(healthInputs({ storage }));
     assert.equal(health.level, "critical");
   });
 
   it("treats alert notifications as critical and warnings as attention", () => {
-    const critical = deriveHealth({
-      storage: section(baseStorage),
-      docker: section(baseDocker),
-      notifications: section({ ...baseNotifications, unreadCounts: { info: 0, warning: 0, alert: 1 } }),
-      memoryPercent: null,
-      temperatureCriticalCount: null,
-    });
+    const critical = deriveHealth(
+      healthInputs({
+        notifications: section({ unreadCounts: { info: 0, warning: 0, alert: 1 }, recent: [] }),
+      }),
+    );
     assert.equal(critical.level, "critical");
 
-    const attention = deriveHealth({
-      storage: section(baseStorage),
-      docker: section(baseDocker),
-      notifications: section({ ...baseNotifications, unreadCounts: { info: 0, warning: 2, alert: 0 } }),
-      memoryPercent: null,
-      temperatureCriticalCount: null,
-    });
+    const attention = deriveHealth(
+      healthInputs({
+        notifications: section({ unreadCounts: { info: 0, warning: 2, alert: 0 }, recent: [] }),
+      }),
+    );
     assert.equal(attention.level, "attention");
   });
 
   it("flags unhealthy containers and autostart exits", () => {
-    const critical = deriveHealth({
-      storage: section(baseStorage),
-      docker: section({
-        ...baseDocker,
-        containers: [
-          { id: "1", name: "api", image: "x", state: "RUNNING", status: "Up (unhealthy)", health: "unhealthy", autoStart: true, updateAvailable: false, iconUrl: null, webUiUrl: null, createdEpochSeconds: null, ports: [] },
-        ],
+    const critical = deriveHealth(
+      healthInputs({
+        docker: section({
+          running: 1,
+          total: 1,
+          containers: [
+            container({ health: "unhealthy", status: "Up (unhealthy)" }),
+          ],
+        }),
       }),
-      notifications: section(baseNotifications),
-      memoryPercent: null,
-      temperatureCriticalCount: null,
-    });
+    );
     assert.equal(critical.level, "critical");
     assert.ok(critical.reasons.some((reason) => reason.includes("api")));
 
-    const attention = deriveHealth({
-      storage: section(baseStorage),
-      docker: section({
-        ...baseDocker,
-        containers: [
-          { id: "2", name: "worker", image: "x", state: "EXITED", status: "Exited", health: null, autoStart: true, updateAvailable: false, iconUrl: null, webUiUrl: null, createdEpochSeconds: null, ports: [] },
-        ],
+    const attention = deriveHealth(
+      healthInputs({
+        docker: section({
+          running: 0,
+          total: 1,
+          containers: [
+            container({ id: "2", name: "worker", state: "EXITED", status: "Exited" }),
+          ],
+        }),
       }),
-      notifications: section(baseNotifications),
-      memoryPercent: null,
-      temperatureCriticalCount: null,
-    });
+    );
     assert.equal(attention.level, "attention");
   });
 
-  it("uses resource pressure thresholds", () => {
-    const critical = deriveHealth({
-      storage: section(baseStorage),
-      docker: section(baseDocker),
-      notifications: section(baseNotifications),
-      memoryPercent: 96,
-      temperatureCriticalCount: null,
-    });
+  it("uses memory pressure thresholds", () => {
+    assert.equal(deriveHealth(healthInputs({ memoryPercent: 96 })).level, "critical");
+    assert.equal(deriveHealth(healthInputs({ memoryPercent: 91 })).level, "attention");
+    assert.equal(deriveHealth(healthInputs({ memoryPercent: 50 })).level, "healthy");
+  });
+
+  it("escalates on package temperature pressure (thermal inputs)", () => {
+    const attention = deriveHealth(healthInputs({ cpuPackageC: 83 }));
+    assert.equal(attention.level, "attention");
+    assert.ok(attention.reasons.some((reason) => reason.includes("CPU package")));
+
+    const critical = deriveHealth(healthInputs({ cpuPackageC: 92 }));
     assert.equal(critical.level, "critical");
 
-    const attention = deriveHealth({
-      storage: section(baseStorage),
-      docker: section(baseDocker),
-      notifications: section(baseNotifications),
-      memoryPercent: 91,
-      temperatureCriticalCount: null,
-    });
-    assert.equal(attention.level, "attention");
+    // Below the documented threshold: healthy.
+    assert.equal(deriveHealth(healthInputs({ cpuPackageC: 70 })).level, "healthy");
+  });
+
+  it("notes sustained 5-minute CPU pressure, not spikes", () => {
+    const health = deriveHealth(healthInputs({ sustainedCpuPercent: 88 }));
+    assert.equal(health.level, "attention");
+    assert.ok(health.reasons.some((reason) => reason.includes("5 minutes")));
+
+    assert.equal(
+      deriveHealth(healthInputs({ sustainedCpuPercent: 50 })).level,
+      "healthy",
+    );
+  });
+
+  it("marks high load relative to threads as attention", () => {
+    const health = deriveHealth(healthInputs({ loadLevel: "high" }));
+    assert.equal(health.level, "attention");
+    // Neutral labels never escalate on their own.
+    assert.equal(deriveHealth(healthInputs({ loadLevel: "elevated" })).level, "healthy");
+    assert.equal(deriveHealth(healthInputs({ loadLevel: "normal" })).level, "healthy");
+  });
+
+  it("flags Prometheus outage as attention, not critical", () => {
+    const health = deriveHealth(healthInputs({ prometheusStatus: "unavailable" }));
+    assert.equal(health.level, "attention");
+    assert.ok(health.reasons.some((reason) => reason.includes("Prometheus unavailable")));
   });
 
   it("ignores unavailable sections instead of failing", () => {
-    const health = deriveHealth({
-      storage: section(null, "unavailable"),
-      docker: section(null, "unavailable"),
-      notifications: section(null, "unavailable"),
-      memoryPercent: null,
-      temperatureCriticalCount: null,
-    });
+    const health = deriveHealth(
+      healthInputs({
+        storage: section(null, "unavailable"),
+        docker: section(null, "unavailable"),
+        notifications: section(null, "unavailable"),
+        memoryPercent: null,
+        temperatureCriticalCount: null,
+      }),
+    );
     assert.equal(health.level, "healthy");
   });
 });

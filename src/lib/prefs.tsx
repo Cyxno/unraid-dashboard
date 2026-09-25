@@ -17,7 +17,7 @@ import {
 export type TempUnit = "C" | "F";
 export type RefreshPreset = "fast" | "normal" | "relaxed";
 export type Density = "compact" | "comfortable";
-export type HistoryWindowPref = "5m" | "15m" | "1h";
+export type HistoryWindowPref = "5m" | "15m" | "1h" | "6h" | "24h" | "7d";
 
 export interface Prefs {
   refresh: RefreshPreset;
@@ -25,12 +25,30 @@ export interface Prefs {
   density: Density;
   showVirtualIfaces: boolean;
   historyWindow: HistoryWindowPref;
+  /** Per-core CPU grid on the System page. */
+  showPerCore: boolean;
+  /** Compact metric columns on the Docker page. */
+  dockerMetrics: boolean;
 }
 
 export const REFRESH_INTERVAL_MS: Record<RefreshPreset, number> = {
   fast: 3_000,
   normal: 5_000,
   relaxed: 10_000,
+};
+
+/**
+ * History-window refetch cadence. Long windows are expensive server-side
+ * (they hit Prometheus range queries that are themselves cached) and
+ * useless when refreshed every few seconds.
+ */
+export const HISTORY_INTERVAL_MS: Record<HistoryWindowPref, number> = {
+  "5m": 10_000,
+  "15m": 15_000,
+  "1h": 30_000,
+  "6h": 60_000,
+  "24h": 120_000,
+  "7d": 300_000,
 };
 
 /** Per-page poll cadences (server-side TTL caches make this cheap). */
@@ -44,6 +62,8 @@ export const PAGE_INTERVAL_MS = {
   notifications: 20_000,
   logs: 30_000,
   connection: 15_000,
+  /** Instant Prometheus snapshots (server caches ~3s). */
+  systemMetrics: 4_000,
 } as const;
 
 const DEFAULTS: Prefs = {
@@ -52,6 +72,8 @@ const DEFAULTS: Prefs = {
   density: "comfortable",
   showVirtualIfaces: false,
   historyWindow: "15m",
+  showPerCore: true,
+  dockerMetrics: true,
 };
 
 const STORAGE_KEY = "unraid-dashboard.prefs.v1";

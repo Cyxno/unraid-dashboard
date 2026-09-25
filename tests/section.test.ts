@@ -12,6 +12,7 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
+void deferred;
 
 describe("SectionProvider", () => {
   it("returns live data and caches within the TTL", async () => {
@@ -31,10 +32,8 @@ describe("SectionProvider", () => {
 
   it("keeps last good data as stale after a failure", async () => {
     let shouldFail = false;
-    const gate = deferred<void>();
     const provider = new SectionProvider("test", async () => {
       if (shouldFail) {
-        await gate.promise;
         throw new Error("unraid down");
       }
       return { value: 42 };

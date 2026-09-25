@@ -2,13 +2,26 @@
 
 import { HardDrive, Thermometer } from "lucide-react";
 import { usePoll } from "@/hooks/use-poll";
-import { PAGE_INTERVAL_MS, usePrefs } from "@/lib/prefs";
+import {
+  HISTORY_INTERVAL_MS,
+  PAGE_INTERVAL_MS,
+  usePrefs,
+  type HistoryWindowPref,
+} from "@/lib/prefs";
 import { PageHeader, LoadingPanel } from "@/components/dashboard/page-primitives";
-import { SectionStatus } from "@/components/dashboard/section-status";
+import { MetricStatus, SectionStatus } from "@/components/dashboard/section-status";
+import { SeriesChart } from "@/components/dashboard/series-chart";
+import { WindowPicker } from "@/components/dashboard/window-picker";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { cn, formatBytes, formatPercent, formatTemp, humanState } from "@/lib/utils";
-import type { Section, StorageUsage } from "@/lib/api-types";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn, formatBytes, formatPercent, formatRate, formatTemp, humanState } from "@/lib/utils";
+import type {
+  DiskIoSnapshot,
+  Section,
+  StorageHistoryPayload,
+  StorageUsage,
+} from "@/lib/api-types";
 
 const COLOR_CLASS: Record<string, string> = {
   GREEN: "bg-success",
@@ -18,6 +31,19 @@ const COLOR_CLASS: Record<string, string> = {
   BLUE: "bg-blue-400",
   GREY: "bg-muted-foreground",
 };
+
+/** Storage keeps its own window default; capacity and performance stay separate. */
+function usePersistedWindow(): [
+  HistoryWindowPref,
+  (value: HistoryWindowPref) => void,
+] {
+  const { prefs, setPref } = usePrefs();
+  const allowed: HistoryWindowPref[] = ["15m", "1h", "6h", "24h"];
+  const window = allowed.includes(prefs.historyWindow)
+    ? prefs.historyWindow
+    : "1h";
+  return [window, (value) => setPref("historyWindow", value)];
+}
 
 function AggregateCard({
   label,
@@ -50,6 +76,22 @@ export default function StoragePage() {
   );
   const { prefs } = usePrefs();
   const storage = data?.data ?? null;
+
+  /* Runtime disk I/O (Prometheus) + performance history. Capacity views
+     above stay purely Unraid; performance views are clearly separate. */
+  const [window, setWindow] = usePersistedWindow();
+  const diskIo = usePoll<DiskIoSnapshot>(
+    "/api/storage/io",
+    PAGE_INTERVAL_MS.docker,
+  );
+  const history = usePoll<StorageHistoryPayload>(
+    `/api/storage/history?window=${window}`,
+    HISTORY_INTERVAL_MS[window],
+  );
+
+  const ioByDevice = new Map(
+    (diskIo.data?.devices ?? []).map((device) => [device.device, device]),
+  );
 
   // Aggregate data-disks only for "usable" capacity — parity disks hold no
   // user data and cache pools are separate tiers, so summing everything would
@@ -118,6 +160,139 @@ export default function StoragePage() {
               detail={`${formatBytes(sum(cacheDisks, "usedBytes"))} of ${formatBytes(sum(cacheDisks, "sizeBytes"))} used`}
             />
           </section>
+
+          {/* Runtime disk activity (Prometheus) ---------------------------- */}
+          <Card>
+            <CardHeader className="gap-2">
+              <CardTitle className="text-base">Disk activity</CardTitle>
+              <MetricStatus meta={diskIo.data?.meta ?? null} />
+            </CardHeader>
+            <CardContent>
+              {diskIo.loading && !diskIo.data ? (
+                <Skeleton className="h-24 w-full" />
+              ) : diskIo.data === null ? (
+                <p className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
+                  Disk I/O unavailable — Prometheus is unreachable. Capacity
+                  and health data remain live from Unraid.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[560px] text-sm">
+                    <caption className="sr-only">Runtime disk activity per device</caption>
+                    <thead>
+                      <tr className="border-b text-left text-xs uppercase tracking-wider text-muted-foreground">
+                        <th scope="col" className="px-3 py-2 font-medium">Disk</th>
+                        <th scope="col" className="px-3 py-2 font-medium">Device</th>
+                        <th scope="col" className="px-3 py-2 text-right font-medium">Read</th>
+                        <th scope="col" className="px-3 py-2 text-right font-medium">Write</th>
+                        <th scope="col" className="px-3 py-2 text-right font-medium">Read IOPS</th>
+                        <th scope="col" className="px-3 py-2 text-right font-medium">Write IOPS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {storage?.disks
+                        .filter((disk) => disk.device !== null && ioByDevice.has(disk.device))
+                        .map((disk) => {
+                          const io = ioByDevice.get(disk.device!)!;
+                          return (
+                            <tr key={disk.device} className="border-b last:border-0">
+                              <td className="px-3 py-2.5 font-medium">{disk.name}</td>
+                              <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
+                                {disk.device}
+                              </td>
+                              <td className="px-3 py-2.5 text-right font-mono tabular-nums">
+                                {formatRate(io.readBytesPerSec)}
+                              </td>
+                              <td className="px-3 py-2.5 text-right font-mono tabular-nums">
+                                {formatRate(io.writeBytesPerSec)}
+                              </td>
+                              <td className="px-3 py-2.5 text-right font-mono text-xs tabular-nums text-muted-foreground">
+                                {io.readIops !== null ? io.readIops.toFixed(1) : "—"}
+                              </td>
+                              <td className="px-3 py-2.5 text-right font-mono text-xs tabular-nums text-muted-foreground">
+                                {io.writeIops !== null ? io.writeIops.toFixed(1) : "—"}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      <tr className="font-medium">
+                        <td className="px-3 py-2.5" colSpan={2}>
+                          Total (all physical devices)
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono tabular-nums">
+                          {formatRate(diskIo.data.totals.readBytesPerSec)}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono tabular-nums">
+                          {formatRate(diskIo.data.totals.writeBytesPerSec)}
+                        </td>
+                        <td className="px-3 py-2.5" colSpan={2} />
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <p className="mt-3 text-[11px] text-muted-foreground">
+                Unraid disks are matched to exporter devices by kernel name
+                (sdX). Parity disks report device-level I/O from rebuilds and
+                reads. The array layer (md) is excluded so member-disk and
+                array I/O are never double-counted.
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* Performance history (Prometheus) ------------------------------- */}
+          <Card>
+            <CardHeader className="gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <CardTitle className="mr-auto text-base">
+                  Performance history
+                </CardTitle>
+                <WindowPicker
+                  value={window}
+                  onChange={setWindow}
+                  options={["15m", "1h", "6h", "24h"]}
+                />
+              </div>
+              <MetricStatus meta={history.data?.meta ?? null} />
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {history.data === null ? (
+                <Skeleton className="h-[200px] w-full" />
+              ) : history.data.meta.status === "unavailable" ? (
+                <div className="flex h-[200px] items-center justify-center rounded-md border border-dashed px-6 text-center text-sm text-muted-foreground">
+                  Performance history unavailable — Prometheus is unreachable.
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <p className="mb-1 text-xs text-muted-foreground">
+                      Aggregate throughput
+                    </p>
+                    <SeriesChart
+                      series={[
+                        { name: "Read", points: history.data.totals.read },
+                        { name: "Write", points: history.data.totals.write },
+                      ]}
+                      unit="rate"
+                      height={200}
+                    />
+                  </div>
+                  <div>
+                    <p className="mb-1 text-xs text-muted-foreground">
+                      Per-device throughput (top devices)
+                    </p>
+                    <SeriesChart
+                      series={history.data.read}
+                      breakdown={history.data.write}
+                      unit="rate"
+                      height={180}
+                      maxSeries={4}
+                    />
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
 
           <Card>
             <CardHeader>

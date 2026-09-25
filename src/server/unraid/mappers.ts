@@ -206,6 +206,7 @@ type RawDisk = Record<string, any>;
 function mapDisk(raw: RawDisk, role: ArrayDiskUsage["role"]): ArrayDiskUsage {
   return {
     name: str(raw?.name) ?? str(raw?.device) ?? "unknown",
+    device: str(raw?.device),
     role,
     state: str(raw?.status) ?? "UNKNOWN",
     fsType: str(raw?.fsType),
@@ -257,6 +258,18 @@ export function parseContainerHealth(status: string | null): ContainerHealth {
 
 const VALID_CONTAINER_STATES = new Set(["RUNNING", "PAUSED", "EXITED"]);
 
+/**
+ * Extracts the Docker Compose project from the raw `labels` JSON the
+ * Unraid API returns (a scalar object). Grouping comes from real
+ * compose labels only — never guessed from name prefixes.
+ */
+export function extractComposeProject(labels: unknown): string | null {
+  if (labels === null || typeof labels !== "object") return null;
+  const record = labels as Record<string, unknown>;
+  const project = record["com.docker.compose.project"];
+  return typeof project === "string" && project.length > 0 ? project : null;
+}
+
 export function mapDocker(payload: any): DockerSummary {
   const containers: any[] = Array.isArray(payload?.docker?.containers)
     ? payload.docker.containers
@@ -281,6 +294,8 @@ export function mapDocker(payload: any): DockerSummary {
         iconUrl: str(container?.iconUrl),
         webUiUrl: str(container?.webUiUrl),
         createdEpochSeconds: toNumber(container?.created),
+        composeProject: extractComposeProject(container?.labels),
+        metrics: null,
         ports: (Array.isArray(container?.ports) ? container.ports : [])
           .map((port: any) => ({
             privatePort: toNumber(port?.privatePort),

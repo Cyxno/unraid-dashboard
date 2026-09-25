@@ -35,6 +35,18 @@ import { mockOverview } from "./mock";
 import { SectionProvider } from "./section";
 import { deriveHealth } from "@/server/health";
 import { getMetricsHistory } from "@/server/history";
+import {
+  getOverviewExtras,
+  getOverviewHistory,
+} from "@/server/metrics-service";
+import { isPrometheusConfigured } from "@/server/env";
+import { getPromClient } from "@/server/prometheus/client";
+import { PrometheusError } from "@/server/prometheus/client";
+import {
+  getContainerMetrics,
+  isHighMemory,
+} from "@/server/prometheus/containers";
+import type { ContainerMetrics, MetricMeta } from "@/lib/api-types";
 import type {
   ConnectionStatus,
   DashboardNotification,
@@ -183,18 +195,36 @@ function withDemo<T>(section: Section<T>, demoData: T): Section<T> {
   return section;
 }
 
+/** lastSuccessAt per provider, for the diagnostics view. */
+export function sectionLastSuccess(): Record<string, number | null> {
+  const providers: Array<[string, { lastSuccess: number | null }]> = [
+    ["metrics", metricsProvider],
+    ["identity", identityProvider],
+    ["storage", storageProvider],
+    ["docker", dockerProvider],
+    ["notifications", notificationsProvider],
+    ["vms", vmsProvider],
+    ["system", systemProvider],
+  ];
+  return Object.fromEntries(
+    providers.map(([name, provider]) => [name, provider.lastSuccess]),
+  );
+}
+
 /* Public API ------------------------------------------------------------ */
 
 export async function getOverview(
   historyWindow: HistoryWindow = "15m",
 ): Promise<OverviewPayload> {
-  const [identity, metrics, storage, docker, notifications] = await Promise.all([
-    identityProvider.get(),
-    getMetricsSection(),
-    storageProvider.get(),
-    dockerProvider.get(),
-    notificationsProvider.get(),
-  ]);
+  const [identity, metrics, storage, dockerWithMetrics, notifications] =
+    await Promise.all([
+      identityProvider.get(),
+      getMetricsSection(),
+      storageProvider.get(),
+      getDockerWithMetrics(),
+      notificationsProvider.get(),
+    ]);
+  const docker = dockerWithMetrics.section;
 
   const memory: Section<{ percentTotal: number; usedBytes: number; totalBytes: number }> =
     metrics.data
@@ -238,7 +268,63 @@ export async function getOverview(
   };
 
   const history = getMetricsHistory();
-  const samples: ResourceSample[] = history.slice(historyWindow);
+  const inMemorySamples: ResourceSample[] = history.slice(historyWindow);
+
+  /* Prometheus enrichments — fetched with their own caches and never
+     fatal: the payload below works with or without them. */
+  const [extras, promHistory] = await Promise.all([
+    getOverviewExtras({
+      unhealthyContainers: docker.data
+        ? docker.data.containers.filter((c) => c.health === "unhealthy").length
+        : null,
+      highMemoryContainers: docker.data
+        ? docker.data.containers.filter((c) => isHighMemory(c.metrics)).length
+        : null,
+    }).catch(() => null),
+    getOverviewHistory(historyWindow).catch(() => null),
+  ]);
+
+  let historyBlock: OverviewPayload["history"] = {
+    window: historyWindow,
+    totalSamples: history.totalSamples,
+    windowFilled: history.windowFilled(historyWindow),
+    samples: inMemorySamples,
+    source: "derived",
+    status: extras?.prometheus.configured
+      ? "unavailable"
+      : "live",
+    reason: extras?.prometheus.configured
+      ? extras.prometheus.reason ?? "Prometheus unavailable — showing the in-memory buffer"
+      : undefined,
+  };
+  if (promHistory && promHistory.samples.length >= 2) {
+    historyBlock = {
+      window: historyWindow,
+      totalSamples: promHistory.samples.length,
+      windowFilled: promHistory.windowFilled,
+      samples: promHistory.samples,
+      source: "prometheus",
+      status: promHistory.meta.status,
+      reason: promHistory.meta.reason,
+    };
+  }
+
+  // Prefer the Unraid-side memory % (authoritative); Prometheus load/thermal enrich only.
+  const health = deriveHealth({
+    storage,
+    docker,
+    notifications,
+    memoryPercent: metrics.data?.memoryPercent ?? null,
+    temperatureCriticalCount: metrics.data?.temperature.criticalCount ?? null,
+    cpuPackageC: extras?.thermal?.packageC ?? null,
+    sustainedCpuPercent: extras?.sustainedCpuPercent ?? null,
+    loadLevel: extras?.load?.level ?? null,
+    prometheusStatus: extras
+      ? extras.prometheus.configured
+        ? extras.prometheus.status
+        : null
+      : null,
+  });
 
   const payload: OverviewPayload = {
     identity: withDemo(identity, demo.identity),
@@ -255,22 +341,104 @@ export async function getOverview(
     network: withDemo(networkSection, demo.network),
     docker: withDemo(docker, demo.docker),
     notifications: withDemo(notifications, demo.notifications),
-    health: deriveHealth({
-      storage,
-      docker,
-      notifications,
-      memoryPercent: metrics.data?.memoryPercent ?? null,
-      temperatureCriticalCount: metrics.data?.temperature.criticalCount ?? null,
-    }),
-    history: {
-      window: historyWindow,
-      totalSamples: history.totalSamples,
-      windowFilled: history.windowFilled(historyWindow),
-      samples,
-    },
+    health,
+    history: historyBlock,
+    extras: extras ?? null,
     generatedAt: new Date().toISOString(),
   };
   return payload;
+}
+
+/**
+ * Docker section joined with Prometheus runtime metrics by container
+ * name. Unraid remains the authoritative source for lifecycle state;
+ * metrics carry their own provenance block and degrade independently.
+ */
+/**
+ * Docker section joined with Prometheus runtime metrics by container
+ * name. Unraid remains the authoritative source for lifecycle state;
+ * metrics carry their own provenance block and degrade independently.
+ */
+async function getContainerMetricsJoined(): Promise<{
+  metrics: Map<string, ContainerMetrics>;
+  meta: MetricMeta;
+}> {
+  if (!isPrometheusConfigured()) {
+    return {
+      metrics: new Map(),
+      meta: {
+        source: "prometheus",
+        status: "unavailable",
+        sampledAt: new Date().toISOString(),
+        reason: "Prometheus is not configured (PROMETHEUS_URL missing)",
+      },
+    };
+  }
+  try {
+    const metrics = await getContainerMetrics(getPromClient());
+    return {
+      metrics,
+      meta: {
+        source: "prometheus",
+        status: "live",
+        sampledAt: new Date().toISOString(),
+      },
+    };
+  } catch (error) {
+    return {
+      metrics: new Map(),
+      meta: {
+        source: "prometheus",
+        status: "unavailable",
+        sampledAt: new Date().toISOString(),
+        reason:
+          error instanceof PrometheusError
+            ? `${error.kind}: ${error.message}`
+            : error instanceof Error
+              ? error.message
+              : "unknown Prometheus error",
+      },
+    };
+  }
+}
+
+export async function getDockerWithMetrics(): Promise<{
+  section: Section<DockerSummary>;
+}> {
+  const base = await dockerProvider.get();
+  if (!base.data) {
+    return { section: withDemo(base, demo.docker) };
+  }
+  const summary = base.data;
+  const metricsResult = await getContainerMetricsJoined();
+  const containers = summary.containers.map((container) => ({
+    ...container,
+    metrics: metricsResult.metrics.get(container.name) ?? null,
+  }));
+  const next: DockerSummary = {
+    ...summary,
+    containers,
+    metricsMeta: metricsResult.meta,
+  };
+  return {
+    section: {
+      ...base,
+      data: next,
+    },
+  };
+}
+
+/** Counts derived from joined metrics, used by Overview + health. */
+export async function getDockerMetricCounts(): Promise<{
+  unhealthy: number;
+  highMemory: number;
+}> {
+  const { section } = await getDockerWithMetrics();
+  const containers = section.data?.containers ?? [];
+  return {
+    unhealthy: containers.filter((c) => c.health === "unhealthy").length,
+    highMemory: containers.filter((c) => isHighMemory(c.metrics)).length,
+  };
 }
 
 export async function getDocker(): Promise<Section<DockerSummary>> {

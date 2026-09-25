@@ -179,6 +179,7 @@ export const DOCKER_QUERY = /* GraphQL */ `
         isUpdateAvailable
         iconUrl
         webUiUrl
+        labels
         ports {
           privatePort
           publicPort
