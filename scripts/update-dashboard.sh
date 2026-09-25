@@ -49,11 +49,12 @@ PORT_ARGS=$(docker inspect "$NAME" --format '{{range $port, $bindings := .HostCo
 VOLUME_ARGS=$(docker inspect "$NAME" --format '{{range .HostConfig.Binds}}-v {{.}} {{end}}')
 
 # Env: preserve everything currently set (UNRAID_URL, UNRAID_API_KEY,
-# PROMETHEUS_URL, PORT, ...). Written to a temp file with 600 perms.
+# PROMETHEUS_URL, PORT, ...). Build-provenance vars are excluded so the
+# NEW image's own values take effect. Written to a temp file, 600 perms.
 ENV_FILE=$(mktemp)
 trap 'rm -f "$ENV_FILE"' EXIT
 docker inspect "$NAME" --format '{{range .Config.Env}}{{println .}}{{end}}' \
-  | grep -vE '^(PATH|NODE_VERSION|YARN_VERSION|NODE_ENV|HOSTNAME|HOME|NEXT_TELEMETRY_DISABLED)=' \
+  | grep -vE '^(PATH|NODE_VERSION|YARN_VERSION|NODE_ENV|HOSTNAME|HOME|NEXT_TELEMETRY_DISABLED|APP_VERSION|GIT_SHA|BUILD_TIME|IMAGE_REF)=' \
   > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 
