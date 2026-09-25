@@ -81,7 +81,7 @@ export function mapTemperature(payload: any): TemperatureInfo {
   return {
     cpuC: cpuReadings.length > 0 ? Math.max(...cpuReadings) : null,
     boardC: boardReadings.length > 0 ? Math.max(...boardReadings) : null,
-    hottestC: toNumber(summary?.hottest?.value),
+    hottestC: toNumber(summary?.hottest?.current?.value),
     warningCount: toNumber(summary?.warningCount) ?? 0,
     criticalCount: toNumber(summary?.criticalCount) ?? 0,
   };

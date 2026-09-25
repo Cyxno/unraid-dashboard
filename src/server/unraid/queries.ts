@@ -44,7 +44,9 @@ export const METRICS_QUERY = /* GraphQL */ `
       temperature {
         summary {
           hottest {
-            value
+            current {
+              value
+            }
           }
           warningCount
           criticalCount
