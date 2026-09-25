@@ -11,10 +11,8 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# Build-time placeholder; real values are injected at runtime.
+# Build-time telemetry off only; UNRAID_* secrets are runtime-only.
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV UNRAID_URL=http://localhost
-ENV UNRAID_API_KEY=build-placeholder
 RUN npm run build
 
 # ---------- runtime ----------
