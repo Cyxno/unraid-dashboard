@@ -41,6 +41,12 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=sha,prefix=sha-
+          labels: |
+            org.opencontainers.image.title=unraid-dashboard
+            org.opencontainers.image.description=Self-hosted Unraid server dashboard (Next.js BFF over the Unraid GraphQL API)
+            org.opencontainers.image.vendor=Cyxno
+            org.opencontainers.image.source=https://github.com/Cyxno/unraid-dashboard
+            org.opencontainers.image.licenses=MIT
 
       - name: Build and push
         uses: docker/build-push-action@v6

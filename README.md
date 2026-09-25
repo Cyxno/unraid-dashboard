@@ -1,131 +1,154 @@
 # Unraid Dashboard
 
-A self-hosted, dark-first web dashboard for an Unraid server. The Next.js
-server acts as a backend-for-frontend (BFF): it talks to the Unraid GraphQL
-API and the browser never sees your API key.
+A self-hosted, dark-first server console for Unraid. The Next.js server acts
+as a backend-for-frontend (BFF): it polls the Unraid GraphQL API server-side
+and the browser never sees your API key.
 
-## Purpose
+> **Screenshots** — *(placeholder: add screenshots here)*
 
-Single pane of glass for the health of an Unraid box — CPU, memory, storage,
-network throughput, Docker containers and notifications — deployable as one
-container next to your server.
+## Features
 
-## Stack
+- **Overview** — CPU / RAM / array / Docker / network / uptime summary cards
+  with live values, CPU temperatures, a derived global health indicator
+  (healthy / attention / critical, from real conditions only) and a rolling
+  resource-history chart (5 min / 15 min / 1 hour windows).
+- **Docker** — searchable, filterable, sortable table of all containers
+  (state, parsed health, ports, update flags) with a read-only detail panel.
+- **Storage** — array state, parity status, per-disk utilization, filesystem,
+  temperature and Unraid disk-health colors; data-disk vs cache aggregates.
+- **Network** — per-interface link state, IP, speed, live RX/TX rates and
+  cumulative traffic; physical interfaces first, virtual ones opt-in.
+- **System** — hostname, OS/kernel/arch, boot mode, CPU model and clocks,
+  memory, board/system identity, temperatures.
+- **VMs** — read-only list (name + state; the 7.3.2 API exposes only that).
+- **Notifications** — unread/archive list with severity filters.
+- **Logs** — read-only viewer for the files the Unraid API reports (tail,
+  text filter, capped output).
+- **Settings** — local-only preferences (refresh preset, temperature unit,
+  table density, history window, virtual-interface visibility) plus a
+  connection-status panel (target host, latency, key roles, last success).
 
-- **Next.js 16** (App Router, standalone output) + **React 19**
-- **TypeScript** (strict, `noUncheckedIndexedAccess`)
-- **Tailwind CSS 4** + shadcn/ui-style components
-- **Lucide** icons, **Recharts** charts, **zod** env validation
-- Docker multi-stage build (non-root runtime, healthcheck)
+## Architecture
+
+```
+Browser ── HTTP ──> Next.js server (BFF) ── GraphQL ──> Unraid API
+                    ├─ env validation (zod)             (x-api-key header,
+                    ├─ per-domain section cache          key never leaves
+                    ├─ live / stale / unavailable / demo contract
+                    ├─ in-memory metrics history (2h)
+                    └─ DTO mapping (no raw GraphQL in responses)
+```
+
+- One `SectionProvider` per domain (metrics, identity, storage, docker,
+  notifications, VMs, system, network) with a server-side TTL cache, so
+  browser polls at different cadences cause at most one Unraid query per TTL.
+- Every API response section carries a status: `live`, `stale` (last known
+  good data retained after a failed refresh), `unavailable`, or `demo`
+  (placeholder data only when the API has *never* responded since process
+  start — clearly labelled in the UI).
+- Metrics history is sampled server-side every ≥5 s, kept 2 h in memory, and
+  served downsampled (≤360 points) for the requested window. **It resets when
+  the container restarts** — it is not Unraid's own history.
+
+## Tech stack
+
+Next.js 16 (App Router, standalone output) · React 19 · strict TypeScript ·
+Tailwind CSS 4 · shadcn-style components · Lucide icons · Recharts · zod ·
+node:test + tsx for tests.
+
+## Unraid requirements
+
+- **Unraid 7.2+** with the API enabled (*Settings → Management Access → API*),
+  or the Unraid Connect API plugin (serves on port `3005`).
+- An **API key**. A **VIEWER role key is sufficient** for every feature of
+  this dashboard — create one in the API panel or via
+  `unraid-api apikey --create --name "unraid dashboard" --roles VIEWER`.
+  No write/mutation permission is needed; the UI deliberately exposes no
+  destructive actions.
 
 ## Environment variables
 
-| Variable               | Required | Default     | Description                                                        |
-| ---------------------- | -------- | ----------- | ------------------------------------------------------------------ |
-| `UNRAID_URL`           | yes      | —           | Base URL of the Unraid API host (no `/graphql` suffix)             |
-| `UNRAID_API_KEY`       | yes      | —           | Unraid API key — server-side only, never shipped to the browser    |
-| `UNRAID_TIMEOUT_MS`    | no       | `10000`     | Timeout for Unraid API requests                                    |
-| `UNRAID_GRAPHQL_PATH`  | no       | `/graphql`  | Path of the GraphQL endpoint appended to `UNRAID_URL`              |
-| `DASHBOARD_PORT`       | no       | `3080`      | Host port published by docker-compose                              |
+| Variable              | Required | Default    | Description                                                |
+| --------------------- | -------- | ---------- | ---------------------------------------------------------- |
+| `UNRAID_URL`          | yes      | —          | Base URL of the Unraid API host (no `/graphql` suffix)     |
+| `UNRAID_API_KEY`      | yes      | —          | API key — server-side only, never sent to the browser      |
+| `UNRAID_TIMEOUT_MS`   | no       | `10000`    | Timeout for Unraid API requests                            |
+| `UNRAID_GRAPHQL_PATH` | no       | `/graphql` | Path appended to `UNRAID_URL` for the GraphQL endpoint     |
+| `PORT`                | no       | `3000`     | HTTP port the server binds (Next.js standard)              |
+| `TZ`                  | no       | —          | Container timezone                                         |
 
-Variables are validated server-side with zod at first use; the process fails
-fast with a clear message when they are missing. Copy `.env.example` to
-`.env` for local development.
+Variables are validated server-side with zod; the process fails fast with a
+clear message when required values are missing. Copy `.env.example` for local
+development.
 
-## Docker
+## Docker deployment
 
 ```bash
 docker build -t unraid-dashboard .
 
 docker run -d --name unraid-dashboard \
-  -p 3080:3000 \
+  -p 8090:3000 \
   -e UNRAID_URL="http://tower.local" \
   -e UNRAID_API_KEY="your-api-key" \
   --restart unless-stopped \
   unraid-dashboard
 ```
 
-Healthcheck endpoint: `GET /api/health` (returns `{"status":"ok"}`).
+Healthcheck: `GET /api/health` (built into the image's Docker `HEALTHCHECK`).
 
-## docker compose deployment
+## Unraid DockerMan deployment
 
-```bash
-cp .env.example .env   # fill in UNRAID_URL and UNRAID_API_KEY
-docker compose up -d
-```
+A user template (`my-unraid-dashboard`) is installed on the target host. To
+recreate it on another Unraid box, use the Docker tab → *Add Container*, set
+the repository to `ghcr.io/cyxno/unraid-dashboard:latest`, and configure:
 
-The compose file publishes `${DASHBOARD_PORT:-3080}` on the host and maps it
-to the container's port 3000. On an Unraid host you may prefer
-`network_mode: host` so the dashboard can reach `http://127.0.0.1/graphql`
-directly (then set `UNRAID_URL` accordingly).
+- **Network**: `host` (see *Why host networking* below)
+- **Web UI port**: `8090` (env `PORT=8090`)
+- `UNRAID_URL` / `UNRAID_API_KEY` as runtime variables (masked in the
+  template; stored only on the flash drive, never committed to git)
+- Extra args: `--restart=unless-stopped`
 
-## Unraid API setup
+The image is non-root, has no volumes (nothing persistent is required) and
+contains no secrets.
 
-1. **Unraid 7.2+** has the API built in — enable it under
-   *Settings → Management Access → API* (older versions need the Unraid
-   Connect plugin, which serves the API on port `3005`).
-2. Create an **API key** in the same panel with read access to the resources
-   used here (metrics, array, docker, notifications).
-3. Point `UNRAID_URL` at the server (e.g. `http://tower.local`) — the
-   built-in API is served at `/graphql` on the WebGUI port; set
-   `UNRAID_GRAPHQL_PATH` / port if your setup differs.
+## GHCR images
 
-Field names in `src/server/unraid/queries.ts` are taken from the official
-`generated-schema.graphql` in the [`unraid/api`](https://github.com/unraid/api)
-monorepo, not guessed.
+GitHub Actions (`.github/workflows/docker-publish.yml`) builds and pushes on
+every push to `main` and on `v*` tags:
 
-## Live data vs. placeholders
+- `ghcr.io/cyxno/unraid-dashboard:latest` — tracks `main`
+- `ghcr.io/cyxno/unraid-dashboard:sha-<commit>` — per-commit
+- `ghcr.io/cyxno/unraid-dashboard:X.Y.Z` — on `vX.Y.Z` tags
 
-**Live (real Unraid API integration):**
+The repo is private, so images are **private**. On the Unraid host run
+`docker login ghcr.io` with a PAT that has `read:packages` before pulling —
+do not embed tokens anywhere in the repository.
 
-- Server name, OS version, uptime (identity / services queries)
-- CPU utilisation, memory utilisation (`metrics` query)
-- Network RX/TX throughput + totals (`metrics.network`)
-- Array state, capacity, per-disk usage, parity status (`array` query)
-- Docker container list, states, update flags (`docker` query)
-- Notification counts + recent warnings/alerts (`notifications` query)
+## Why this deployment uses host networking and 127.0.0.1:442
 
-**Placeholders / limitations:**
+On the target host the WebGUI stack (nginx) only binds the LAN IP and
+localhost, and the built-in API is proxied through it. In practice:
 
-- The **resource history chart** is built from samples collected while the
-  page is open (the API exposes point-in-time metrics only) — it starts
-  empty on each visit.
-- Per-container CPU/memory numbers are only populated in demo data.
-- **Docker, Storage, VMs, Network, Logs, Settings** pages are navigation
-  placeholders.
-- No authentication yet; the data layer is isolated in `src/server` so
-  auth middleware can be added without touching UI code.
+- Node's `fetch` refuses port `79` (the plain-HTTP WebGUI port) as a
+  well-known "bad port", and the HTTPS port serves a self-signed certificate
+  on the LAN interface that would require disabling TLS verification.
+- The clean, verified option is therefore `--network host` with
+  `UNRAID_URL=http://127.0.0.1:442` — nginx's plain-HTTP API proxy on
+  localhost. No TLS is terminated or bypassed by the dashboard, no host
+  config is changed, and the API key still never leaves the process.
 
-When the Unraid API is unreachable, the dashboard serves clearly labelled
-demo data: a **"Demo data"** badge appears in the header and a banner
-explains which sections fell back. Live and fallback data can coexist per
-section; nothing is silently presented as live.
+A bridged deployment works fine against a standard `http://tower:PORT` API
+endpoint — host networking is only needed for this host-local proxy setup.
 
-## Project structure
+## Live vs demo behavior
 
-```
-src/
-├── app/
-│   ├── api/health/route.ts     # container healthcheck
-│   ├── api/overview/route.ts   # BFF: aggregated overview snapshot
-│   ├── page.tsx                # overview page
-│   └── {docker,storage,vms,network,logs,settings}/page.tsx   # placeholders
-├── components/
-│   ├── dashboard/              # stat cards, chart, storage, docker, events
-│   ├── layout/                 # sidebar, header, app shell, polling context
-│   └── ui/                     # button, badge, card, progress, skeleton
-├── hooks/use-overview.ts       # client polling + history accumulation
-├── lib/                        # navigation config, formatting helpers
-└── server/                     # server-only: never imported by client code
-    ├── env.ts                  # zod validation of UNRAID_* variables
-    └── unraid/
-        ├── client.ts           # UnraidClient: fetch + timeout + error types
-        ├── queries.ts          # GraphQL documents (verified field names)
-        ├── mappers.ts          # raw GraphQL -> domain types
-        ├── mock.ts             # clearly flagged demo data
-        ├── overview.ts         # per-section aggregation with graceful fallback
-        └── types.ts            # domain types shared with the UI
-```
+- With a reachable API and a VIEWER key, everything above is **live** data.
+- If a section refresh fails, the UI keeps the **last known good data**,
+  marks it **stale** (with the failure reason), and keeps retrying. It never
+  blanks out or substitutes fake values during an outage.
+- Only if the API has **never** responded since the dashboard process started
+  does the UI show clearly labelled **demo** data (banner + per-section
+  badges) so a fresh install still renders.
 
 ## Development
 
@@ -134,25 +157,53 @@ npm install
 npm run dev         # http://localhost:3000
 npm run lint        # eslint
 npm run typecheck   # tsc --noEmit
+npm test            # node:test via tsx (mappers, health, history, sections)
 npm run build       # production build
 ```
 
-## Deployment (Unraid)
+Queries in `src/server/unraid/queries.ts` are verified against the live API
+on Unraid 7.3.2 by introspection. `VmDomain` exposes only `id`, `name`,
+`state` on this version; container health is parsed from Docker's status
+string because the API does not expose a health field; no per-container
+CPU/memory stats are exposed, so none are shown.
 
-The image is published to `ghcr.io/cyxno/unraid-dashboard` by GitHub Actions
-(`.github/workflows/docker-publish.yml`) on every push to `main`:
+## Security model
 
-- `latest` — tracks `main`
-- `sha-<commit>` — per-commit traceability
-- `X.Y.Z` — on `v*` tags
+- The API key lives only in the server process (env var) — it is never
+  returned by any API route, never placed in client bundles, and never logged.
+- The browser talks only to the dashboard's own routes, which return typed
+  DTOs (no raw GraphQL pass-through).
+- Container detail intentionally omits environment variables (secret values).
+- The log viewer only opens paths reported by the Unraid API's own
+  `logFiles` list, with output capped at 1,000 lines.
+- No Docker socket mount, no privileged mode, no host filesystem mounts,
+  no database, no authentication (deploy on a trusted LAN or put it behind
+  your reverse proxy's auth).
 
-On Unraid, deploy via the **Docker tab → Add Container** using the
-`my-unraid-dashboard` user template (host network mode, port 8090, restart
-policy `unless-stopped`, Docker healthcheck built in). `UNRAID_URL` and
-`UNRAID_API_KEY` are runtime-only configuration — the template stores them on
-the flash drive (`/boot/config/plugins/dockerMan/templates-user/`, root-only
-permissions) and they are never committed to the repository.
+### Known limitations
 
-> Note: the GitHub repository is private, so GHCR images are private too.
-> Run `docker login ghcr.io` on the host (with a PAT having `read:packages`)
-> before pulling, or make the package public.
+- Metrics history is per-process memory; container restarts reset it.
+- VM details are limited by the API schema (name/state only).
+- Docker container health is derived from status text (works with Docker's
+  healthchecks; containers without one show no health badge).
+- No auth: run it on a trusted network.
+- GHCR images are private while the repo is private.
+
+## Roadmap
+
+- Container lifecycle actions (start/stop/restart) behind explicit
+  confirmation, requiring a broader-permission key
+- Optional history persistence (e.g. SQLite or Prometheus remote-write)
+- CPU per-core chart, disk I/O series
+- Auth (SSO/reverse-proxy header trust)
+- PWA manifest + offline shell
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+| --- | --- |
+| Header shows **Demo data** | `UNRAID_URL`/`UNRAID_API_KEY` wrong or API disabled. Check the API panel; test `curl -H "x-api-key: …" $UNRAID_URL/graphql -d '{"query":"{ online }"}' -H 'content-type: application/json'`. |
+| Sections marked **Stale** | The API stopped answering; data is last-known-good. Check the Unraid API process / network. |
+| `Invalid server environment configuration` on boot | Missing `UNRAID_URL` or `UNRAID_API_KEY`. |
+| 401/`Unauthorized` responses | API key invalid or revoked; recreate the VIEWER key. |
+| Chart empty for the first minutes | History builds while the dashboard runs; it starts empty after each container start by design. |
