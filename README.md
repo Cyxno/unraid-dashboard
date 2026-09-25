@@ -39,6 +39,67 @@ raw metric payload.
   virtual interfaces), a **Diagnostics** panel (Unraid + Prometheus reachability,
   latencies, last-success times) and **About** (version, git SHA, build time).
 
+## Lifecycle actions (v0.4)
+
+The dashboard can perform **verified, narrowly-scoped lifecycle actions**:
+Docker start/stop and VM start/stop. Everything else (delete, recreate,
+exec, prunes, image updates) is deliberately not implemented.
+
+**Two-key model** — read and write are physically separate credentials:
+
+| Key | Role/permissions | Powers |
+| --- | --- | --- |
+| `UNRAID_API_KEY` | VIEWER | every read: state, metrics, logs, notifications |
+| `UNRAID_ACTION_API_KEY` | GUEST + `DOCKER:UPDATE_ANY,VMS:UPDATE_ANY` | docker start/stop, vm start/stop — **nothing else** (reads are denied to this key) |
+
+Create the action key once on the host:
+
+```bash
+unraid-api apikey --create --name "unraid dashboard actions" \
+  --roles GUEST --permissions "DOCKER:UPDATE_ANY,VMS:UPDATE_ANY"
+```
+
+Actions are **disabled unless both** `ENABLE_ACTIONS=true` **and** the action
+key are configured. The action subsystem failing or being disabled never
+affects read-only observability.
+
+**Verified against the live API**: the dashboard ships only mutations that
+were probed on the actual Unraid host. On Unraid 7.3.2 (API v4.10.0) that is
+`docker.start`, `docker.stop`, `vm.start`, `vm.stop` — `docker.restart` does
+not exist in this API version and is therefore NOT offered (the GitHub
+schema is newer than the deployed API; the dashboard follows the live host).
+
+**Guards**: every action requires an explicit confirmation dialog
+(start = light, stop = strong with downtime warning), is validated against
+the live inventory (unknown targets refused), is rate-limited (12/min per
+user) with a 10s per-target cooldown, rejects concurrent actions on the
+same target, and is written to the audit log **on every attempt**. Success
+is reported only after the resulting state is verified — no optimistic UI.
+
+**Audit log**: append-only JSONL in `/app/data` (rotate at 2 MiB, 4 rotated
+files kept). Mount a narrow host path for persistence:
+`-v /mnt/user/appdata/unraid-dashboard:/app/data`. Viewable in the
+dashboard under **Audit**. Entries contain actor, source IP, action, target,
+result, duration and a scrubbed error summary — never credentials.
+
+## Authentication (v0.4)
+
+`AUTH_MODE` controls access:
+
+- `disabled` (default): trusted-LAN behavior, identical to v0.3.
+- `proxy`: requests must arrive via your reverse proxy. Pages are served
+  only when the configured identity header (`AUTH_HEADER`, e.g.
+  `X-Forwarded-User`) is present — the proxy injects it after its own
+  authentication (e.g. Authelia); direct requests get 401. Every API route
+  enforces the same policy, `AUTH_ALLOWED_USERS` optionally restricts
+  identities, and all write endpoints additionally enforce same-origin
+  (CSRF) and JSON content-type.
+
+> **Trust model**: self-hosted Next.js cannot see the socket peer address,
+> so proxy mode assumes the dashboard port is only reachable by the proxy
+> (firewall/binding). Without that network separation, LAN clients could
+> forge headers. Settings → Security shows the active mode.
+
 ## Architecture
 
 ```
@@ -248,6 +309,15 @@ Queries in `src/server/unraid/queries.ts` and PromQL in
 this host (Unraid 7.3.2; Prometheus with node-exporter, cAdvisor,
 homelab-exporter and the docker-stats textfile collector). Do not add fields
 or selectors without re-verifying.
+
+## Security headers & CSP
+
+The server sends Content-Security-Policy (self-only; inline allowed for
+Next.js hydration and Recharts), `X-Frame-Options: DENY`,
+`X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and a
+restrictive `Permissions-Policy`. All server-provided text (logs,
+notifications, labels, container names) is rendered as text — no
+`dangerouslySetInnerHTML` anywhere.
 
 ## Security model
 
