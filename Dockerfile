@@ -17,11 +17,11 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ARG APP_VERSION=0.3.0
 ARG GIT_SHA=dev
 ARG BUILD_TIME
-LABEL org.opencontainers.image.title=unraid-dashboard \
-      org.opencontainers.image.description=Self-hosted Unraid server dashboard (Unraid GraphQL + Prometheus) \
-      org.opencontainers.image.vendor=Cyxno \
+LABEL org.opencontainers.image.title="unraid-dashboard" \
+      org.opencontainers.image.description="Self-hosted Unraid server dashboard (Unraid GraphQL + Prometheus)" \
+      org.opencontainers.image.vendor="Cyxno" \
       org.opencontainers.image.source=https://github.com/Cyxno/unraid-dashboard \
-      org.opencontainers.image.licenses=MIT \
+      org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.version=${APP_VERSION} \
       org.opencontainers.image.revision=${GIT_SHA}
 ENV APP_VERSION=${APP_VERSION} \
@@ -32,10 +32,17 @@ RUN npm run build
 # ---------- runtime ----------
 FROM node:22-alpine AS runner
 WORKDIR /app
+# ARGs are per-stage: re-declare so provenance reaches the runtime process.
+ARG APP_VERSION=0.3.0
+ARG GIT_SHA=dev
+ARG BUILD_TIME
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \
-    HOSTNAME=0.0.0.0
+    HOSTNAME=0.0.0.0 \
+    APP_VERSION=${APP_VERSION} \
+    GIT_SHA=${GIT_SHA} \
+    BUILD_TIME=${BUILD_TIME}
 
 RUN addgroup --system --gid 1001 nodejs \
     && adduser --system --uid 1001 nextjs

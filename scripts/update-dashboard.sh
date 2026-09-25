@@ -63,8 +63,12 @@ EXTRA_ARGS=""
 
 echo "==> Pulling $TARGET_IMAGE..."
 if ! docker pull "$TARGET_IMAGE"; then
-  echo "ERROR: pull failed (private GHCR package? run scripts/login-ghcr.sh once)." >&2
-  exit 1
+  if docker image inspect "$TARGET_IMAGE" >/dev/null 2>&1; then
+    echo "==> Pull failed (private registry?) but image exists locally — continuing."
+  else
+    echo "ERROR: pull failed and image is not local (private GHCR package? run scripts/login-ghcr.sh once)." >&2
+    exit 1
+  fi
 fi
 
 echo "==> Recreating container..."
