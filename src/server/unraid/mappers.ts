@@ -53,7 +53,9 @@ function parseUptimeSeconds(value: unknown): number | null {
 
 export function mapIdentity(payload: any): SystemIdentity {
   const apiService = Array.isArray(payload?.services)
-    ? payload.services.find((service: any) => service?.name === "api")
+    ? payload.services.find(
+        (service: any) => service?.name === "unraid-api" || service?.name === "api",
+      )
     : null;
   return {
     serverName:
