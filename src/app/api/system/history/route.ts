@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { guardRead } from "@/server/auth/guard";
 import { getSystemHistoryPayload } from "@/server/metrics-service";
 import { parseWindow } from "@/server/prometheus/windows";
 import type { SystemHistoryMetric } from "@/lib/api-types";
@@ -20,6 +21,8 @@ const METRICS = new Set<SystemHistoryMetric>([
  * server-side and is never supplied by the browser.
  */
 export async function GET(request: NextRequest) {
+  const guard = guardRead(request);
+  if (!guard.ok) return guard.response;
   const metricParam = request.nextUrl.searchParams.get("metric") ?? "cpu";
   const metric = (METRICS as Set<string>).has(metricParam)
     ? (metricParam as SystemHistoryMetric)

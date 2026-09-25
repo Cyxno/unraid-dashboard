@@ -1,13 +1,27 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- raw GraphQL payloads at
    the boundary; all access goes through defensive mappers. */
 import { getUnraidClient, UnraidClient } from "./client";
+import type { ContainerDetailPayload } from "@/lib/api-types";
+
 import {
+  str,
+  toNumber,
+  parseContainerHealth,
+  extractComposeProject,
+  VALID_CONTAINER_STATES,
+} from "./mappers";
+
+
+import {
+
+
   ARRAY_QUERY,
   CONNECTION_PING_QUERY,
   DOCKER_QUERY,
   IDENTITY_QUERY,
   LOG_FILES_QUERY,
   LOG_FILE_QUERY,
+  DETAIL_QUERY,
   METRICS_QUERY,
   NETWORK_INTERFACES_QUERY,
   NOTIFICATIONS_LIST_QUERY,
@@ -44,9 +58,11 @@ import { getPromClient } from "@/server/prometheus/client";
 import { PrometheusError } from "@/server/prometheus/client";
 import {
   getContainerMetrics,
+  getContainerNetworkThroughput,
   isHighMemory,
+  type ContainerNetworkRate,
 } from "@/server/prometheus/containers";
-import type { ContainerMetrics, MetricMeta } from "@/lib/api-types";
+import type { ContainerHealth, ContainerMetrics, MetricMeta } from "@/lib/api-types";
 import type {
   ConnectionStatus,
   DashboardNotification,
@@ -375,7 +391,22 @@ async function getContainerMetricsJoined(): Promise<{
     };
   }
   try {
-    const metrics = await getContainerMetrics(getPromClient());
+    const [metrics, network] = await Promise.all([
+      getContainerMetrics(getPromClient()),
+      getContainerNetworkThroughput().catch(() => new Map<string, ContainerNetworkRate>()),
+    ]);
+    // Join network rates into the metric rows.
+    for (const [joinName, rate] of network) {
+      const existing = metrics.get(joinName);
+      if (existing) {
+        metrics.set(joinName, {
+          ...existing,
+          networkRxBytesPerSec: rate.reliable ? rate.rxBytesPerSec : null,
+          networkTxBytesPerSec: rate.reliable ? rate.txBytesPerSec : null,
+          networkReliable: rate.reliable,
+        });
+      }
+    }
     return {
       metrics,
       meta: {
@@ -626,6 +657,114 @@ export async function getConnectionStatus(): Promise<ConnectionStatus> {
       latencyMs: null,
       roles: [],
       lastSuccessAt: null,
+    };
+  }
+}
+
+/* v0.4: container detail --------------------------------------------------- */
+
+
+
+/**
+ * Full detail for one container by name, from the live Unraid API.
+ * Read-only; JSON blobs (mounts/networkSettings/labels) are reduced to
+ * safe display shapes. Environment variables are not exposed by the API
+ * schema at all.
+ */
+export async function getContainerDetail(name: string): Promise<Section<ContainerDetailPayload | null>> {
+  const valid = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(name);
+  if (!valid) {
+    return {
+      status: "unavailable",
+      data: null,
+      fetchedAt: new Date().toISOString(),
+      ageMs: 0,
+      reason: "Invalid container name.",
+    };
+  }
+  try {
+    const payload = await getUnraidClient().request(DETAIL_QUERY);
+    const containers: any[] = Array.isArray((payload as any)?.docker?.containers)
+      ? (payload as any).docker.containers
+      : [];
+    const match = containers.find(
+      (container) =>
+        Array.isArray(container?.names) &&
+        String(container.names[0] ?? "").replace(/^\//, "") === name,
+    );
+    if (!match) {
+      return {
+        status: "live",
+        data: null,
+        fetchedAt: new Date().toISOString(),
+        ageMs: 0,
+      };
+    }
+    const status = str(match?.status);
+    const mounts = Array.isArray(match?.mounts) ? match.mounts : [];
+    const ns = match?.networkSettings ?? {};
+    const networksRaw = ns?.networks ?? {};
+    const labelsRaw = match?.labels ?? {};
+    const labels: Record<string, string> = {};
+    if (labelsRaw && typeof labelsRaw === "object") {
+      for (const [key, value] of Object.entries(labelsRaw as Record<string, unknown>)) {
+        labels[key] = String(value ?? "");
+      }
+    }
+    return {
+      status: "live",
+      data: {
+        id: str(match?.id) ?? "unknown",
+        name,
+        image: str(match?.image) ?? "unknown",
+        command: str(match?.command),
+        state: VALID_CONTAINER_STATES.has(match?.state) ? match.state : "EXITED",
+        status: status ?? "",
+        health: parseContainerHealth(status),
+        autoStart: Boolean(match?.autoStart),
+        updateAvailable: Boolean(match?.isUpdateAvailable),
+        iconUrl: str(match?.iconUrl),
+        webUiUrl: str(match?.webUiUrl),
+        createdEpochSeconds: toNumber(match?.created),
+        composeProject: extractComposeProject(match?.labels),
+        ports: (Array.isArray(match?.ports) ? match.ports : [])
+          .map((port: any) => ({
+            privatePort: toNumber(port?.privatePort),
+            publicPort: toNumber(port?.publicPort),
+            type: str(port?.type),
+          }))
+          .filter(
+            (port: { privatePort: number | null; publicPort: number | null }) =>
+              port.privatePort !== null || port.publicPort !== null,
+          ),
+        mounts: mounts
+          .map((mount: any) => ({
+            type: str(mount?.Type) ?? str(mount?.type),
+            source: str(mount?.Source) ?? str(mount?.source),
+            destination: str(mount?.Destination) ?? str(mount?.destination),
+            rw: typeof mount?.RW === "boolean" ? mount.RW : null,
+          }))
+          .slice(0, 30),
+        networks: Object.entries(networksRaw as Record<string, any>)
+          .map(([networkName, network]) => ({
+            name: networkName,
+            ip: str(network?.IPAddress),
+            gateway: str(network?.Gateway),
+            mac: str(network?.MacAddress) ?? str(network?.DeviceMacAddress),
+          }))
+          .slice(0, 10),
+        labels,
+      },
+      fetchedAt: new Date().toISOString(),
+      ageMs: 0,
+    };
+  } catch (error) {
+    return {
+      status: "unavailable",
+      data: null,
+      fetchedAt: new Date().toISOString(),
+      ageMs: 0,
+      reason: error instanceof Error ? error.message : "unknown error",
     };
   }
 }

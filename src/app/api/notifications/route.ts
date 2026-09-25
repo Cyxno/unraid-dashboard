@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { guardRead } from "@/server/auth/guard";
 import { getNotificationList } from "@/server/unraid/service";
 
 export const dynamic = "force-dynamic";
@@ -6,6 +7,8 @@ export const dynamic = "force-dynamic";
 const IMPORTANCES = new Set(["INFO", "WARNING", "ALERT"]);
 
 export async function GET(request: NextRequest) {
+  const guard = guardRead(request);
+  if (!guard.ok) return guard.response;
   const params = request.nextUrl.searchParams;
   const type = params.get("type") === "ARCHIVE" ? "ARCHIVE" : "UNREAD";
   const importanceParam = params.get("importance") ?? undefined;

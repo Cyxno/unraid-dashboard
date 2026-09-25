@@ -421,6 +421,13 @@ export interface ContainerMetrics {
   hasMemoryLimit: boolean;
   /** Absolute memory percent of host RAM (docker stats semantics). */
   memoryPercentOfHost: number | null;
+  /**
+   * Per-container network RX/TX (cAdvisor). Null/unreliable for
+   * host-networked containers — the numbers would be host-wide.
+   */
+  networkRxBytesPerSec: number | null;
+  networkTxBytesPerSec: number | null;
+  networkReliable: boolean;
 }
 
 export interface ContainerHistoryPayload {
@@ -430,6 +437,8 @@ export interface ContainerHistoryPayload {
   name: string;
   cpu: HistoryPoint[];
   memoryBytes: HistoryPoint[];
+  /** Null when the container is host-networked (unreliable). */
+  network: { rx: HistoryPoint[]; tx: HistoryPoint[] } | null;
 }
 
 /** Top consumers widget payload. */
@@ -546,4 +555,113 @@ export interface OverviewExtras {
   unhealthyContainers: number | null;
   highMemoryContainers: number | null;
   topConsumers: TopConsumers | null;
+}
+
+/* ==========================================================================
+ * v0.4: access control, write actions, audit
+ * ========================================================================== */
+
+export interface AuthIdentity {
+  mode: "disabled" | "proxy";
+  /** Proxy-authenticated user name, when known. */
+  user: string | null;
+}
+
+export interface AuthStatus {
+  mode: "disabled" | "proxy";
+  /** Signed-in identity (proxy mode), or null. */
+  user: string | null;
+  /** True when write actions are enabled and configured server-side. */
+  actionsEnabled: boolean;
+  /** Human reason when actions are disabled. */
+  actionsDisabledReason: string | null;
+}
+
+/** Allowlisted lifecycle action types. */
+export type ContainerActionType = "start" | "stop" | "restart";
+export type VmActionType = "start" | "stop";
+
+export interface ActionRequestBody {
+  /** "docker" or "vm". */
+  kind: "docker" | "vm";
+  action: ContainerActionType | VmActionType;
+  /** Exact target id from the live inventory (docker composite id / VM domain id). */
+  id: string;
+  /** Exact target name — verified against the live inventory before mutating. */
+  name?: string;
+}
+
+export interface ActionResponseBody {
+  ok: boolean;
+  /** Action accepted and executed (state transition verified separately). */
+  status:
+    | "success"
+    | "rejected"
+    | "not-found"
+    | "already-in-state"
+    | "timeout"
+    | "error";
+  message?: string;
+  /** Post-action state from the live inventory, when readable. */
+  state?: string | null;
+  /** Audit entry id for traceability. */
+  auditId?: string;
+}
+
+export interface AuditEntry {
+  id: string;
+  timestamp: string;
+  /** Authenticated user (proxy mode) or "local". */
+  actor: string;
+  /** Client IP as observed by the dashboard. */
+  sourceIp: string;
+  kind: "docker" | "vm";
+  action: string;
+  /** Target name (display) and id. */
+  targetName: string;
+  targetId: string;
+  result: "success" | "failed" | "rejected" | "not-found" | "already-in-state" | "timeout";
+  durationMs: number;
+  /** Short error summary, no credential material ever. */
+  error?: string;
+}
+
+export interface AuditLogPayload {
+  entries: AuditEntry[];
+  total: number;
+  truncated: boolean;
+}
+
+export interface ActionsCapabilities {
+  enabled: boolean;
+  /** Reason when disabled (missing key, flag off, …). */
+  reason: string | null;
+  docker: ContainerActionType[];
+  vm: VmActionType[];
+  cooldownMs: number;
+  ratePerMinute: number;
+}
+
+export interface ContainerDetailPayload {
+  /* eslint-disable-next-line -- dto */
+  id: string;
+  name: string;
+  image: string;
+  command: string | null;
+  state: string;
+  status: string;
+  health: ContainerHealth;
+  autoStart: boolean;
+  updateAvailable: boolean;
+  iconUrl: string | null;
+  webUiUrl: string | null;
+  createdEpochSeconds: number | null;
+  composeProject: string | null;
+  ports: { privatePort: number | null; publicPort: number | null; type: string | null }[];
+  /** Parsed docker inspect mounts (safe subset). */
+  mounts: Array<{ type: string | null; source: string | null; destination: string | null; rw: boolean | null }>;
+  /** Parsed network settings (safe subset): per-network IP/gateway + mac. */
+  networks: Array<{ name: string; ip: string | null; gateway: string | null; mac: string | null }>;
+  /** Full label set (labels are not env secrets). */
+  labels: Record<string, string>;
 }

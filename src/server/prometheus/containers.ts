@@ -6,7 +6,7 @@ import {
   HOST_MEM_TOTAL_CACHE_KEY,
   MEMORY_TOTAL_QUERY,
 } from "./queries";
-import { PromClient, withCache } from "./client";
+import { getPromClient, PromClient, withCache } from "./client";
 import {
   CONTAINER_HIGH_CPU_PERCENT,
   CONTAINER_HIGH_MEMORY_BYTES,
@@ -101,6 +101,9 @@ export async function getContainerMetrics(
             : null,
         hasMemoryLimit: hasLimit,
         memoryPercentOfHost: percentMap.get(name) ?? null,
+        networkRxBytesPerSec: null,
+        networkTxBytesPerSec: null,
+        networkReliable: false,
       });
     }
     return result;
@@ -193,4 +196,106 @@ export function isHighMemory(
     }
   }
   return memoryUsedBytes !== null && memoryUsedBytes >= CONTAINER_HIGH_MEMORY_BYTES;
+}
+
+/* v0.4: per-container network throughput ----------------------------------- */
+
+/**
+ * cAdvisor reports network from each container's netns. For containers on
+ * docker bridges that is the container's own eth0 — reliable. For
+ * host-networked containers the netns is the host's, so every host
+ * interface (br-*, veth*, eth0, …) is attributed to the container —
+ * unreliable and double-counted at interface level.
+ *
+ * Detection rule: if a container reports ANY series on a host-only
+ * interface pattern (br-*, br0, br1, docker0, veth*, shim-*, tunl0, lo), its
+ * network numbers are marked unreliable and excluded; everything else is
+ * summed across its eth* interfaces.
+ */
+
+const HOST_IFACE_PATTERN = /^(br-|br[0-9]+$|docker0|veth|shim-|tunl0|lo$)/;
+
+export interface ContainerNetworkRate {
+  rxBytesPerSec: number | null;
+  txBytesPerSec: number | null;
+  reliable: boolean;
+}
+
+export async function getContainerNetworkThroughput(): Promise<Map<string, ContainerNetworkRate>> {
+  const client = getPromClient();
+  return withCache("containers:network", 5_000, async () => {
+    const rx = await client.instant(
+      'sum by (name, interface) (rate(container_network_receive_bytes_total{name!=""}[2m]))',
+    );
+    const tx = await client.instant(
+      'sum by (name, interface) (rate(container_network_transmit_bytes_total{name!=""}[2m]))',
+    );
+
+    interface Row {
+      name: string;
+      iface: string;
+      v: number | null;
+    }
+    const rows = (samples: typeof rx): Row[] =>
+      samples
+        .map((sample) => ({
+          name: sample.metric.name ?? "",
+          iface: sample.metric.interface ?? "",
+          v: sample.v,
+        }))
+        .filter((row) => row.name.length > 0 && row.iface.length > 0);
+
+    const rxRows = rows(rx);
+    const txRows = rows(tx);
+    const names = new Set<string>([...rxRows, ...txRows].map((row) => row.name));
+
+    const result = new Map<string, ContainerNetworkRate>();
+    for (const name of names) {
+      const ownRx = rxRows.filter((row) => row.name === name);
+      const ownTx = txRows.filter((row) => row.name === name);
+      const seesHostIfaces =
+        ownRx.some((row) => HOST_IFACE_PATTERN.test(row.iface)) ||
+        ownTx.some((row) => HOST_IFACE_PATTERN.test(row.iface));
+      if (seesHostIfaces) {
+        result.set(name, { rxBytesPerSec: null, txBytesPerSec: null, reliable: false });
+        continue;
+      }
+      const sum = (list: Row[]) =>
+        list.reduce<number>((total, row) => total + (row.v ?? 0), 0);
+      result.set(name, {
+        rxBytesPerSec: sum(ownRx),
+        txBytesPerSec: sum(ownTx),
+        reliable: true,
+      });
+    }
+    return result;
+  });
+}
+
+/** Per-container network rate history over a range (reliable containers only). */
+export async function getContainerNetworkHistory(
+  clientName: string,
+  startSeconds: number,
+  endSeconds: number,
+  stepSeconds: number,
+  rateWindow: string,
+): Promise<{ rx: HistoryPoint[]; tx: HistoryPoint[] } | null> {
+  const client = getPromClient();
+  const escaped = promqlString(clientName);
+  const rxQuery = `sum by (name) (rate(container_network_receive_bytes_total{name=${escaped},interface=~"eth[0-9]*"}[${rateWindow}]))`;
+  const txQuery = `sum by (name) (rate(container_network_transmit_bytes_total{name=${escaped},interface=~"eth[0-9]*"}[${rateWindow}]))`;
+  // Host-netns check: any host-pattern interface on this container → unreliable.
+  const anyHostIface = await client.instant(
+    `count by (name) (container_network_receive_bytes_total{name=${escaped},interface=~"${HOST_IFACE_PATTERN.source}"})`,
+  ).catch(() => []);
+  if (anyHostIface.length > 0) return null;
+
+  const [rxMatrix, txMatrix] = await Promise.all([
+    client.range(rxQuery, startSeconds, endSeconds, stepSeconds),
+    client.range(txQuery, startSeconds, endSeconds, stepSeconds),
+  ]);
+  const collapse = (matrix: Awaited<ReturnType<PromClient["range"]>>): HistoryPoint[] =>
+    matrix.flatMap((entry) => entry.points).sort((a, b) => a.t - b.t)
+      .map((point) => ({ t: point.t * 1000, v: point.v }));
+  return { rx: collapse(rxMatrix), tx: collapse(txMatrix) };
 }

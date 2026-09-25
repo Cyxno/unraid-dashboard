@@ -29,7 +29,40 @@ export interface Prefs {
   showPerCore: boolean;
   /** Compact metric columns on the Docker page. */
   dockerMetrics: boolean;
+  /** Overview widget order (ids of the six summary cards). */
+  overviewOrder: string[];
+  /** User-saved views: named snapshots of display prefs. */
+  savedViews: Record<string, SavedView>;
 }
+
+/** A saved view snapshots the display prefs it covers (never secrets). */
+export interface SavedView {
+  refresh: RefreshPreset;
+  tempUnit: TempUnit;
+  density: Density;
+  historyWindow: HistoryWindowPref;
+  showPerCore: boolean;
+  dockerMetrics: boolean;
+  overviewOrder: string[];
+}
+
+export const DEFAULT_OVERVIEW_ORDER = [
+  "cpu",
+  "memory",
+  "uptime",
+  "array",
+  "network",
+  "docker",
+] as const;
+
+/** Built-in view presets; NOC is a navigation shortcut, not a pref set. */
+export const BUILT_IN_VIEWS: Record<string, () => Partial<SavedView>> = {
+  Default: () => ({}),
+  "Docker-heavy": () => ({ dockerMetrics: true, density: "compact", historyWindow: "1h" }),
+  "Storage-heavy": () => ({ historyWindow: "24h", density: "compact" }),
+  Thermal: () => ({ tempUnit: "C", showPerCore: true, historyWindow: "6h" }),
+  Network: () => ({ historyWindow: "15m" }),
+};
 
 export const REFRESH_INTERVAL_MS: Record<RefreshPreset, number> = {
   fast: 3_000,
@@ -74,6 +107,8 @@ const DEFAULTS: Prefs = {
   historyWindow: "15m",
   showPerCore: true,
   dockerMetrics: true,
+  overviewOrder: [...DEFAULT_OVERVIEW_ORDER],
+  savedViews: {},
 };
 
 const STORAGE_KEY = "unraid-dashboard.prefs.v1";

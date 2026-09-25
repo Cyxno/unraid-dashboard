@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { usePoll } from "@/hooks/use-poll";
-import { formatDateTimeIso, formatBytes } from "@/lib/utils";
+import { cn, formatDateTimeIso, formatBytes } from "@/lib/utils";
 import type { LogContent, LogFileEntry, Section } from "@/lib/api-types";
 
 const DEFAULT_LINES = 300;
@@ -22,6 +22,8 @@ export default function LogsPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [lines, setLines] = useState(DEFAULT_LINES);
   const [search, setSearch] = useState("");
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
 
   const [content, setContent] = useState<Section<LogContent> | null>(null);
   const [contentLoading, setContentLoading] = useState(false);
@@ -45,8 +47,7 @@ export default function LogsPage() {
   }, []);
 
   // Auto-select syslog once the file list arrives; explicit user selection
-  // always wins. The fetch effect is async-only (no synchronous state
-  // updates during render commits) to avoid cascading renders.
+  // always wins. Defined as a plain value (no render-time state updates).
   const activePath =
     selected ??
     files.data?.data?.find((file) => file.path.endsWith("/syslog"))?.path ??
@@ -62,9 +63,44 @@ export default function LogsPage() {
     void loadContent(activePath, lines);
   }, [activePath, lines, loadContent]);
 
+  // Optional auto-refresh (10s) — pause stops both polling and scroll churn.
+  useEffect(() => {
+    if (!autoRefresh || !activePath) return;
+    const timer = setInterval(() => void loadContent(activePath, lines), 10_000);
+    return () => clearInterval(timer);
+  }, [autoRefresh, activePath, lines, loadContent]);
+
   const filteredLines = (content?.data?.lines ?? []).filter((line) =>
     search.trim() ? line.toLowerCase().includes(search.trim().toLowerCase()) : true,
   );
+
+  /** Conservative severity classification from the line's own text. */
+  const severityOf = (line: string): "error" | "warn" | null => {
+    if (/\b(err(or)?|critical|alert|fatal|panic)\b/i.test(line)) return "error";
+    if (/\bwarn(ing)?\b/i.test(line)) return "warn";
+    return null;
+  };
+
+  const copyLine = async (line: string) => {
+    try {
+      await navigator.clipboard.writeText(line);
+      setCopied(line.slice(0, 40));
+      setTimeout(() => setCopied(null), 1500);
+    } catch {
+      // Clipboard unavailable — silently ignore.
+    }
+  };
+
+  const downloadSlice = () => {
+    if (!content?.data) return;
+    const blob = new Blob([content.data.lines.join("\n")], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${content.data.path.split("/").pop() ?? "log"}-tail.txt`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div>
@@ -167,12 +203,32 @@ export default function LogsPage() {
               </label>
               <Button
                 size="sm"
+                variant={autoRefresh ? "secondary" : "ghost"}
+                aria-pressed={autoRefresh}
+                className="h-8 px-2 text-xs"
+                disabled={!selected}
+                onClick={() => setAutoRefresh((value) => !value)}
+                title="Reload the tail every 10 seconds"
+              >
+                {autoRefresh ? "Pause" : "Auto-refresh"}
+              </Button>
+              <Button
+                size="sm"
                 variant="ghost"
                 className="h-8 px-2 text-xs"
                 disabled={!selected || contentLoading}
                 onClick={() => selected && void loadContent(selected, lines)}
               >
                 Reload
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-8 px-2 text-xs"
+                disabled={!content?.data}
+                onClick={downloadSlice}
+              >
+                Download tail
               </Button>
             </div>
           </CardHeader>
@@ -207,14 +263,25 @@ export default function LogsPage() {
                     className="max-h-[62vh] overflow-auto rounded-md bg-background p-3 font-mono text-xs leading-5"
                     aria-label="Log content"
                   >
-                    {filteredLines.map((line, index) => (
-                      <div
-                        key={`${index}-${line.slice(0, 12)}`}
-                        className="whitespace-pre-wrap break-all"
-                      >
-                        {line}
-                      </div>
-                    ))}
+                    {filteredLines.map((line, index) => {
+                      const severity = severityOf(line);
+                      return (
+                        <button
+                          key={`${index}-${line.slice(0, 12)}`}
+                          type="button"
+                          title="Click to copy this line"
+                          onClick={() => void copyLine(line)}
+                          className={cn(
+                            "block w-full whitespace-pre-wrap break-all rounded text-left",
+                            severity === "error" && "text-destructive",
+                            severity === "warn" && "text-warning",
+                            copied === line.slice(0, 40) && "bg-secondary",
+                          )}
+                        >
+                          {line}
+                        </button>
+                      );
+                    })}
                   </pre>
                 )}
                 {search && (

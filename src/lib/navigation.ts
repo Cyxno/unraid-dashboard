@@ -2,12 +2,14 @@ import {
   Activity,
   Boxes,
   BellRing,
+  ClipboardList,
   HardDrive,
   LayoutDashboard,
   Monitor,
   Network,
   ScrollText,
   Settings,
+  Tv,
   type LucideIcon,
 } from "lucide-react";
 
@@ -28,5 +30,7 @@ export const NAV_ITEMS: NavItem[] = [
   { title: "System", href: "/system", icon: Activity },
   { title: "Notifications", href: "/notifications", icon: BellRing },
   { title: "Logs", href: "/logs", icon: ScrollText },
+  { title: "Audit", href: "/audit", icon: ClipboardList },
+  { title: "NOC mode", href: "/noc", icon: Tv },
   { title: "Settings", href: "/settings", icon: Settings },
 ];

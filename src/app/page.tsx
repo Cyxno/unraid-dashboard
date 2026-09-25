@@ -11,6 +11,7 @@ import {
   Thermometer,
 } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
 import { useOverview } from "@/components/layout/overview-provider";
 import { MetricCard, MetricCardSkeleton } from "@/components/dashboard/metric-card";
 import { SeriesChart } from "@/components/dashboard/series-chart";
@@ -20,7 +21,8 @@ import { StorageOverview } from "@/components/dashboard/storage-overview";
 import { DockerOverviewList } from "@/components/dashboard/docker-overview-list";
 import { NotificationsCard } from "@/components/dashboard/notifications-card";
 import { MetricStatus } from "@/components/dashboard/section-status";
-import { usePrefs, type HistoryWindowPref } from "@/lib/prefs";
+import { Button } from "@/components/ui/button";
+import { usePrefs, DEFAULT_OVERVIEW_ORDER, type HistoryWindowPref } from "@/lib/prefs";
 import {
   formatBytes,
   formatPercent,
@@ -70,6 +72,17 @@ export default function OverviewPage() {
   const payload = overview.data;
   const loading = overview.loading && !payload;
   const extras = payload?.extras ?? null;
+  const [customizeLayout, setCustomizeLayout] = useState(false);
+
+  /** Keyboard-accessible card reordering (no drag/drop dependency). */
+  const moveCard = (id: string, direction: -1 | 1) => {
+    const order = [...prefs.overviewOrder];
+    const from = order.indexOf(id);
+    const to = from + direction;
+    if (from < 0 || to < 0 || to >= order.length) return;
+    [order[from], order[to]] = [order[to]!, order[from]!];
+    setPref("overviewOrder", order);
+  };
 
   return (
     <div className="space-y-5">
@@ -84,6 +97,27 @@ export default function OverviewPage() {
         aria-label="Resource summary"
         className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3"
       >
+        <div className="col-span-full -mb-1 flex items-center gap-2">
+          <Button
+            size="sm"
+            variant={customizeLayout ? "secondary" : "ghost"}
+            aria-pressed={customizeLayout}
+            onClick={() => setCustomizeLayout((value) => !value)}
+            className="h-6 px-2 text-[11px]"
+          >
+            {customizeLayout ? "Done reordering" : "Customize layout"}
+          </Button>
+          {customizeLayout && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setPref("overviewOrder", [...DEFAULT_OVERVIEW_ORDER])}
+              className="h-6 px-2 text-[11px]"
+            >
+              Reset order
+            </Button>
+          )}
+        </div>
         {loading || !payload
           ? Array.from({ length: 6 }).map((_, index) => (
               <MetricCardSkeleton key={index} />
@@ -102,131 +136,174 @@ export default function OverviewPage() {
               const highMem = extras?.highMemoryContainers ?? 0;
               return (
                 <>
-                  <MetricCard
-                    label="CPU"
-                    icon={Cpu}
-                    section={cpu}
-                    value={formatPercent(cpu.data?.percentTotal)}
-                    percent={cpu.data?.percentTotal ?? null}
-                    detail={
-                      <>
-                        {load && load.five !== null ? (
-                          <span className="block">
-                            load {load.one?.toFixed(2) ?? "—"} / {load.five.toFixed(2)} /{" "}
-                            {load.fifteen?.toFixed(2) ?? "—"}
-                            {load.threads !== null && ` · ${load.threads} threads`}
-                          </span>
-                        ) : null}
-                        {thermal && thermal.packageC !== null ? (
-                          <span
-                            className={`inline-flex items-center gap-1 ${
-                              (thermal.peak1hC ?? 0) >= 90 ? "text-destructive" : ""
-                            }`}
-                          >
-                            <Thermometer className="size-3" aria-hidden="true" />
-                            {formatTemp(thermal.packageC, prefs.tempUnit)}
-                            {thermal.peak1hC !== null &&
-                              ` · 1h peak ${formatTemp(thermal.peak1hC, prefs.tempUnit)}`}
-                          </span>
-                        ) : null}
-                        {temp && temp.criticalCount > 0 && (
-                          <span className="block text-destructive">
-                            {temp.criticalCount} sensor(s) critical
-                          </span>
-                        )}
-                      </>
-                    }
-                  />
-                  <MetricCard
-                    label="Memory"
-                    icon={MemoryStick}
-                    section={memory}
-                    value={formatPercent(memory.data?.percentTotal)}
-                    percent={memory.data?.percentTotal ?? null}
-                    detail={`${formatBytes(memory.data?.usedBytes)} of ${formatBytes(memory.data?.totalBytes)}`}
-                  />
-                  <MetricCard
-                    label="Uptime"
-                    icon={Clock}
-                    section={identity}
-                    value={formatUptime(identity.data?.uptimeSeconds)}
-                    detail={
-                      identity.data?.osVersion
-                        ? `Unraid v${identity.data.osVersion}`
-                        : undefined
-                    }
-                  />
-                  <MetricCard
-                    label="Array usage"
-                    icon={HardDrive}
-                    section={storage}
-                    value={formatBytes(storage.data?.usedBytes)}
-                    percent={
-                      storage.data && storage.data.totalBytes > 0
-                        ? (storage.data.usedBytes / storage.data.totalBytes) * 100
-                        : null
-                    }
-                    detail={
-                      storage.data ? (
-                        <>
-                          <span className="block">
-                            of {formatBytes(storage.data.totalBytes)} · {storage.data.disks.length}{" "}
-                            disks · {humanState(storage.data.state)}
-                          </span>
-                          {extras?.diskIo &&
-                            (extras.diskIo.readBytesPerSec !== null ||
-                              extras.diskIo.writeBytesPerSec !== null) && (
-                              <span className="block">
-                                disk I/O ↓ {formatRate(extras.diskIo.readBytesPerSec)} · ↑{" "}
-                                {formatRate(extras.diskIo.writeBytesPerSec)}
+                  {prefs.overviewOrder.map((cardId) => {
+                    const card =
+                      cardId === "cpu" ? (
+                        <MetricCard
+                          key="cpu"
+                          label="CPU"
+                          icon={Cpu}
+                          section={cpu}
+                          value={formatPercent(cpu.data?.percentTotal)}
+                          percent={cpu.data?.percentTotal ?? null}
+                          detail={
+                            <>
+                              {load && load.five !== null ? (
+                                <span className="block">
+                                  load {load.one?.toFixed(2) ?? "—"} / {load.five.toFixed(2)} /{" "}
+                                  {load.fifteen?.toFixed(2) ?? "—"}
+                                  {load.threads !== null && ` · ${load.threads} threads`}
+                                </span>
+                              ) : null}
+                              {thermal && thermal.packageC !== null ? (
+                                <span
+                                  className={`inline-flex items-center gap-1 ${
+                                    (thermal.peak1hC ?? 0) >= 90 ? "text-destructive" : ""
+                                  }`}
+                                >
+                                  <Thermometer className="size-3" aria-hidden="true" />
+                                  {formatTemp(thermal.packageC, prefs.tempUnit)}
+                                  {thermal.peak1hC !== null &&
+                                    ` · 1h peak ${formatTemp(thermal.peak1hC, prefs.tempUnit)}`}
+                                </span>
+                              ) : null}
+                              {temp && temp.criticalCount > 0 && (
+                                <span className="block text-destructive">
+                                  {temp.criticalCount} sensor(s) critical
+                                </span>
+                              )}
+                            </>
+                          }
+                        />
+                      ) : cardId === "memory" ? (
+                        <MetricCard
+                          key="memory"
+                          label="Memory"
+                          icon={MemoryStick}
+                          section={memory}
+                          value={formatPercent(memory.data?.percentTotal)}
+                          percent={memory.data?.percentTotal ?? null}
+                          detail={`${formatBytes(memory.data?.usedBytes)} of ${formatBytes(memory.data?.totalBytes)}`}
+                        />
+                      ) : cardId === "uptime" ? (
+                        <MetricCard
+                          key="uptime"
+                          label="Uptime"
+                          icon={Clock}
+                          section={identity}
+                          value={formatUptime(identity.data?.uptimeSeconds)}
+                          detail={
+                            identity.data?.osVersion
+                              ? `Unraid v${identity.data.osVersion}`
+                              : undefined
+                          }
+                        />
+                      ) : cardId === "array" ? (
+                        <MetricCard
+                          key="array"
+                          label="Array usage"
+                          icon={HardDrive}
+                          section={storage}
+                          value={formatBytes(storage.data?.usedBytes)}
+                          percent={
+                            storage.data && storage.data.totalBytes > 0
+                              ? (storage.data.usedBytes / storage.data.totalBytes) * 100
+                              : null
+                          }
+                          detail={
+                            storage.data ? (
+                              <>
+                                <span className="block">
+                                  of {formatBytes(storage.data.totalBytes)} · {storage.data.disks.length}{" "}
+                                  disks · {humanState(storage.data.state)}
+                                </span>
+                                {extras?.diskIo &&
+                                  (extras.diskIo.readBytesPerSec !== null ||
+                                    extras.diskIo.writeBytesPerSec !== null) && (
+                                    <span className="block">
+                                      disk I/O ↓ {formatRate(extras.diskIo.readBytesPerSec)} · ↑{" "}
+                                      {formatRate(extras.diskIo.writeBytesPerSec)}
+                                    </span>
+                                  )}
+                              </>
+                            ) : undefined
+                          }
+                        />
+                      ) : cardId === "network" ? (
+                        <MetricCard
+                          key="network"
+                          label="Network"
+                          icon={ArrowDownToLine}
+                          section={network}
+                          value={formatRate(extras?.primaryRx ?? network.data?.rxBytesPerSec)}
+                          detail={
+                            <>
+                              <span className="inline-flex items-center gap-1">
+                                <ArrowUpFromLine className="size-3" aria-hidden="true" />
+                                TX {formatRate(extras?.primaryTx ?? network.data?.txBytesPerSec)}
                               </span>
-                            )}
-                        </>
-                      ) : undefined
-                    }
-                  />
-                  <MetricCard
-                    label="Network"
-                    icon={ArrowDownToLine}
-                    section={network}
-                    value={formatRate(extras?.primaryRx ?? network.data?.rxBytesPerSec)}
-                    detail={
-                      <>
-                        <span className="inline-flex items-center gap-1">
-                          <ArrowUpFromLine className="size-3" aria-hidden="true" />
-                          TX {formatRate(extras?.primaryTx ?? network.data?.txBytesPerSec)}
-                        </span>
-                        {extras?.primaryInterface && (
-                          <span className="block">{extras.primaryInterface}</span>
-                        )}
-                      </>
-                    }
-                  />
-                  <MetricCard
-                    label="Docker"
-                    icon={Boxes}
-                    section={docker}
-                    value={
-                      docker.data ? `${docker.data.running}/${docker.data.total}` : "—"
-                    }
-                    detail={
-                      <>
-                        {(unhealthy > 0 || highMem > 0) && (
-                          <span className="block">
-                            {unhealthy > 0 && `${unhealthy} unhealthy`}
-                            {unhealthy > 0 && highMem > 0 && " · "}
-                            {highMem > 0 && `${highMem} high memory`}
-                          </span>
-                        )}
-                        <Link
-                          href="/docker"
-                          className="underline-offset-2 hover:underline"
-                        >
-                          View containers
-                        </Link>
-                      </>
-                    }
-                  />
+                              {extras?.primaryInterface && (
+                                <span className="block">{extras.primaryInterface}</span>
+                              )}
+                            </>
+                          }
+                        />
+                      ) : (
+                        <MetricCard
+                          key="docker"
+                          label="Docker"
+                          icon={Boxes}
+                          section={docker}
+                          value={
+                            docker.data ? `${docker.data.running}/${docker.data.total}` : "—"
+                          }
+                          detail={
+                            <>
+                              {(unhealthy > 0 || highMem > 0) && (
+                                <span className="block">
+                                  {unhealthy > 0 && `${unhealthy} unhealthy`}
+                                  {unhealthy > 0 && highMem > 0 && " · "}
+                                  {highMem > 0 && `${highMem} high memory`}
+                                </span>
+                              )}
+                              <Link
+                                href="/docker"
+                                className="underline-offset-2 hover:underline"
+                              >
+                                View containers
+                              </Link>
+                            </>
+                          }
+                        />
+                      );
+                    if (!customizeLayout) return card;
+                    const position = prefs.overviewOrder.indexOf(cardId);
+                    return (
+                      <div key={cardId} className="relative">
+                        <div className="absolute right-2 top-2 z-10 flex gap-0.5">
+                          <button
+                            type="button"
+                            aria-label={`Move ${cardId} card earlier`}
+                            disabled={position === 0}
+                            onClick={() => moveCard(cardId, -1)}
+                            className="rounded bg-background/80 px-1 text-xs text-muted-foreground hover:bg-secondary disabled:opacity-30"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Move ${cardId} card later`}
+                            disabled={position === prefs.overviewOrder.length - 1}
+                            onClick={() => moveCard(cardId, 1)}
+                            className="rounded bg-background/80 px-1 text-xs text-muted-foreground hover:bg-secondary disabled:opacity-30"
+                          >
+                            ↓
+                          </button>
+                        </div>
+                        {card}
+                      </div>
+                    );
+                  })}
                 </>
               );
             })()}

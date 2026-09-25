@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { Menu, RefreshCw } from "lucide-react";
+import { ViewsMenu } from "./views-menu";
+import { AuthIndicator } from "./auth-indicator";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatUptime, humanState } from "@/lib/utils";
@@ -138,6 +140,8 @@ export function Header({ overview, onMenuClick }: HeaderProps) {
           disabled={overview.loading}
           aria-label="Refresh data"
         >
+          <AuthIndicator />
+          <ViewsMenu />
           <RefreshCw className={cn(overview.loading && "animate-spin")} aria-hidden="true" />
         </Button>
       </div>

@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { Sidebar } from "./sidebar";
 import { Header } from "./header";
 import { OverviewProvider, useOverview } from "./overview-provider";
 import { PrefsProvider } from "@/lib/prefs";
 import { cn } from "@/lib/utils";
+import { CommandPalette } from "./command-palette";
 
 const COLLAPSE_KEY = "unraid-dashboard.sidebar.collapsed";
 
@@ -31,7 +33,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const overview = useOverview();
-
+  const pathname = usePathname();
   useEffect(() => {
     // Read post-hydration on purpose to stay consistent with SSR output.
     try {
@@ -41,6 +43,12 @@ function Shell({ children }: { children: React.ReactNode }) {
       // default expanded
     }
   }, []);
+
+  // NOC mode is a standalone wallboard: no sidebar, header or footer.
+  // (Hooks above run unconditionally — rules of hooks.)
+  if (pathname === "/noc") {
+    return <>{children}</>;
+  }
 
   const toggleCollapsed = () => {
     setCollapsed((current) => {
@@ -69,6 +77,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         )}
       >
         <Header overview={overview} onMenuClick={() => setMobileNavOpen(true)} />
+        <CommandPalette />
         <main className="mx-auto w-full max-w-7xl p-4 sm:p-6">{children}</main>
         <footer className="mx-auto w-full max-w-7xl px-4 pb-6 sm:px-6">
           <p className="text-[11px] text-muted-foreground">

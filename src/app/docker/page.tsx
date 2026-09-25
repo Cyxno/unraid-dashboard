@@ -3,15 +3,14 @@
 import { useMemo, useState } from "react";
 import {
   Boxes,
-  ExternalLink,
   Filter,
   PauseCircle,
   PlayCircle,
   Search,
   StopCircle,
   TriangleAlert,
-  X,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { usePoll } from "@/hooks/use-poll";
 import {
   HISTORY_INTERVAL_MS,
@@ -143,213 +142,6 @@ function memoryCell(container: DockerContainerSummary) {
   );
 }
 
-/* Container detail drawer with metric history ---------------------------- */
-
-function ContainerDetail({
-  container,
-  onClose,
-}: {
-  container: DockerContainerSummary;
-  onClose: () => void;
-}) {
-  const [window, setWindow] = useState<HistoryWindowPref>("1h");
-  const history = usePoll<ContainerHistoryPayload>(
-    `/api/docker/history?name=${encodeURIComponent(container.name)}&window=${window}`,
-    HISTORY_INTERVAL_MS[window],
-  );
-  const meta = STATE_META[container.state] ?? STATE_META.EXITED;
-  const metrics = container.metrics;
-  const metricsUnavailable = !metrics;
-
-  const rows: Array<[string, React.ReactNode]> = [
-    [
-      "Image",
-      <span key="image" className="break-all font-mono text-xs">{container.image}</span>,
-    ],
-    [
-      "State",
-      <span key="state" className="inline-flex items-center gap-2">
-        <meta.Icon className={cn("size-4", meta.iconClass)} aria-hidden="true" />
-        {meta.label}
-        {healthBadge(container.health)}
-      </span>,
-    ],
-    ["Docker status", container.status || "—"],
-    ["Autostart", container.autoStart ? "Enabled" : "Disabled"],
-    [
-      "Update available",
-      container.updateAvailable ? (
-        <Badge key="update" variant="warning">update available</Badge>
-      ) : (
-        "No"
-      ),
-    ],
-    [
-      "Compose project",
-      container.composeProject ? (
-        <Badge key="compose" variant="secondary">{container.composeProject}</Badge>
-      ) : (
-        "—"
-      ),
-    ],
-    [
-      "Created",
-      container.createdEpochSeconds
-        ? new Date(container.createdEpochSeconds * 1000).toLocaleString()
-        : "—",
-    ],
-    [
-      "Ports",
-      container.ports.length > 0 ? (
-        <span key="ports" className="font-mono text-xs">
-          {container.ports
-            .map((port) =>
-              port.publicPort != null
-                ? `${port.publicPort}:${port.privatePort}/${port.type ?? "tcp"}`
-                : `${port.privatePort}/${port.type ?? "tcp"}`,
-            )
-            .join(", ")}
-        </span>
-      ) : (
-        "—"
-      ),
-    ],
-    [
-      "Container ID",
-      <span key="cid" className="break-all font-mono text-xs">{container.id}</span>,
-    ],
-  ];
-
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <button
-        type="button"
-        aria-label="Close details"
-        onClick={onClose}
-        className="absolute inset-0 bg-black/60"
-      />
-      <div
-        role="dialog"
-        aria-label={`${container.name} details`}
-        className="relative flex h-full w-full max-w-md flex-col overflow-y-auto border-l bg-card p-5 shadow-xl"
-      >
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="truncate text-base font-semibold">{container.name}</h3>
-            <p className="truncate text-xs text-muted-foreground">{container.image}</p>
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
-            {container.webUiUrl && (
-              <Button variant="ghost" size="icon" asChild>
-                <a
-                  href={container.webUiUrl}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  aria-label={`Open ${container.name} web UI`}
-                >
-                  <ExternalLink aria-hidden="true" />
-                </a>
-              </Button>
-            )}
-            <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
-              <X aria-hidden="true" />
-            </Button>
-          </div>
-        </div>
-
-        {/* Current resource use */}
-        <div className="mb-4 grid grid-cols-3 gap-2">
-          <div className="rounded-md border bg-secondary/30 px-3 py-2">
-            <p className="text-[11px] text-muted-foreground">CPU</p>
-            <p className="font-mono text-sm tabular-nums">
-              {metricsUnavailable ? "—" : formatPercent(metrics.cpuPercent)}
-            </p>
-          </div>
-          <div className="rounded-md border bg-secondary/30 px-3 py-2">
-            <p className="text-[11px] text-muted-foreground">Memory</p>
-            <p className="font-mono text-sm tabular-nums">
-              {metricsUnavailable ? "—" : formatBytes(metrics.memoryUsedBytes)}
-            </p>
-            <p className="text-[10px] text-muted-foreground">
-              {metrics?.hasMemoryLimit && metrics.memoryPercentOfLimit !== null
-                ? `${Math.round(metrics.memoryPercentOfLimit)}% of limit`
-                : metrics
-                  ? "no limit"
-                  : ""}
-            </p>
-          </div>
-          <div className="rounded-md border bg-secondary/30 px-3 py-2">
-            <p className="text-[11px] text-muted-foreground">State</p>
-            <p className="text-sm">{meta.label}</p>
-          </div>
-        </div>
-
-        {/* Metric history */}
-        <div className="mb-4 space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <h4 className="text-sm font-medium">History</h4>
-            <WindowPicker
-              value={window}
-              onChange={setWindow}
-              options={["5m", "15m", "1h", "6h", "24h"] as HistoryWindowPref[]}
-            />
-          </div>
-          <div className="space-y-3">
-            <div>
-              <p className="mb-1 text-xs text-muted-foreground">CPU %</p>
-              {metricsUnavailable ? (
-                <p className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">
-                  Container metrics unavailable — Prometheus is unreachable.
-                  Lifecycle state above remains live from Unraid.
-                </p>
-              ) : (
-                <SeriesChart
-                  series={[
-                    { name: "CPU %", points: history.data?.cpu ?? [] },
-                  ]}
-                  unit="percent"
-                  height={140}
-                  unavailable={history.data?.meta.status === "unavailable"}
-                />
-              )}
-            </div>
-            <div>
-              <p className="mb-1 text-xs text-muted-foreground">Memory</p>
-              {metricsUnavailable ? null : (
-                <SeriesChart
-                  series={[
-                    { name: "Memory", points: history.data?.memoryBytes ?? [] },
-                  ]}
-                  unit="bytes"
-                  height={140}
-                  unavailable={history.data?.meta.status === "unavailable"}
-                />
-              )}
-            </div>
-            {history.data?.meta.status === "stale" && (
-              <MetricStatus meta={history.data.meta} />
-            )}
-          </div>
-        </div>
-
-        <dl className="space-y-3">
-          {rows.map(([label, value]) => (
-            <div key={label} className="grid grid-cols-[120px_1fr] gap-2 text-sm">
-              <dt className="text-muted-foreground">{label}</dt>
-              <dd className="min-w-0">{value}</dd>
-            </div>
-          ))}
-        </dl>
-        <p className="mt-6 rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-          Read-only view. Container lifecycle actions are intentionally not
-          available in this version. Environment variables are not shown to avoid
-          exposing secret values.
-        </p>
-      </div>
-    </div>
-  );
-}
-
 export default function DockerPage() {
   const { data, error, loading } = usePoll<Section<DockerSummary>>(
     "/api/docker",
@@ -361,7 +153,7 @@ export default function DockerPage() {
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortAsc, setSortAsc] = useState(true);
   const [groupMode, setGroupMode] = useState<GroupMode>("flat");
-  const [selected, setSelected] = useState<string | null>(null);
+  const router = useRouter();
 
   const containers = useMemo(
     () => data?.data?.containers ?? [],
@@ -442,9 +234,6 @@ export default function DockerPage() {
     }
     return groups;
   }, [visible, groupMode]);
-
-  const selectedContainer =
-    containers.find((container) => container.id === selected) ?? null;
 
   const compact = prefs.density === "compact";
   const showMetrics = prefs.dockerMetrics && metricsLive;
@@ -641,11 +430,11 @@ export default function DockerPage() {
                       <tr
                         key={container.id}
                         tabIndex={0}
-                        onClick={() => setSelected(container.id)}
+                        onClick={() => router.push(`/docker/${encodeURIComponent(container.name)}`)}
                         onKeyDown={(event) => {
                           if (event.key === "Enter" || event.key === " ") {
                             event.preventDefault();
-                            setSelected(container.id);
+                            router.push(`/docker/${encodeURIComponent(container.name)}`);
                           }
                         }}
                         aria-label={`Show details for ${container.name}`}
@@ -734,9 +523,6 @@ export default function DockerPage() {
         ))
       )}
 
-      {selectedContainer && (
-        <ContainerDetail container={selectedContainer} onClose={() => setSelected(null)} />
-      )}
 
       <p className="mt-4 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
         <Boxes className="size-3.5" aria-hidden="true" />

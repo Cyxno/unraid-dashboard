@@ -25,7 +25,7 @@ import type {
 /* eslint-disable @typescript-eslint/no-explicit-any -- raw GraphQL boundary */
 
 /** GraphQL BigInt serializes as a string (sometimes number). */
-function toNumber(value: unknown): number | null {
+export function toNumber(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -37,7 +37,7 @@ function kbToBytes(value: unknown): number | null {
   return kb === null ? null : kb * 1024;
 }
 
-function str(value: unknown): string | null {
+export function str(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
@@ -256,7 +256,7 @@ export function parseContainerHealth(status: string | null): ContainerHealth {
   return null;
 }
 
-const VALID_CONTAINER_STATES = new Set(["RUNNING", "PAUSED", "EXITED"]);
+export const VALID_CONTAINER_STATES = new Set(["RUNNING", "PAUSED", "EXITED"]);
 
 /**
  * Extracts the Docker Compose project from the raw `labels` JSON the

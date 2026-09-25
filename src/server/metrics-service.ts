@@ -43,6 +43,7 @@ import {
 import { getDiskIo, getStorageHistory } from "./prometheus/storage";
 import {
   getContainerHistory,
+  getContainerNetworkHistory,
   getTopConsumers,
 } from "./prometheus/containers";
 import { getBuildInfo } from "./version";
@@ -326,17 +327,20 @@ export async function getContainerHistoryPayload(
     WINDOW_CACHE_TTL_MS[window],
     async () => {
       const client = promClient();
-      return await getContainerHistory(
-        client,
-        name,
-        {
+      const [base, network] = await Promise.all([
+        getContainerHistory(client, name, {
           cpu: `docker_stats_cpu_percent{name=${promqlString(name)}}`,
           memory: `docker_stats_memory_usage_bytes{name=${promqlString(name)}}`,
-        },
-        start,
-        end,
-        step,
-      );
+        }, start, end, step),
+        getContainerNetworkHistory(
+          name,
+          start,
+          end,
+          step,
+          `${Math.max(WINDOW_STEP_SECONDS[window] * 2, 60)}s`,
+        ).catch(() => null),
+      ]);
+      return { ...base, network };
     },
   );
 
@@ -347,6 +351,7 @@ export async function getContainerHistoryPayload(
     name,
     cpu: result.data?.cpu ?? [],
     memoryBytes: result.data?.memoryBytes ?? [],
+    network: result.data?.network ?? null,
   };
 }
 

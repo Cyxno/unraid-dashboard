@@ -153,8 +153,8 @@ describe("container metrics join", () => {
   });
 
   it("flags high CPU from the documented threshold", () => {
-    assert.equal(isHighCpu({ cpuPercent: 90, memoryUsedBytes: null, memoryLimitBytes: null, memoryPercentOfLimit: null, hasMemoryLimit: false, memoryPercentOfHost: null }), true);
-    assert.equal(isHighCpu({ cpuPercent: 79.9, memoryUsedBytes: null, memoryLimitBytes: null, memoryPercentOfLimit: null, hasMemoryLimit: false, memoryPercentOfHost: null }), false);
+    assert.equal(isHighCpu({ cpuPercent: 90, memoryUsedBytes: null, memoryLimitBytes: null, memoryPercentOfLimit: null, hasMemoryLimit: false, memoryPercentOfHost: null, networkRxBytesPerSec: null, networkTxBytesPerSec: null, networkReliable: false }), true);
+    assert.equal(isHighCpu({ cpuPercent: 79.9, memoryUsedBytes: null, memoryLimitBytes: null, memoryPercentOfLimit: null, hasMemoryLimit: false, memoryPercentOfHost: null, networkRxBytesPerSec: null, networkTxBytesPerSec: null, networkReliable: false }), false);
     assert.equal(isHighCpu(undefined), false);
   });
 
@@ -165,7 +165,7 @@ describe("container metrics join", () => {
       memoryLimitBytes: null,
       memoryPercentOfLimit: null,
       hasMemoryLimit: false,
-      memoryPercentOfHost: null,
+      memoryPercentOfHost: null, networkRxBytesPerSec: null, networkTxBytesPerSec: null, networkReliable: false,
     };
     // Over the absolute threshold even without a limit.
     assert.equal(isHighMemory(base), true);

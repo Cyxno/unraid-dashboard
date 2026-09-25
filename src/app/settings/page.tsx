@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyRound, Plug, RotateCcw, Stethoscope } from "lucide-react";
+import { KeyRound, Plug, RotateCcw, ShieldCheck, Stethoscope } from "lucide-react";
 import { usePoll } from "@/hooks/use-poll";
 import {
   PAGE_INTERVAL_MS,
@@ -80,13 +80,22 @@ function Toggle({
 
 /* About + diagnostics ------------------------------------------------------- */
 
+interface UpdateCheckPayload {
+  current: string;
+  gitSha: string | null;
+  buildTime: string | null;
+  imageRef: string | null;
+  update: { status: "up-to-date" | "available" | "unknown"; reason?: string; latestTag: string | null };
+}
+
 function AboutAndDiagnostics() {
-  const version = usePoll<BuildInfoDto>("/api/version", 60_000);
+  const version = usePoll<UpdateCheckPayload>("/api/update-check", 300_000);
   const diagnostics = usePoll<DiagnosticsPayload>(
     "/api/diagnostics",
     PAGE_INTERVAL_MS.connection,
   );
   const diag = diagnostics.data;
+  const update = version.data?.update;
 
   return (
     <div className="space-y-3">
@@ -170,7 +179,7 @@ function AboutAndDiagnostics() {
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between gap-4">
                 <dt className="text-muted-foreground">Version</dt>
-                <dd className="font-mono text-xs">v{version.data.version}</dd>
+                <dd className="font-mono text-xs">v{version.data.current}</dd>
               </div>
               <div className="flex justify-between gap-4">
                 <dt className="text-muted-foreground">Build</dt>
@@ -191,6 +200,20 @@ function AboutAndDiagnostics() {
                   </dd>
                 </div>
               )}
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">Latest release</dt>
+                <dd className="text-xs">
+                  {update === undefined ? (
+                    "…"
+                  ) : update.status === "available" ? (
+                    <Badge variant="warning">update available ({update.latestTag})</Badge>
+                  ) : update.status === "up-to-date" ? (
+                    <Badge variant="success">up to date</Badge>
+                  ) : (
+                    <span title={update.reason}>unknown</span>
+                  )}
+                </dd>
+              </div>
             </dl>
           ) : (
             <p className="text-muted-foreground">Version information unavailable.</p>
@@ -198,6 +221,82 @@ function AboutAndDiagnostics() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+/* Security section ----------------------------------------------------------- */
+
+interface AuthStatusPayload {
+  mode: "disabled" | "proxy";
+  user: string | null;
+  actionsEnabled: boolean;
+  actionsDisabledReason: string | null;
+}
+
+interface ActionsCapabilitiesPayload {
+  enabled: boolean;
+  reason: string | null;
+  cooldownMs: number;
+  ratePerMinute: number;
+}
+
+function SecuritySection() {
+  const auth = usePoll<AuthStatusPayload>("/api/auth/status", 30_000);
+  const actions = usePoll<ActionsCapabilitiesPayload>("/api/actions/status", 30_000);
+  const authData = auth.data;
+  const actionsData = actions.data;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ShieldCheck className="size-4 text-muted-foreground" aria-hidden="true" />
+          Security
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-1 text-sm">
+        {authData ? (
+          <dl className="space-y-2">
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted-foreground">Authentication</dt>
+              <dd>
+                {authData.mode === "proxy" ? (
+                  <Badge variant="success">reverse proxy ({authData.user ?? "unidentified"})</Badge>
+                ) : (
+                  <Badge variant="muted" className="gap-1" title="Requests are not authenticated; the dashboard trusts the LAN. Put it behind a reverse proxy with AUTH_MODE=proxy for identity.">
+                    disabled — trusted network mode
+                  </Badge>
+                )}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted-foreground">Write actions</dt>
+              <dd>
+                {actionsData?.enabled ? (
+                  <Badge variant="warning">enabled</Badge>
+                ) : (
+                  <Badge variant="secondary">disabled</Badge>
+                )}
+              </dd>
+            </div>
+            {actionsData && !actionsData.enabled && actionsData.reason && (
+              <p className="text-[11px] text-muted-foreground">{actionsData.reason}</p>
+            )}
+            {actionsData?.enabled && (
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">Guards</dt>
+                <dd className="text-xs">
+                  cooldown {Math.round(actionsData.cooldownMs / 1000)}s · max{" "}
+                  {actionsData.ratePerMinute}/min · audit logged
+                </dd>
+              </div>
+            )}
+          </dl>
+        ) : (
+          <p className="text-muted-foreground">Security status unavailable.</p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -355,6 +454,8 @@ export default function SettingsPage() {
               )}
             </CardContent>
           </Card>
+
+          <SecuritySection />
 
           <AboutAndDiagnostics />
 

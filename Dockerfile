@@ -14,7 +14,7 @@ COPY . .
 # Build-time telemetry off only; UNRAID_*/PROMETHEUS_* secrets are runtime-only.
 ENV NEXT_TELEMETRY_DISABLED=1
 # Build provenance (overridable); baked into the image and exposed via /api/version.
-ARG APP_VERSION=0.3.0
+ARG APP_VERSION=0.4.0
 ARG GIT_SHA=dev
 ARG BUILD_TIME
 LABEL org.opencontainers.image.title="unraid-dashboard" \
@@ -33,7 +33,7 @@ RUN npm run build
 FROM node:22-alpine AS runner
 WORKDIR /app
 # ARGs are per-stage: re-declare so provenance reaches the runtime process.
-ARG APP_VERSION=0.3.0
+ARG APP_VERSION=0.4.0
 ARG GIT_SHA=dev
 ARG BUILD_TIME
 ENV NODE_ENV=production \
@@ -45,7 +45,13 @@ ENV NODE_ENV=production \
     BUILD_TIME=${BUILD_TIME}
 
 RUN addgroup --system --gid 1001 nodejs \
-    && adduser --system --uid 1001 nextjs
+    && adduser --system --uid 1001 nextjs \
+    && mkdir -p /app/data \
+    && chown nextjs:nodejs /app/data
+
+# /app/data holds the append-only action audit log. Optionally mount a
+# narrow host directory for persistence across container recreation:
+#   -v /mnt/user/appdata/unraid-dashboard:/app/data
 
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./

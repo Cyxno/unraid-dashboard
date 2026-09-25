@@ -260,6 +260,35 @@ export const NETWORK_INTERFACES_QUERY = /* GraphQL */ `
   }
 `;
 
+/** Detail query for a single container view: full inspect-ish payload. */
+export const DETAIL_QUERY = /* GraphQL */ `
+  query ContainerDetail {
+    docker {
+      containers {
+        id
+        names
+        image
+        command
+        state
+        status
+        created
+        autoStart
+        isUpdateAvailable
+        iconUrl
+        webUiUrl
+        labels
+        mounts
+        networkSettings
+        ports {
+          privatePort
+          publicPort
+          type
+        }
+      }
+    }
+  }
+`;
+
 export const CONNECTION_PING_QUERY = /* GraphQL */ `
   query ConnectionPing {
     online
