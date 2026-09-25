@@ -64,6 +64,18 @@ const envSchema = z.object({
     .transform((value) => ["1", "true", "yes"].includes(value.trim().toLowerCase())),
   /** Directory for the append-only action audit log. */
   AUDIT_DIR: z.string().default("/app/data"),
+
+  /**
+   * External origin (scheme + host[:port]) the dashboard is served on
+   * when behind a reverse proxy with a different hostname. Used for
+   * same-origin (CSRF) validation of write requests alongside the
+   * request Host header.
+   */
+  PUBLIC_BASE_URL: z
+    .string()
+    .url()
+    .transform((value) => value.replace(/\/+$/, ""))
+    .optional(),
   /** Action cooldown per (container, action) in milliseconds. */
   ACTION_COOLDOWN_MS: z.coerce.number().int().positive().default(10_000),
   /** Maximum action requests per minute per user/IP. */

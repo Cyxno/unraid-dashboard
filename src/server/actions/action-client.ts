@@ -66,8 +66,19 @@ export const VM_STOP_MUTATION = /* GraphQL */ `
   }
 `;
 
+export const NOTIFICATION_ARCHIVE_MUTATION = /* GraphQL */ `
+  mutation NotificationArchive($id: PrefixedID!) {
+    archiveNotification(id: $id) {
+      id
+    }
+  }
+`;
+
 export const DOCKER_ACTIONS = ["start", "stop"] as const;
 export const VM_ACTIONS = ["start", "stop"] as const;
+
+/** Archive (reversible) is the only notification mutation we ship. */
+export const NOTIFICATION_ACTIONS = ["archive"] as const;
 
 const DOCKER_MUTATIONS = {
   start: DOCKER_START_MUTATION,
@@ -171,7 +182,7 @@ export interface InventoryTarget {
  */
 /* eslint-disable @typescript-eslint/no-explicit-any -- raw GraphQL boundary;
    access goes through defensive String() coercion below. */
-async function fetchReadInventory(kind: "docker" | "vm"): Promise<InventoryTarget[]> {
+async function fetchReadInventory(kind: "docker" | "vm" | "notification"): Promise<InventoryTarget[]> {
   const env = getEnv();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
@@ -183,9 +194,12 @@ async function fetchReadInventory(kind: "docker" | "vm"): Promise<InventoryTarge
         "x-api-key": env.UNRAID_API_KEY,
       },
       body: JSON.stringify({
-        query: kind === "docker"
-          ? `query { docker { containers { id names state } } }`
-          : `query { vms { domains { id name state } } }`,
+        query:
+          kind === "docker"
+            ? `query { docker { containers { id names state } } }`
+            : kind === "vm"
+              ? `query { vms { domains { id name state } } }`
+              : `query { notifications { list(filter: { type: UNREAD, limit: 100 }) { id title } } }`,
       }),
       signal: controller.signal,
       cache: "no-store",
@@ -202,11 +216,19 @@ async function fetchReadInventory(kind: "docker" | "vm"): Promise<InventoryTarge
         state: String(entry?.state ?? ""),
       }));
     }
-    const list: any[] = body.data?.vms?.domains ?? [];
+    if (kind === "vm") {
+      const list: any[] = body.data?.vms?.domains ?? [];
+      return list.map((entry) => ({
+        id: String(entry?.id ?? ""),
+        name: String(entry?.name ?? ""),
+        state: String(entry?.state ?? ""),
+      }));
+    }
+    const list: any[] = body.data?.notifications?.list ?? [];
     return list.map((entry) => ({
       id: String(entry?.id ?? ""),
-      name: String(entry?.name ?? ""),
-      state: String(entry?.state ?? ""),
+      name: String(entry?.title ?? "").slice(0, 120),
+      state: "UNREAD",
     }));
   } catch (error) {
     if (error instanceof ActionError) throw error;
@@ -239,7 +261,7 @@ export interface ActionOutcome {
  * the live inventory. Never trust client-side names beyond the check.
  */
 export async function executeAction(
-  kind: "docker" | "vm",
+  kind: "docker" | "vm" | "notification",
   action: string,
   targetId: string,
 ): Promise<ActionOutcome> {
@@ -248,9 +270,13 @@ export async function executeAction(
     if (!(DOCKER_ACTIONS as readonly string[]).includes(action)) {
       throw new ActionError("forbidden", `Unsupported docker action: ${action}`);
     }
-  } else {
+  } else if (kind === "vm") {
     if (!(VM_ACTIONS as readonly string[]).includes(action)) {
       throw new ActionError("forbidden", `Unsupported vm action: ${action}`);
+    }
+  } else {
+    if (!(NOTIFICATION_ACTIONS as readonly string[]).includes(action)) {
+      throw new ActionError("forbidden", `Unsupported notification action: ${action}`);
     }
   }
 
@@ -267,6 +293,29 @@ export async function executeAction(
     };
   }
   const targetName = target.name;
+
+  // Notification archive: target must exist in the live unread list.
+  if (kind === "notification") {
+    const unread = await fetchReadInventory("notification");
+    const target = unread.find((entry) => entry.id === targetId);
+    if (!target) {
+      return {
+        status: "not-found",
+        message: "Notification is not present in the live unread list — refusing to act.",
+        postState: null,
+        verified: false,
+        targetName: null,
+      };
+    }
+    await actionRequest(NOTIFICATION_ARCHIVE_MUTATION, { id: targetId });
+    return {
+      status: "success",
+      message: "Notification archived (reversible via Unraid notifications).",
+      postState: null,
+      verified: true,
+      targetName: target.name,
+    };
+  }
 
   // already-in-state short-circuits (based on live state, not client claims).
   if (kind === "docker") {

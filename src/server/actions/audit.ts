@@ -35,7 +35,7 @@ function sanitizeError(error: unknown): string | undefined {
 export interface AuditInput {
   actor: string;
   sourceIp: string;
-  kind: "docker" | "vm";
+  kind: "docker" | "vm" | "notification";
   action: string;
   targetName: string;
   targetId: string;

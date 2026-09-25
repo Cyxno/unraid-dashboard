@@ -236,7 +236,7 @@ export default function ContainerDetailPage() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Configuration ------------------------------------------------- */}
-        <section aria-label="Configuration">
+        <section aria-label="Configuration" className="min-w-0">
           <Card className="h-full">
             <CardHeader>
               <CardTitle className="text-base">Configuration</CardTitle>
@@ -317,7 +317,7 @@ export default function ContainerDetailPage() {
         </section>
 
         {/* Labels + logs + events ---------------------------------------- */}
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <Card>
             <CardHeader>
               <button
@@ -475,31 +475,67 @@ function RecentEvents({ name }: { name: string }) {
     "/api/audit?limit=100",
     30_000,
   );
-  const events = (audit.data?.entries ?? []).filter((entry) => entry.targetName === name).slice(0, 6);
+  const transitions = usePoll<{ transitions: Array<{ name: string; from: string; to: string; at: string }> }>(
+    "/api/events/transitions",
+    30_000,
+  );
+
+  type Row = { key: string; at: string; label: string; source: string; result: string };
+  const rows: Row[] = [
+    ...(audit.data?.entries ?? [])
+      .filter((entry) => entry.targetName === name)
+      .map((entry) => ({
+        key: entry.id,
+        at: entry.timestamp,
+        label: entry.action,
+        source: "Dashboard action",
+        result: entry.result,
+      })),
+    ...(transitions.data?.transitions ?? [])
+      .filter((entry) => entry.name === name)
+      .map((entry) => ({
+        key: `obs-${entry.at}-${entry.to}`,
+        at: entry.at,
+        label: `observed: ${entry.from.toLowerCase()} → ${entry.to.toLowerCase()}`,
+        source: "Observed state change",
+        result: "observed",
+      })),
+  ]
+    .sort((a, b) => b.at.localeCompare(a.at))
+    .slice(0, 8);
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Recent dashboard events</CardTitle>
+        <CardTitle className="text-base">Recent events</CardTitle>
       </CardHeader>
       <CardContent>
-        {events.length === 0 ? (
+        {rows.length === 0 ? (
           <p className="text-xs text-muted-foreground">
-            No dashboard-triggered actions recorded for this container. Host-side
-            lifecycle changes made outside the dashboard are not captured here —
-            the dashboard never invents events it cannot observe.
+            No events recorded yet. Dashboard-triggered actions and observed
+            state changes (sampled every 10s) appear here.
           </p>
         ) : (
           <ul className="space-y-1.5">
-            {events.map((event) => (
-              <li key={event.id} className="flex items-center gap-2 text-xs">
+            {rows.map((row) => (
+              <li key={row.key} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
                 <span className="font-mono text-muted-foreground">
-                  {formatDateTimeIso(event.timestamp)}
+                  {formatDateTimeIso(row.at)}
                 </span>
-                <span className="font-medium">{event.action}</span>
-                <Badge variant={event.result === "success" ? "success" : event.result === "rejected" ? "warning" : "destructive"}>
-                  {event.result}
+                <span className="font-medium">{row.label}</span>
+                <Badge
+                  variant={
+                    row.source === "Dashboard action"
+                      ? row.result === "success"
+                        ? "success"
+                        : row.result === "rejected"
+                          ? "warning"
+                          : "destructive"
+                      : "secondary"
+                  }
+                >
+                  {row.source}
                 </Badge>
-                <span className="ml-auto truncate text-muted-foreground">{event.actor}</span>
               </li>
             ))}
           </ul>

@@ -95,10 +95,80 @@ result, duration and a scrubbed error summary — never credentials.
   identities, and all write endpoints additionally enforce same-origin
   (CSRF) and JSON content-type.
 
+**Nginx Proxy Manager pattern**: proxy a host (e.g. `unraid.example.com`)
+to `http://192.168.1.2:8090`, enable its Access List (basic auth or your SSO),
+and add an Advanced custom Nginx directive that OVERWRITES the identity
+header so clients cannot spoof it:
+
+```nginx
+proxy_set_header X-Forwarded-User "remco";
+proxy_buffering off; # required for the SSE stream
+```
+
+Set `AUTH_MODE=proxy`, `AUTH_HEADER=X-Forwarded-User`,
+`AUTH_ALLOWED_USERS=remco` (optional), and `PUBLIC_BASE_URL`
+(e.g. `https://unraid.example.com`) so CSRF origin checks accept the
+external hostname, and keep the firewall rule so port 8090 stays
+LAN/proxy-only.
+
 > **Trust model**: self-hosted Next.js cannot see the socket peer address,
 > so proxy mode assumes the dashboard port is only reachable by the proxy
 > (firewall/binding). Without that network separation, LAN clients could
 > forge headers. Settings → Security shows the active mode.
+
+## Mobile UI (v0.5)
+
+Phones are a first-class target. Below the `md` breakpoint the dashboard
+switches to a dedicated mobile shell:
+
+- **Bottom navigation** (Overview / Docker / Storage / System / More) with
+  `env(safe-area-inset-bottom)` respected; "More" opens a bottom sheet with
+  every page. The desktop sidebar remains unchanged.
+- **Docker** renders a card list (name, state, CPU, memory, project, badges)
+  instead of the desktop table; filter chips scroll horizontally, sort
+  controls wrap, and every card opens the full detail page.
+- **Container detail** shows 2-column metric tiles, chart-window switcher,
+  and collapsible configuration sections; the Actions section keeps its
+  explicit confirmation flow.
+- **Logs** stack the file list above the viewer on phones (wrapping controls,
+  internal line scrolling only); **Settings** rows wrap; **NOC mode** is a
+  vertically scrollable wallboard on phones and enters fullscreen/wake-lock
+  where supported.
+- Validation: automated overflow + interaction checks at 320, 360, 375, 390,
+  430 px portrait, 844×390 landscape, 1024 tablet and 1440 desktop.
+
+## Realtime updates (v0.5)
+
+`GET /api/events` is a Server-Sent Events stream backed by **one shared
+server-side sampler** (never per-browser polling). Events: `snapshot`
+(CPU/RAM/load/package temp, 5s), `docker` counts, `health` changes,
+`state-transition` observations, `notifications` counts. Same auth policy as
+every route (proxy mode enforced), same-origin only, heartbeats keep proxies
+from idling, and disconnects clean up their subscription.
+
+The client (`useDashboardEvents`) reconnects with bounded backoff, recovers
+after device sleep, and **never becomes a dependency**: if SSE is down the
+dashboard keeps REST polling (the overview poll stretches 3× only while SSE
+is healthy). Connection loss/recovery and observed container state changes
+surface as restrained toasts — never per-metric spam.
+
+## Thermal analysis (v0.5)
+
+System → Temps shows a 24h thermal analysis computed from Prometheus:
+current, 5m average, 1h/24h max, 24h median and average, and approximate
+minutes at/above the warning (80 °C) and critical (90 °C) thresholds
+(`sum_over_time` of a bool comparison at 1-minute resolution). The current
+reading is classified as **normal / elevated / spike / sustained-high /
+critical** by comparing it with the 5-minute average — a one-sample peak is
+labelled a spike, never sustained pressure. This host exposes no thermal
+throttle counters, so nothing here implies throttling.
+
+## Notification archive (v0.5)
+
+Unread notifications can be archived from the dashboard (reversible in
+Unraid via "unread"). The action uses the same narrowly-scoped action key,
+validates the target against the live unread list, requires confirmation,
+and writes an audit entry. Delete is not implemented.
 
 ## Architecture
 

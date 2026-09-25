@@ -1,7 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { guardWrite, parseActionBody } from "@/server/auth/guard";
 import { performAction } from "@/server/actions";
-import { DOCKER_ACTIONS, VM_ACTIONS } from "@/server/actions/action-client";
+import {
+  DOCKER_ACTIONS,
+  NOTIFICATION_ACTIONS,
+  VM_ACTIONS,
+} from "@/server/actions/action-client";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +25,11 @@ export async function POST(request: NextRequest) {
 
   // Static allowlist before anything else touches the request.
   const allowedActions: string[] =
-    kind === "docker" ? [...DOCKER_ACTIONS] : [...VM_ACTIONS];
+    kind === "docker"
+      ? [...DOCKER_ACTIONS]
+      : kind === "vm"
+        ? [...VM_ACTIONS]
+        : [...NOTIFICATION_ACTIONS];
   if (!allowedActions.includes(action)) {
     return NextResponse.json(
       { ok: false, status: "rejected", message: `Unsupported action '${action}' for ${kind}.` },

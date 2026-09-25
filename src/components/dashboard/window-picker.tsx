@@ -29,7 +29,7 @@ export function WindowPicker({
 }) {
   return (
     <div
-      className="flex items-center gap-1"
+      className="flex flex-wrap items-center gap-1"
       role="group"
       aria-label="History time window"
     >

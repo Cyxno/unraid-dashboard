@@ -280,8 +280,8 @@ export default function DockerPage() {
         </div>
       )}
 
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <label className="relative">
+      <div className="mb-3 flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
+        <label className="relative md:w-56">
           <span className="sr-only">Search containers</span>
           <Search
             className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
@@ -291,11 +291,11 @@ export default function DockerPage() {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search name, image, project…"
-            className="h-9 w-56 rounded-md border bg-card pl-8 pr-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-10 w-full rounded-md border bg-card pl-8 pr-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring md:w-56"
           />
         </label>
 
-        <div role="group" aria-label="Filter containers" className="flex items-center gap-1">
+        <div role="group" aria-label="Filter containers" className="flex items-center gap-1 overflow-x-auto pb-1 md:flex-wrap md:pb-0">
           <Filter className="size-3.5 text-muted-foreground" aria-hidden="true" />
           {(
             [
@@ -314,7 +314,7 @@ export default function DockerPage() {
               variant={filter === option ? "secondary" : "ghost"}
               aria-pressed={filter === option}
               onClick={() => setFilter(option)}
-              className="h-7 px-2.5 text-xs capitalize"
+              className="h-8 shrink-0 whitespace-nowrap px-2.5 text-xs capitalize"
               title={
                 option === "high-cpu"
                   ? `CPU ≥ ${HIGH_CPU_PERCENT}%`
@@ -328,7 +328,7 @@ export default function DockerPage() {
           ))}
         </div>
 
-        <div className="ml-auto flex items-center gap-1">
+        <div className="flex flex-wrap items-center gap-1 md:ml-auto">
           {sortButton("cpu", "CPU")}
           {sortButton("memory", "Mem")}
           {sortButton("name", "Name")}
@@ -375,7 +375,84 @@ export default function DockerPage() {
             : "No containers match the current search/filter."}
         </p>
       ) : (
-        grouped.map((group) => (
+        <>
+        {/* Mobile: card list instead of the desktop table. */}
+        <div className="grid gap-2 md:hidden">
+          {visible.map((container) => {
+            const cMeta = STATE_META[container.state] ?? STATE_META.EXITED;
+            return (
+              <Card key={container.id} className="gap-0 p-3">
+                <button
+                  type="button"
+                  className="w-full text-left"
+                  aria-label={`Open details for ${container.name}`}
+                  onClick={() =>
+                    router.push(`/docker/${encodeURIComponent(container.name)}`)
+                  }
+                >
+                  <span className="flex items-center gap-2">
+                    <cMeta.Icon
+                      className={cn("size-4 shrink-0", cMeta.iconClass)}
+                      aria-hidden="true"
+                    />
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                      {container.name}
+                    </span>
+                    {container.updateAvailable && (
+                      <Badge variant="warning" className="shrink-0 text-[10px]">
+                        update
+                      </Badge>
+                    )}
+                    {container.health === "unhealthy" && (
+                      <Badge variant="destructive" className="shrink-0 gap-1 text-[10px]">
+                        <TriangleAlert aria-hidden="true" /> unhealthy
+                      </Badge>
+                    )}
+                  </span>
+                  <span className="mt-1.5 grid grid-cols-3 gap-2 text-xs">
+                    <span>
+                      <span className="block text-[10px] uppercase tracking-wider text-muted-foreground">
+                        State
+                      </span>
+                      <span className={cn(container.state === "RUNNING" ? "text-success" : "")}>
+                        {cMeta.label}
+                      </span>
+                    </span>
+                    <span>
+                      <span className="block text-[10px] uppercase tracking-wider text-muted-foreground">
+                        CPU
+                      </span>
+                      <span className="font-mono tabular-nums">
+                        {container.state === "RUNNING" &&
+                        container.metrics?.cpuPercent != null
+                          ? formatPercent(container.metrics.cpuPercent)
+                          : "—"}
+                      </span>
+                    </span>
+                    <span>
+                      <span className="block text-[10px] uppercase tracking-wider text-muted-foreground">
+                        Memory
+                      </span>
+                      <span className="font-mono tabular-nums">
+                        {container.state === "RUNNING" &&
+                        container.metrics?.memoryUsedBytes != null
+                          ? formatBytes(container.metrics.memoryUsedBytes)
+                          : "—"}
+                      </span>
+                    </span>
+                  </span>
+                  {container.composeProject && (
+                    <span className="mt-1 block truncate text-[11px] text-muted-foreground">
+                      {container.composeProject}
+                    </span>
+                  )}
+                </button>
+              </Card>
+            );
+          })}
+        </div>
+        <div className="hidden md:block">
+        {grouped.map((group) => (
           <div key={group.project ?? "flat"} className="mb-4">
             {group.project !== null && (
               <h3 className="mb-1.5 mt-3 flex items-center gap-2 text-sm font-medium text-muted-foreground">
@@ -386,7 +463,7 @@ export default function DockerPage() {
                 </Badge>
               </h3>
             )}
-            <Card className="overflow-x-auto">
+            <Card className="hidden overflow-x-auto md:block">
               <table className="w-full min-w-[640px] text-sm">
                 <caption className="sr-only">
                   Docker containers{group.project ? ` in project ${group.project}` : ""}
@@ -520,9 +597,10 @@ export default function DockerPage() {
               </table>
             </Card>
           </div>
-        ))
+          ))}
+        </div>
+        </>
       )}
-
 
       <p className="mt-4 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
         <Boxes className="size-3.5" aria-hidden="true" />

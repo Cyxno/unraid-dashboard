@@ -1,5 +1,7 @@
 "use client";
 
+/* archive action wiring added in v0.5 */
+
 import { useState } from "react";
 import { AlertTriangle, BellRing } from "lucide-react";
 import { usePoll } from "@/hooks/use-poll";
@@ -9,7 +11,11 @@ import { SectionStatus } from "@/components/dashboard/section-status";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Archive } from "lucide-react";
 import type { DashboardNotification, Section } from "@/lib/api-types";
+import { useActionCapabilities, useActionRunner } from "@/components/actions/use-actions";
+import { ConfirmDialog } from "@/components/actions/confirm-dialog";
+import type { ActionResponseBody } from "@/lib/api-types";
 
 type TypeFilter = "UNREAD" | "ARCHIVE";
 type ImportanceFilter = "all" | "INFO" | "WARNING" | "ALERT";
@@ -17,6 +23,22 @@ type ImportanceFilter = "all" | "INFO" | "WARNING" | "ALERT";
 export default function NotificationsPage() {
   const [type, setType] = useState<TypeFilter>("UNREAD");
   const [importance, setImportance] = useState<ImportanceFilter>("all");
+  const [pendingArchive, setPendingArchive] = useState<DashboardNotification | null>(null);
+  const [archiveResult, setArchiveResult] = useState<ActionResponseBody | null>(null);
+  const { capabilities } = useActionCapabilities();
+  const { runAction, pending } = useActionRunner();
+  const archiveAvailable =
+    (capabilities?.enabled ?? false) && capabilities?.notification.includes("archive");
+
+  const archive = async (notification: DashboardNotification) => {
+    setPendingArchive(null);
+    const result = await runAction({
+      kind: "notification",
+      action: "archive",
+      id: notification.id,
+    });
+    setArchiveResult(result);
+  };
 
   const params = new URLSearchParams({ type, limit: "100" });
   if (importance !== "all") params.set("importance", importance);
@@ -127,6 +149,19 @@ export default function NotificationsPage() {
                     <Badge variant="muted" className="hidden shrink-0 text-[10px] sm:inline-flex">
                       {event.type.toLowerCase()}
                     </Badge>
+                    {type === "UNREAD" && archiveAvailable && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 shrink-0 gap-1 text-xs"
+                        disabled={pending !== null}
+                        aria-label={`Archive notification: ${event.subject}`}
+                        onClick={() => setPendingArchive(event)}
+                      >
+                        <Archive className="size-3.5" aria-hidden="true" />
+                        Archive
+                      </Button>
+                    )}
                     <span className="sr-only">index {index}</span>
                   </li>
                 );

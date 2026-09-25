@@ -615,7 +615,7 @@ export interface AuditEntry {
   actor: string;
   /** Client IP as observed by the dashboard. */
   sourceIp: string;
-  kind: "docker" | "vm";
+  kind: "docker" | "vm" | "notification";
   action: string;
   /** Target name (display) and id. */
   targetName: string;
@@ -638,6 +638,7 @@ export interface ActionsCapabilities {
   reason: string | null;
   docker: ContainerActionType[];
   vm: VmActionType[];
+  notification: string[];
   cooldownMs: number;
   ratePerMinute: number;
 }

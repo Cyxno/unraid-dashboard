@@ -36,9 +36,9 @@ function Choice<T extends string>({
   onChange: (value: T) => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 border-b py-3 last:border-0">
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b py-3 last:border-0">
       <span className="text-sm">{label}</span>
-      <div role="group" aria-label={label} className="flex items-center gap-1">
+      <div role="group" aria-label={label} className="flex flex-wrap items-center gap-1">
         {options.map((option) => (
           <Button
             key={option.value}
@@ -263,7 +263,7 @@ function SecuritySection() {
                 {authData.mode === "proxy" ? (
                   <Badge variant="success">reverse proxy ({authData.user ?? "unidentified"})</Badge>
                 ) : (
-                  <Badge variant="muted" className="gap-1" title="Requests are not authenticated; the dashboard trusts the LAN. Put it behind a reverse proxy with AUTH_MODE=proxy for identity.">
+                  <Badge variant="muted" className="max-w-[220px] gap-1 whitespace-normal text-left" title="Requests are not authenticated; the dashboard trusts the LAN. Put it behind a reverse proxy with AUTH_MODE=proxy for identity.">
                     disabled — trusted network mode
                   </Badge>
                 )}
@@ -316,7 +316,7 @@ export default function SettingsPage() {
       />
 
       <div className="grid gap-3 lg:grid-cols-2">
-        <Card>
+        <Card className="min-w-0">
           <CardHeader>
             <CardTitle>Display &amp; refresh</CardTitle>
           </CardHeader>
@@ -385,7 +385,7 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
-        <div className="space-y-3">
+        <div className="min-w-0 space-y-3">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">

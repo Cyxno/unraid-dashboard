@@ -32,7 +32,11 @@ export function useActionCapabilities(): {
   return { capabilities, refresh: useCallback(() => setTick((v) => v + 1), []) };
 }
 
-export type PendingAction = { kind: "docker" | "vm"; action: string; id: string } | null;
+export type PendingAction = {
+  kind: "docker" | "vm" | "notification";
+  action: string;
+  id: string;
+} | null;
 
 export function useActionRunner(
   onDone?: (result: ActionResponseBody) => void,

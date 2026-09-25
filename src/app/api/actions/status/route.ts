@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { areActionsEnabled, getEnv } from "@/server/env";
-import { DOCKER_ACTIONS, VM_ACTIONS } from "@/server/actions/action-client";
+import {
+  DOCKER_ACTIONS,
+  NOTIFICATION_ACTIONS,
+  VM_ACTIONS,
+} from "@/server/actions/action-client";
 import { guardRead } from "@/server/auth/guard";
 import type { NextRequest } from "next/server";
 
@@ -25,6 +29,7 @@ export async function GET(request: NextRequest) {
       reason,
       docker: enabled ? [...DOCKER_ACTIONS] : [],
       vm: enabled ? [...VM_ACTIONS] : [],
+      notification: enabled ? [...NOTIFICATION_ACTIONS] : [],
       cooldownMs: env.ACTION_COOLDOWN_MS,
       ratePerMinute: env.ACTION_RATE_PER_MINUTE,
     },

@@ -311,7 +311,7 @@ export default function OverviewPage() {
 
       {payload && (
         <section aria-label="Resource history and storage" className="grid gap-3 xl:grid-cols-2">
-          <div className="xl:col-span-1">
+          <div className="min-w-0 xl:col-span-1">
             <SeriesChart
               series={[
                 {
@@ -353,17 +353,19 @@ export default function OverviewPage() {
               </p>
             </div>
           </div>
-          <StorageOverview storage={payload.storage} />
+          <div className="min-w-0">
+            <StorageOverview storage={payload.storage} />
+          </div>
         </section>
       )}
 
       {payload && (
         <section aria-label="Containers and events" className="grid gap-3 xl:grid-cols-2">
-          <div className="space-y-3">
+          <div className="min-w-0 space-y-3">
             <TopConsumersCard consumers={extras?.topConsumers ?? null} />
             <DockerOverviewList docker={payload.docker} />
           </div>
-          <div className="space-y-3">
+          <div className="min-w-0 space-y-3">
             <NotificationsCard notifications={payload.notifications} />
             {extras && !extras.prometheus.configured && (
               <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">

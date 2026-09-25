@@ -320,3 +320,16 @@ export const LOG_FILE_QUERY = /* GraphQL */ `
     }
   }
 `;
+
+/** Lightweight docker state sampling for the SSE pipeline. */
+export const DOCKER_STATE_QUERY = /* GraphQL */ `
+  query DockerState {
+    docker {
+      containers {
+        id
+        names
+        state
+      }
+    }
+  }
+`;

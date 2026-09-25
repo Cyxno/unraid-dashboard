@@ -130,9 +130,11 @@ export function Header({ overview, onMenuClick }: HeaderProps) {
         )}
       </div>
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex shrink-0 items-center gap-1.5">
         {healthBadge(payload?.health, Boolean(payload))}
         {dataStatusBadge(overview)}
+        <AuthIndicator />
+        <ViewsMenu />
         <Button
           variant="ghost"
           size="icon"
@@ -140,8 +142,6 @@ export function Header({ overview, onMenuClick }: HeaderProps) {
           disabled={overview.loading}
           aria-label="Refresh data"
         >
-          <AuthIndicator />
-          <ViewsMenu />
           <RefreshCw className={cn(overview.loading && "animate-spin")} aria-hidden="true" />
         </Button>
       </div>

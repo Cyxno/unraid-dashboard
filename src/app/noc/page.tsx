@@ -5,6 +5,8 @@ import { ArrowDownToLine, ArrowUpFromLine, Boxes, Cpu, Gauge, HardDrive, MemoryS
 import Link from "next/link";
 import { usePoll } from "@/hooks/use-poll";
 import { PAGE_INTERVAL_MS } from "@/lib/prefs";
+import { useLive } from "@/components/layout/live-events";
+import { Maximize } from "lucide-react";
 import { formatBytes, formatPercent, formatRate, formatTemp, formatUptime, humanState } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -65,12 +67,30 @@ function Tile({
 
 export default function NocPage() {
   const overview = usePoll<OverviewPayload>("/api/overview?window=15m", PAGE_INTERVAL_MS.overview);
+  const { status } = useLive();
   const snapshot = usePoll<{ meta: import("@/lib/api-types").MetricMeta; data: SystemMetricsSnapshot | null }>(
     "/api/system/metrics",
     PAGE_INTERVAL_MS.systemMetrics,
   );
   const docker = usePoll<Section<DockerSummary>>("/api/docker", PAGE_INTERVAL_MS.docker);
   const { enter } = useFullscreen();
+
+  // Keep the wallboard awake where the browser supports it (no-op else).
+  useEffect(() => {
+    let sentinel: { release: () => Promise<void> } | null = null;
+    const acquire = async () => {
+      try {
+        const nav = navigator as Navigator & { wakeLock?: { request: (type: "screen") => Promise<{ release: () => Promise<void> }> } };
+        sentinel = (await nav.wakeLock?.request("screen")) ?? null;
+      } catch {
+        // unsupported or denied — ignore
+      }
+    };
+    void acquire();
+    return () => {
+      void sentinel?.release().catch(() => {});
+    };
+  }, []);
 
   // Auto-hide cursor after inactivity (wallboard friendly).
   useEffect(() => {
@@ -103,11 +123,11 @@ export default function NocPage() {
   return (
     <div className="min-h-svh bg-background p-4 sm:p-6">
       {/* Header */}
-      <div className="mb-4 flex items-center gap-3">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
         <p
           role={health?.level === "critical" ? "alert" : "status"}
           className={cn(
-            "flex items-center gap-2 text-sm font-semibold",
+            "flex min-w-0 shrink items-center gap-2 text-sm font-semibold",
             health?.level === "critical"
               ? "text-destructive"
               : health?.level === "attention"
@@ -129,11 +149,28 @@ export default function NocPage() {
           {health?.level === "critical" ? "NEEDS ATTENTION" : health?.level === "attention" ? "WARNING" : "ALL SYSTEMS NOMINAL"}
         </p>
         {payload?.identity.data && (
-          <span className="text-sm text-muted-foreground">
+          <span className="hidden min-w-0 text-sm text-muted-foreground sm:inline">
             {payload.identity.data.serverName} · up {formatUptime(payload.identity.data.uptimeSeconds)}
           </span>
         )}
-        <Button variant="ghost" size="sm" asChild className="ml-auto" aria-label="Exit NOC mode">
+        <p
+          className={cn(
+            "ml-auto hidden min-w-0 truncate text-[11px] text-muted-foreground sm:block",
+          )}
+          aria-live="polite"
+        >
+          {status === "connected" ? "live" : status}
+        </p>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="gap-1 text-xs"
+          onClick={enter}
+          aria-label="Enter fullscreen"
+        >
+          <Maximize className="size-3.5" aria-hidden={true} /> Fullscreen
+        </Button>
+        <Button variant="ghost" size="sm" asChild className="shrink-0" aria-label="Exit NOC mode">
           <Link href="/">
             <X className="size-4" aria-hidden={true} /> Exit
           </Link>

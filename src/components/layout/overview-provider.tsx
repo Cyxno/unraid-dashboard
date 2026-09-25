@@ -3,6 +3,7 @@
 import { createContext, useContext } from "react";
 import { usePoll, type PollResult } from "@/hooks/use-poll";
 import { usePrefs, REFRESH_INTERVAL_MS } from "@/lib/prefs";
+import { useLive } from "./live-events";
 import type { OverviewPayload } from "@/lib/api-types";
 
 const OverviewContext = createContext<PollResult<OverviewPayload> | null>(null);
@@ -13,9 +14,13 @@ const OverviewContext = createContext<PollResult<OverviewPayload> | null>(null);
  */
 export function OverviewProvider({ children }: { children: React.ReactNode }) {
   const { prefs } = usePrefs();
+  const { status } = useLive();
+  // SSE healthy → instant updates arrive over the stream; stretch the
+  // REST poll (never remove it — polling is the fallback).
+  const stretch = status === "connected" ? 3 : 1;
   const result = usePoll<OverviewPayload>(
     `/api/overview?window=${prefs.historyWindow}`,
-    REFRESH_INTERVAL_MS[prefs.refresh],
+    REFRESH_INTERVAL_MS[prefs.refresh] * stretch,
   );
   return <OverviewContext.Provider value={result}>{children}</OverviewContext.Provider>;
 }

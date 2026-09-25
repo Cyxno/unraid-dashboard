@@ -23,6 +23,10 @@ import { PageHeader } from "@/components/dashboard/page-primitives";
 import { MetricStatus, SectionStatus } from "@/components/dashboard/section-status";
 import { SeriesChart, formatValue } from "@/components/dashboard/series-chart";
 import { WindowPicker } from "@/components/dashboard/window-picker";
+import {
+  ThermalAnalysisCard,
+  type ThermalAnalysisPayload,
+} from "@/components/dashboard/thermal-analysis-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -186,7 +190,8 @@ export default function SystemPage() {
     "/api/system",
     PAGE_INTERVAL_MS.system,
   );
-  const snapshot = usePoll<SystemMetricsSnapshot>(
+  // /api/system/metrics returns { meta, data } — unwrap data.
+  const snapshot = usePoll<{ meta: SystemMetricsSnapshot["meta"]; data: SystemMetricsSnapshot | null }>(
     "/api/system/metrics",
     PAGE_INTERVAL_MS.systemMetrics,
   );
@@ -196,12 +201,16 @@ export default function SystemPage() {
   const temperature = info?.temperature ?? overview.data?.temperature.data ?? null;
 
   const [tab, setTab] = useState<MetricTab>("cpu");
+  const thermalAnalysis = usePoll<ThermalAnalysisPayload>(
+    "/api/thermal/analysis",
+    60_000,
+  );
   const history = usePoll<SystemHistoryPayload>(
     `/api/system/history?metric=${tab}&window=${prefs.historyWindow}`,
     HISTORY_INTERVAL_MS[prefs.historyWindow],
   );
 
-  const snap = snapshot.data;
+  const snap = snapshot.data?.data ?? null;
   const snapMeta = snap?.meta ?? null;
   const promStatus = snapMeta?.status ?? "unavailable";
   const chartUnavailable = promStatus === "unavailable";
@@ -347,7 +356,8 @@ export default function SystemPage() {
       <section aria-label="Metrics history" className="mb-4">
         <Card>
           <CardHeader className="gap-3">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+              <div className="flex flex-wrap items-center gap-1">
               {METRIC_TABS.map((entry) => (
                 <Button
                   key={entry.id}
@@ -360,7 +370,8 @@ export default function SystemPage() {
                   {entry.label}
                 </Button>
               ))}
-              <div className="ml-auto">
+              </div>
+              <div className="sm:ml-auto">
                 <WindowPicker
                   value={prefs.historyWindow}
                   onChange={(value: HistoryWindowPref) => setPref("historyWindow", value)}
@@ -393,6 +404,7 @@ export default function SystemPage() {
                   unavailable={chartUnavailable}
                   unavailableReason="History unavailable — Prometheus is unreachable. Unraid state pages remain live."
                 />
+                {tab === "temps" && <ThermalAnalysisCard payload={thermalAnalysis.data} />}
                 {tab === "temps" && (
                   <ThermalHistoryList payload={history.data} />
                 )}
@@ -413,7 +425,7 @@ export default function SystemPage() {
 
       {/* Platform info cards ---------------------------------------------- */}
       {loading && !data ? null : info ? (
-        <section aria-label="Platform information" className="grid gap-3 lg:grid-cols-2">
+        <section aria-label="Platform information" className="grid gap-3 lg:grid-cols-2 [&>*]:min-w-0">
           <Card>
             <CardHeader>
               <CardTitle>Operating system</CardTitle>

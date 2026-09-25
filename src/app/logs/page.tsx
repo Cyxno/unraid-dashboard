@@ -122,7 +122,8 @@ export default function LogsPage() {
       />
 
       <div className="grid gap-3 lg:grid-cols-[260px_1fr]">
-        <Card className="h-fit">
+        {/* On phones the file list collapses to a compact block. */}
+        <Card className="h-fit min-w-0">
           <CardHeader>
             <CardTitle className="text-sm">Log files</CardTitle>
           </CardHeader>
@@ -130,7 +131,7 @@ export default function LogsPage() {
             {files.loading && !files.data ? (
               <LoadingPanel rows={5} />
             ) : files.data?.data ? (
-              <ul className="max-h-[60vh] space-y-0.5 overflow-y-auto">
+              <ul className="max-h-44 space-y-0.5 overflow-y-auto lg:max-h-[60vh]">
                 {files.data.data.map((file) => (
                   <li key={file.path}>
                     <Button
@@ -158,9 +159,9 @@ export default function LogsPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+        <Card className="min-w-0">
+          <CardHeader className="flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <CardTitle className="flex flex-wrap items-center gap-2">
               <ScrollText className="size-4 text-muted-foreground" aria-hidden="true" />
               {content?.data?.path ?? "Select a log file"}
               {content?.data?.totalLines != null && (
@@ -169,7 +170,7 @@ export default function LogsPage() {
                 </Badge>
               )}
             </CardTitle>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <label className="relative">
                 <span className="sr-only">Filter log lines</span>
                 <Search

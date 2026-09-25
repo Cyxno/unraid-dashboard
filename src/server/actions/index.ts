@@ -13,7 +13,7 @@ import type { ActionResponseBody } from "@/lib/api-types";
 export interface PerformActionInput {
   actor: string;
   sourceIp: string;
-  kind: "docker" | "vm";
+  kind: "docker" | "vm" | "notification";
   action: string;
   targetId: string;
 }

@@ -64,7 +64,7 @@ export function guardWrite(request: NextRequest): GuardResult<undefined> {
 /** Parses and structurally validates an action request body. */
 export async function parseActionBody(
   request: NextRequest,
-): Promise<{ ok: true; body: { kind: "docker" | "vm"; action: string; id: string } } | { ok: false; response: NextResponse }> {
+): Promise<{ ok: true; body: { kind: "docker" | "vm" | "notification"; action: string; id: string } } | { ok: false; response: NextResponse }> {
   let raw: unknown;
   try {
     raw = await request.json();
@@ -76,7 +76,7 @@ export async function parseActionBody(
   const action = body.action;
   const id = body.id;
 
-  if (kind !== "docker" && kind !== "vm") {
+  if (kind !== "docker" && kind !== "vm" && kind !== "notification") {
     return { ok: false, response: reject("Invalid kind.", 400) };
   }
   if (typeof action !== "string" || !/^[a-z]+$/.test(action)) {

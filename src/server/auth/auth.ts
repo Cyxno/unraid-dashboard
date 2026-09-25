@@ -144,13 +144,15 @@ export function ipMatches(ip: string, rule: string): boolean {
 /**
  * CSRF: write endpoints accept only same-origin requests. Returns null
  * when the origin is acceptable, or a rejection reason.
+ *
+ * Behind a reverse proxy with an external hostname (PUBLIC_BASE_URL),
+ * that origin is accepted alongside the request's own Host header.
  */
 export function checkSameOrigin(
   headers: Headers,
   expectedHost: string | null,
 ): string | null {
   const origin = headers.get("origin");
-  const host = headers.get("host") ?? expectedHost;
   // Same-origin fetches always include Origin for POST in modern browsers.
   if (!origin) {
     return "Missing Origin header.";
@@ -161,8 +163,15 @@ export function checkSameOrigin(
   } catch {
     return "Malformed Origin header.";
   }
-  if (!host || originHost !== host) {
-    return `Cross-origin request rejected (${originHost} != ${host}).`;
+  const host = headers.get("host") ?? expectedHost;
+  if (host && originHost === host) return null;
+  try {
+    const env = getEnv();
+    if (env.PUBLIC_BASE_URL && originHost === new URL(env.PUBLIC_BASE_URL).host) {
+      return null;
+    }
+  } catch {
+    // env unavailable or malformed — fall through to rejection
   }
-  return null;
+  return `Cross-origin request rejected (${originHost}).`;
 }
