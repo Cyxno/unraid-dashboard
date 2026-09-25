@@ -38,6 +38,11 @@ export class UnraidClient {
     this.timeoutMs = options.timeoutMs ?? env.UNRAID_TIMEOUT_MS;
   }
 
+  /** Full GraphQL endpoint URL — safe to expose (contains no credentials). */
+  get targetUrl(): string {
+    return this.url;
+  }
+
   async request<TData, TVariables = Record<string, never>>(
     query: string,
     variables?: TVariables,

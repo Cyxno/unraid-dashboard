@@ -1,18 +1,17 @@
 /**
  * GraphQL operations against the Unraid API.
- * Field names verified against `generated-schema.graphql` in the unraid/api
- * monorepo (Unraid 7.2+ built-in API).
+ * Every field has been verified against the live API on Unraid 7.3.2
+ * (introspection + test queries). Do not add fields without checking.
  */
 
-/** Server identity: owner username, OS version and uptime via services. */
-export const SERVER_IDENTITY_QUERY = /* GraphQL */ `
-  query ServerIdentity {
-    owner {
-      username
-    }
+export const IDENTITY_QUERY = /* GraphQL */ `
+  query Identity {
     vars {
       name
       version
+    }
+    owner {
+      username
     }
     services {
       name
@@ -20,7 +19,6 @@ export const SERVER_IDENTITY_QUERY = /* GraphQL */ `
         timestamp
       }
     }
-    online
   }
 `;
 
@@ -43,12 +41,57 @@ export const METRICS_QUERY = /* GraphQL */ `
         bytesSent
         operstate
       }
+      temperature {
+        summary {
+          hottest {
+            value
+          }
+          warningCount
+          criticalCount
+        }
+        sensors {
+          name
+          type
+          current {
+            value
+          }
+          warning
+          critical
+        }
+      }
     }
+  }
+`;
+
+export const SYSTEM_QUERY = /* GraphQL */ `
+  query SystemInfo {
     info {
+      os {
+        hostname
+        distro
+        kernel
+        arch
+        uefi
+      }
       cpu {
         brand
         cores
         threads
+        speed
+      }
+      memory {
+        layout {
+          size
+        }
+      }
+      baseboard {
+        manufacturer
+        model
+      }
+      system {
+        manufacturer
+        model
+        virtual
       }
     }
   }
@@ -78,6 +121,7 @@ export const ARRAY_QUERY = /* GraphQL */ `
         status
         temp
         type
+        fsType
         fsSize
         fsFree
         fsUsed
@@ -90,6 +134,7 @@ export const ARRAY_QUERY = /* GraphQL */ `
         status
         temp
         type
+        fsType
         fsSize
         fsFree
         fsUsed
@@ -108,6 +153,7 @@ export const ARRAY_QUERY = /* GraphQL */ `
         id
         name
         status
+        fsType
         fsSize
         fsFree
         fsUsed
@@ -126,15 +172,23 @@ export const DOCKER_QUERY = /* GraphQL */ `
         image
         state
         status
+        created
         autoStart
         isUpdateAvailable
+        iconUrl
+        webUiUrl
+        ports {
+          privatePort
+          publicPort
+          type
+        }
       }
     }
   }
 `;
 
-export const NOTIFICATIONS_QUERY = /* GraphQL */ `
-  query Notifications {
+export const NOTIFICATIONS_SUMMARY_QUERY = /* GraphQL */ `
+  query NotificationSummary {
     notifications {
       overview {
         unread {
@@ -149,9 +203,88 @@ export const NOTIFICATIONS_QUERY = /* GraphQL */ `
         subject
         description
         importance
+        type
         formattedTimestamp
-        timestamp
       }
+    }
+  }
+`;
+
+export const NOTIFICATIONS_LIST_QUERY = /* GraphQL */ `
+  query NotificationList($filter: NotificationFilter!) {
+    notifications {
+      list(filter: $filter) {
+        id
+        title
+        subject
+        description
+        importance
+        type
+        formattedTimestamp
+      }
+    }
+  }
+`;
+
+export const VMS_QUERY = /* GraphQL */ `
+  query Vms {
+    vms {
+      domains {
+        id
+        name
+        state
+      }
+    }
+  }
+`;
+
+export const NETWORK_INTERFACES_QUERY = /* GraphQL */ `
+  query NetworkInterfaces {
+    networkInterfaces {
+      name
+      macAddress
+      mtu
+      speed
+      duplex
+      virtual
+      operstate
+      type
+      ipAddress
+      netmask
+      gateway
+      useDhcp
+    }
+  }
+`;
+
+export const CONNECTION_PING_QUERY = /* GraphQL */ `
+  query ConnectionPing {
+    online
+    me {
+      name
+      roles
+    }
+  }
+`;
+
+export const LOG_FILES_QUERY = /* GraphQL */ `
+  query LogFiles {
+    logFiles {
+      name
+      path
+      size
+      modifiedAt
+    }
+  }
+`;
+
+export const LOG_FILE_QUERY = /* GraphQL */ `
+  query LogFile($path: String!, $lines: Int, $startLine: Int) {
+    logFile(path: $path, lines: $lines, startLine: $startLine) {
+      path
+      totalLines
+      startLine
+      content
     }
   }
 `;
