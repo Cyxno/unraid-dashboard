@@ -1,0 +1,18 @@
+services:
+  unraid-dashboard:
+    build: .
+    image: unraid-dashboard:latest
+    container_name: unraid-dashboard
+    restart: unless-stopped
+    ports:
+      # Host port is configurable; the container always listens on 3000.
+      - "${DASHBOARD_PORT:-3080}:3000"
+    environment:
+      # Where the Unraid GraphQL API lives.
+      UNRAID_URL: ${UNRAID_URL:?set UNRAID_URL in .env or your environment}
+      UNRAID_API_KEY: ${UNRAID_API_KEY:?set UNRAID_API_KEY in .env or your environment}
+      # Optional
+      # UNRAID_TIMEOUT_MS: "10000"
+      # UNRAID_GRAPHQL_PATH: /graphql
+      # On Unraid, replace the published port with host networking if needed:
+      # network_mode: host
