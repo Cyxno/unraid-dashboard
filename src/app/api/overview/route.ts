@@ -1,12 +1,18 @@
-import { NextResponse } from "next/server";
-import { getOverviewSnapshot } from "@/server/unraid/overview";
+import { NextResponse, type NextRequest } from "next/server";
+import { getOverview } from "@/server/unraid/service";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+const WINDOWS = new Set(["5m", "15m", "1h"]);
+
+export async function GET(request: NextRequest) {
   try {
-    const snapshot = await getOverviewSnapshot();
-    return NextResponse.json(snapshot, {
+    const windowParam = request.nextUrl.searchParams.get("window") ?? "15m";
+    const window = WINDOWS.has(windowParam)
+      ? (windowParam as "5m" | "15m" | "1h")
+      : "15m";
+    const payload = await getOverview(window);
+    return NextResponse.json(payload, {
       headers: { "cache-control": "no-store" },
     });
   } catch (error) {
