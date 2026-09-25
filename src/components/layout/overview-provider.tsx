@@ -1,35 +1,29 @@
 "use client";
 
 import { createContext, useContext } from "react";
-import { useOverview } from "@/hooks/use-overview";
-import type { OverviewSnapshot, ResourceSample, Sourced } from "@/server/unraid/types";
+import { usePoll, type PollResult } from "@/hooks/use-poll";
+import { usePrefs, REFRESH_INTERVAL_MS } from "@/lib/prefs";
+import type { OverviewPayload } from "@/lib/api-types";
 
-interface OverviewContextValue {
-  snapshot: Sourced<OverviewSnapshot> | null;
-  error: string | null;
-  loading: boolean;
-  history: ResourceSample[];
-  refresh: () => void;
-}
+const OverviewContext = createContext<PollResult<OverviewPayload> | null>(null);
 
-const OverviewContext = createContext<OverviewContextValue | null>(null);
-
-/** Shared polling state so the header and pages render the same data. */
+/**
+ * Shared polling state for the overview payload so the header, health
+ * banner and overview page render one consistent snapshot.
+ */
 export function OverviewProvider({ children }: { children: React.ReactNode }) {
-  const { snapshot, error, loading, history, refresh } = useOverview();
-  return (
-    <OverviewContext.Provider
-      value={{ snapshot, error, loading, history, refresh }}
-    >
-      {children}
-    </OverviewContext.Provider>
+  const { prefs } = usePrefs();
+  const result = usePoll<OverviewPayload>(
+    `/api/overview?window=${prefs.historyWindow}`,
+    REFRESH_INTERVAL_MS[prefs.refresh],
   );
+  return <OverviewContext.Provider value={result}>{children}</OverviewContext.Provider>;
 }
 
-export function useOverviewContext(): OverviewContextValue {
+export function useOverview(): PollResult<OverviewPayload> {
   const context = useContext(OverviewContext);
   if (!context) {
-    throw new Error("useOverviewContext must be used within OverviewProvider");
+    throw new Error("useOverview must be used within OverviewProvider");
   }
   return context;
 }

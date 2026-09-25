@@ -1,25 +1,92 @@
 "use client";
 
 import { useState } from "react";
-import { Menu, RefreshCw, Server } from "lucide-react";
+import { Menu, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
-import { formatUptime } from "@/lib/utils";
-import type { OverviewSnapshot, Sourced } from "@/server/unraid/types";
+import { cn, formatUptime, humanState } from "@/lib/utils";
+import type {
+  HealthLevel,
+  HealthSummary,
+  Section,
+  SystemIdentity,
+} from "@/lib/api-types";
+import type { PollResult } from "@/hooks/use-poll";
+import type { OverviewPayload } from "@/lib/api-types";
 
 interface HeaderProps {
-  snapshot: Sourced<OverviewSnapshot> | null;
-  loading: boolean;
-  error: string | null;
-  onRefresh: () => void;
+  overview: PollResult<OverviewPayload>;
   onMenuClick: () => void;
 }
 
-export function Header({ snapshot, loading, error, onRefresh, onMenuClick }: HeaderProps) {
+const HEALTH_META: Record<
+  Exclude<HealthLevel, null>,
+  { label: string; className: string }
+> = {
+  healthy: { label: "Healthy", className: "border-success/30 bg-success/10 text-success" },
+  attention: { label: "Attention", className: "border-warning/30 bg-warning/10 text-warning" },
+  critical: { label: "Critical", className: "border-destructive/30 bg-destructive/10 text-destructive" },
+};
+
+function healthBadge(health: HealthSummary | undefined, hasData: boolean) {
+  if (!hasData) return null;
+  const level = health?.level ?? null;
+  if (!level) {
+    return <Badge variant="muted">Unknown state</Badge>;
+  }
+  const meta = HEALTH_META[level];
+  return (
+    <span
+      title={health?.reasons.join(" · ") || undefined}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium",
+        meta.className,
+      )}
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          "size-1.5 rounded-full",
+          level === "healthy" && "bg-success",
+          level === "attention" && "bg-warning animate-pulse",
+          level === "critical" && "bg-destructive animate-pulse",
+        )}
+      />
+      {meta.label}
+    </span>
+  );
+}
+
+function dataStatusBadge(overview: PollResult<OverviewPayload>) {
+  const anyDemo = hasDemo(overview.data);
+  if (overview.error && !overview.data) {
+    return <Badge variant="destructive">Offline</Badge>;
+  }
+  if (anyDemo) return <Badge variant="warning">Demo data</Badge>;
+  if (overview.error) return <Badge variant="warning">Degraded</Badge>;
+  if (overview.data) return <Badge variant="success">Live</Badge>;
+  return null;
+}
+
+function hasDemo(payload: OverviewPayload | null): boolean {
+  if (!payload) return false;
+  const sections = [
+    payload.identity,
+    payload.cpu,
+    payload.memory,
+    payload.storage,
+    payload.docker,
+    payload.network,
+    payload.notifications,
+  ];
+  return sections.some((section) => section?.status === "demo");
+}
+
+export function Header({ overview, onMenuClick }: HeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const identity = snapshot?.data.identity;
-  const online = snapshot?.status === "live" && !error;
+  const payload = overview.data;
+  const identity: Section<SystemIdentity> | undefined = payload?.identity;
+  const storage = payload?.storage;
 
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur-sm supports-[backdrop-filter]:bg-background/80">
@@ -38,46 +105,40 @@ export function Header({ snapshot, loading, error, onRefresh, onMenuClick }: Hea
       </Button>
 
       <div className="flex min-w-0 items-center gap-2.5">
-        <span
-          aria-hidden="true"
-          className={cn(
-            "flex size-2 shrink-0 rounded-full",
-            online ? "bg-success" : "bg-warning animate-pulse",
-          )}
-        />
         <h1 className="truncate text-sm font-semibold">
-          {identity?.serverName ?? "Unraid server"}
+          {identity?.data?.serverName ?? "Unraid server"}
         </h1>
-        {identity?.osVersion && (
+        {identity?.data?.osVersion && (
           <Badge variant="muted" className="hidden sm:inline-flex">
-            v{identity.osVersion}
+            v{identity.data.osVersion}
           </Badge>
         )}
-        {identity?.uptimeSeconds != null && (
+        {storage?.data && (
+          <Badge
+            variant={storage.data.state === "STARTED" ? "muted" : "warning"}
+            className="hidden md:inline-flex"
+          >
+            Array {humanState(storage.data.state)}
+          </Badge>
+        )}
+        {identity?.data?.uptimeSeconds != null && (
           <span className="hidden text-xs text-muted-foreground lg:inline">
-            up {formatUptime(identity.uptimeSeconds)}
+            up {formatUptime(identity.data.uptimeSeconds)}
           </span>
         )}
       </div>
 
       <div className="ml-auto flex items-center gap-2">
-        {error ? (
-          <Badge variant="destructive">Connection error</Badge>
-        ) : snapshot?.status === "live" ? (
-          <Badge variant="success">
-            <Server aria-hidden="true" /> Live
-          </Badge>
-        ) : snapshot ? (
-          <Badge variant="warning">Demo data</Badge>
-        ) : null}
+        {healthBadge(payload?.health, Boolean(payload))}
+        {dataStatusBadge(overview)}
         <Button
           variant="ghost"
           size="icon"
-          onClick={onRefresh}
-          disabled={loading}
+          onClick={overview.refresh}
+          disabled={overview.loading}
           aria-label="Refresh data"
         >
-          <RefreshCw className={cn(loading && "animate-spin")} aria-hidden="true" />
+          <RefreshCw className={cn(overview.loading && "animate-spin")} aria-hidden="true" />
         </Button>
       </div>
     </header>

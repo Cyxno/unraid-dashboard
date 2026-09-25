@@ -2,72 +2,90 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Server } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, Server } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NAV_ITEMS } from "@/lib/navigation";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+
 
 interface SidebarProps {
-  /** Mobile: controlled by the header's menu button; always open on desktop. */
-  open: boolean;
-  onClose: () => void;
+  mobileOpen: boolean;
+  onMobileClose: () => void;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }
 
-export function Sidebar({ open, onClose }: SidebarProps) {
+export function Sidebar({ mobileOpen, onMobileClose, collapsed, onToggleCollapsed }: SidebarProps) {
   const pathname = usePathname();
 
   return (
     <>
-      {/* Mobile backdrop */}
-      {open && (
+      {mobileOpen && (
         <button
           type="button"
           aria-label="Close navigation"
-          onClick={onClose}
+          onClick={onMobileClose}
           className="fixed inset-0 z-40 bg-black/60 md:hidden"
         />
       )}
       <aside
+        data-collapsed={collapsed}
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r bg-card transition-transform duration-200 md:translate-x-0",
-          open ? "translate-x-0" : "-translate-x-full",
+          "fixed inset-y-0 left-0 z-50 flex flex-col border-r bg-card transition-[width,transform] duration-200",
+          collapsed ? "md:w-14" : "md:w-56",
+          "w-60",
+          mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
         )}
       >
-        <div className="flex h-14 items-center gap-2.5 border-b px-4">
-          <span className="flex size-8 items-center justify-center rounded-md bg-primary/15 text-primary">
+        <div
+          className={cn(
+            "flex h-14 shrink-0 items-center gap-2.5 border-b px-3",
+            collapsed && "md:justify-center md:px-0",
+          )}
+        >
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/15 text-primary">
             <Server className="size-4" aria-hidden="true" />
           </span>
-          <div className="leading-tight">
-            <p className="text-sm font-semibold">Unraid</p>
-            <p className="text-xs text-muted-foreground">Dashboard</p>
+          <div className={cn("min-w-0 leading-tight", collapsed && "md:hidden")}>
+            <p className="truncate text-sm font-semibold">Unraid Dashboard</p>
+            <p className="truncate text-xs text-muted-foreground">Server Console</p>
           </div>
         </div>
 
-        <nav aria-label="Main navigation" className="flex-1 space-y-1 overflow-y-auto p-3">
+        <nav
+          aria-label="Main navigation"
+          className="flex-1 space-y-0.5 overflow-y-auto p-2"
+        >
           {NAV_ITEMS.map((item) => {
             const active =
-              item.href === "/"
-                ? pathname === "/"
-                : pathname.startsWith(item.href);
+              item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
             return (
               <Link
                 key={item.href}
                 href={item.href}
-                onClick={onClose}
+                onClick={onMobileClose}
+                title={collapsed ? item.title : undefined}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+                  "flex items-center gap-3 rounded-md px-2.5 py-2 text-sm transition-colors",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   active
                     ? "bg-secondary font-medium text-foreground"
                     : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                  collapsed && "md:justify-center md:px-0",
                 )}
               >
                 <item.icon className="size-4 shrink-0" aria-hidden="true" />
-                <span className="flex-1">{item.title}</span>
-                {item.placeholder && (
-                  <Badge variant="muted" className="text-[10px] px-1.5">
-                    soon
+                <span className={cn("flex-1", collapsed && "md:hidden")}>
+                  {item.title}
+                </span>
+                {item.partial && (
+                  <Badge
+                    variant="muted"
+                    className={cn("px-1.5 text-[10px]", collapsed && "md:hidden")}
+                  >
+                    partial
                   </Badge>
                 )}
               </Link>
@@ -75,8 +93,34 @@ export function Sidebar({ open, onClose }: SidebarProps) {
           })}
         </nav>
 
-        <div className="border-t p-3 text-xs text-muted-foreground">
-          BFF proxy — API key never leaves the server.
+        <div
+          className={cn(
+            "flex shrink-0 items-center border-t p-2",
+            collapsed ? "md:justify-center" : "justify-between px-3",
+          )}
+        >
+          <span
+            className={cn(
+              "truncate text-[11px] text-muted-foreground",
+              collapsed && "md:hidden",
+            )}
+          >
+            BFF proxy · key stays server-side
+          </span>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="hidden md:inline-flex"
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-pressed={collapsed}
+            onClick={onToggleCollapsed}
+          >
+            {collapsed ? (
+              <PanelLeftOpen aria-hidden="true" />
+            ) : (
+              <PanelLeftClose aria-hidden="true" />
+            )}
+          </Button>
         </div>
       </aside>
     </>
