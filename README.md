@@ -136,3 +136,23 @@ npm run lint        # eslint
 npm run typecheck   # tsc --noEmit
 npm run build       # production build
 ```
+
+## Deployment (Unraid)
+
+The image is published to `ghcr.io/cyxno/unraid-dashboard` by GitHub Actions
+(`.github/workflows/docker-publish.yml`) on every push to `main`:
+
+- `latest` — tracks `main`
+- `sha-<commit>` — per-commit traceability
+- `X.Y.Z` — on `v*` tags
+
+On Unraid, deploy via the **Docker tab → Add Container** using the
+`my-unraid-dashboard` user template (host network mode, port 8090, restart
+policy `unless-stopped`, Docker healthcheck built in). `UNRAID_URL` and
+`UNRAID_API_KEY` are runtime-only configuration — the template stores them on
+the flash drive (`/boot/config/plugins/dockerMan/templates-user/`, root-only
+permissions) and they are never committed to the repository.
+
+> Note: the GitHub repository is private, so GHCR images are private too.
+> Run `docker login ghcr.io` on the host (with a PAT having `read:packages`)
+> before pulling, or make the package public.
