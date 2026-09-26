@@ -31,7 +31,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/actions/confirm-dialog";
 import { useActionCapabilities, useActionRunner } from "@/components/actions/use-actions";
-import { cn, formatBytes, formatDateTimeIso, formatPercent, formatTemp } from "@/lib/utils";
+import { cn, formatBytes, formatDateTimeIso, formatPercent, formatRate, formatTemp } from "@/lib/utils";
 import type {
   ActionResponseBody,
   ContainerDetailPayload,
@@ -161,17 +161,37 @@ export default function ContainerDetailPage() {
             )}
           </p>
         </Card>
-        <Card className="gap-0 p-4">
-          <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Update</p>
-          <p className="mt-1 text-xl">
-            {summary?.updateAvailable ? (
-              <Badge variant="warning">available</Badge>
-            ) : (
-              <span className="text-sm text-muted-foreground">up to date</span>
+          <Card className="gap-0 p-4">
+            <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Update</p>
+            <p className="mt-1 text-xl">
+              {summary?.updateAvailable ? (
+                <Badge variant="warning">available</Badge>
+              ) : (
+                <span className="text-sm text-muted-foreground">up to date</span>
+              )}
+            </p>
+          </Card>
+        </section>
+
+        {/* Current network rates (v0.7): per-container via cAdvisor; the
+            reliable=false case is labelled honestly instead of guessed. */}
+        <section aria-label="Current network" className="grid grid-cols-2 gap-4">
+          <Card className="gap-0 p-4">
+            <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Net RX now</p>
+            <p className="mt-1 font-mono text-xl tabular-nums">
+              {metrics?.networkReliable ? formatRate(metrics.networkRxBytesPerSec) : "—"}
+            </p>
+            {metrics?.networkReliable === false && (
+              <p className="mt-0.5 text-[11px] text-muted-foreground">host-network container — not attributable</p>
             )}
-          </p>
-        </Card>
-      </section>
+          </Card>
+          <Card className="gap-0 p-4">
+            <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Net TX now</p>
+            <p className="mt-1 font-mono text-xl tabular-nums">
+              {metrics?.networkReliable ? formatRate(metrics.networkTxBytesPerSec) : "—"}
+            </p>
+          </Card>
+        </section>
 
       {/* History charts -------------------------------------------------- */}
       <section aria-label="Metric history">
