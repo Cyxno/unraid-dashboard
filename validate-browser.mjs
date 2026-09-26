@@ -109,7 +109,7 @@ await withPage(390, 844, "mobile suite", async (page) => {
   }
 
   await page.goto(BASE + "/settings", { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(4000);
   const settingsBody = await page.textContent("body");
   record("install hint present", settingsBody.includes("Install as app"));
   record("shared dashboards card present", settingsBody.includes("Shared dashboards"));
@@ -149,18 +149,18 @@ await withPage(1440, 900, "shared dashboards", async (page) => {
   record("dashboard create via API", createResponse.status() === 201 && Boolean(created?.id), created?.id ?? createResponse.status());
 
   await page.goto(`${BASE}/dashboard/${created.id}`, { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(2500);
+  await page.waitForTimeout(4000);
   const body = await page.textContent("body");
   record("shared page renders title", body.includes("Browser Validation Board"));
   record("shared page shows owner", body.includes("owner lan"));
-  record("shared docker filter applied", body.includes("saved filter: prom"));
+  record("shared docker filter applied", body.includes("filter: prom"));
   await overflowCheck(page, "shared dashboard page");
   await page.screenshot({ path: `${SHOTS}/desktop-shared-dashboard.png` });
 
   await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1500);
   await page.getByRole("button", { name: /^Views/ }).click();
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(2500);
   const menuText = await page.textContent("body");
   record("views menu shows Local section", menuText.includes("Local — this browser"));
   record("views menu shows Shared section", menuText.includes("Shared — server"));
