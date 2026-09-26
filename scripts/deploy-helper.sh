@@ -25,6 +25,13 @@ if [ -z "${UPDATE_HELPER_TOKEN:-}" ]; then
   echo "ERROR: UPDATE_HELPER_TOKEN must be provided (openssl rand -hex 32)." >&2
   exit 1
 fi
+
+# Proxy-auth secret so the helper can reach protected dashboard endpoints
+# when the dashboard runs AUTH_MODE=proxy (same value as AUTH_PROXY_SECRET).
+DASHBOARD_AUTH_SECRET="${DASHBOARD_AUTH_SECRET:-}"
+if [ -z "$DASHBOARD_AUTH_SECRET" ] && [ -f /boot/config/custom/dashboard/proxy-auth-secret ]; then
+  DASHBOARD_AUTH_SECRET=$(cat /boot/config/custom/dashboard/proxy-auth-secret)
+fi
 if [ "${#UPDATE_HELPER_TOKEN}" -lt 32 ]; then
   echo "ERROR: UPDATE_HELPER_TOKEN must be at least 32 characters." >&2
   exit 1
@@ -44,6 +51,7 @@ docker run -d \
   --restart unless-stopped \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -e UPDATE_HELPER_TOKEN="$UPDATE_HELPER_TOKEN" \
+  -e DASHBOARD_AUTH_SECRET="$DASHBOARD_AUTH_SECRET" \
   -e HELPER_PORT=8790 \
   -e DASHBOARD_PORT="${DASHBOARD_PORT:-8090}" \
   "$IMAGE" >/dev/null

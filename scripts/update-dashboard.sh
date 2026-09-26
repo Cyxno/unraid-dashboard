@@ -124,21 +124,20 @@ done
 
 echo "==> Verifying live API..."
 # PORT env may differ from mapped host port; probe from inside the container network.
-PORT_ENV=$(docker exec "$NAME" printenv PORT 2>/dev/null || echo 3000)
-HTTP_CODE=""
-if [ "$NETWORK_MODE" = "host" ]; then
-  HTTP_CODE=$(docker exec "$NAME" node -e "
-    fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/overview?window=5m')
-      .then(r => { console.log(r.status); })
-      .catch(() => console.log(0))
-  " 2>/dev/null | tail -1)
-else
-  HTTP_CODE=$(docker exec "$NAME" node -e "
-    fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/overview?window=5m')
-      .then(r => { console.log(r.status); })
-      .catch(() => console.log(0))
-  " 2>/dev/null | tail -1)
+# In AUTH_MODE=proxy the probe must present the proxy shared secret
+# (AUTH_PROXY_SECRET env on the container) or every request returns 401.
+AUTH_SECRET=$(docker exec "$NAME" printenv AUTH_PROXY_SECRET 2>/dev/null || true)
+AUTH_HEADERS=""
+if [ -n "$AUTH_SECRET" ]; then
+  AUTH_HEADERS="x-dashboard-auth-token: $AUTH_SECRET"
 fi
+HTTP_CODE=""
+HTTP_CODE=$(docker exec -e AUTH_SECRET="$AUTH_SECRET" "$NAME" node -e "
+  const headers = process.env.AUTH_SECRET ? { 'x-dashboard-auth-token': process.env.AUTH_SECRET, 'x-forwarded-user': 'update-script' } : {};
+  fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/overview?window=5m', { headers })
+    .then(r => { console.log(r.status); })
+    .catch(() => console.log(0))
+" 2>/dev/null | tail -1)
 
 if [ "$HTTP_CODE" != "200" ]; then
   echo "!!! /api/overview returned '$HTTP_CODE' — rolling back."

@@ -44,6 +44,9 @@ const IMAGE_REPO = process.env.TARGET_IMAGE_REPO || "ghcr.io/cyxno/unraid-dashbo
 const LISTEN_HOST = "127.0.0.1";
 const PORT = Number(process.env.HELPER_PORT || 8790);
 const DASHBOARD_URL = process.env.DASHBOARD_URL || `http://127.0.0.1:${process.env.DASHBOARD_PORT || 8090}`;
+/** Proxy-auth secret shared with the dashboard (AUTH_PROXY_SECRET) — required
+ * to reach protected endpoints when the dashboard runs AUTH_MODE=proxy. */
+const DASHBOARD_AUTH_SECRET = process.env.DASHBOARD_AUTH_SECRET || "";
 /** Provenance env keys excluded from preservation so the new image's own values win. */
 const PROVENANCE_ENV = /^(PATH|NODE_VERSION|YARN_VERSION|NODE_ENV|HOSTNAME|HOME|NEXT_TELEMETRY_DISABLED|APP_VERSION|GIT_SHA|BUILD_TIME|IMAGE_REF)=/;
 const TAG_RE = /^v?\d+\.\d+\.\d+$/;
@@ -151,8 +154,19 @@ function buildRunArgs(preserved) {
 
 /* ---- verification ---------------------------------------------------------- */
 
+function dashboardHeaders() {
+  // Headers the dashboard accepts in proxy mode; harmless in disabled mode.
+  return DASHBOARD_AUTH_SECRET
+    ? { "x-dashboard-auth-token": DASHBOARD_AUTH_SECRET, "x-forwarded-user": "dashboard-helper" }
+    : {};
+}
+
 async function fetchJson(url, timeoutMs = 5_000) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), cache: "no-store" });
+  const response = await fetch(url, {
+    headers: dashboardHeaders(),
+    signal: AbortSignal.timeout(timeoutMs),
+    cache: "no-store",
+  });
   const body = await response.json().catch(() => null);
   return { status: response.status, body };
 }
@@ -173,9 +187,13 @@ async function verifyLive(expectedVersion) {
 
 /* ---- the update machine ----------------------------------------------------- */
 
+/** Set once the old container has been removed — module scope because
+ * recreateContainer() is shared by replace and rollback paths. */
+let machineMutated = false;
+
 async function recreateContainer(baseArgs, image, envLines) {
   await docker(["rm", "-f", CONTAINER_NAME], { timeoutMs: STEP_TIMEOUT_MS.replace }).catch(() => {});
-  mutated = true;
+  machineMutated = true;
   await dockerRunWithEnv(baseArgs, image, envLines, STEP_TIMEOUT_MS.replace);
 }
 
@@ -183,18 +201,21 @@ async function runUpdate(tag) {
   const requestedAt = Date.now();
   const normalizedTag = tag.replace(/^v/, "");
   const targetImage = `${IMAGE_REPO}:${normalizedTag}`;
-  const fromImage = state.currentImage;
   let preserved = null;
   let envLines = "";
   let replacementDigest = null;
-  let mutated = false; // set once the old container has been removed
+  machineMutated = false;
 
   try {
     // Phase: checking — capture the current container configuration.
+    // fromImage comes from THIS inspection, never from cached startup
+    // state: a stale/null cache must never decide what rollback restores.
     setPhase("checking", `capturing configuration of ${CONTAINER_NAME}`);
     const inspectArray = await dockerJson(["inspect", CONTAINER_NAME], STEP_TIMEOUT_MS.inspect);
     const current = inspectArray[0];
     if (!current) throw new Error("dashboard container not found");
+    const fromImage = current.Config?.Image ?? null;
+    if (!fromImage) throw new Error("cannot determine the current container image — refusing to update");
     preserved = {
       network: current.HostConfig?.NetworkMode ?? "default",
       restart: current.HostConfig?.RestartPolicy?.Name ?? "no",
@@ -272,7 +293,7 @@ async function runUpdate(tag) {
     const message = error instanceof Error ? error.message : String(error);
     log("failed", message);
 
-    if (preserved && mutated) {
+    if (preserved && machineMutated) {
       // Phase: rollback — the old container was already removed, restore it.
       setPhase("rollback", `restoring ${fromImage}`);
       try {
