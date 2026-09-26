@@ -1,36 +1,113 @@
 "use client";
 
-import { useEffect } from "react";
-import { ArrowDownToLine, ArrowUpFromLine, Boxes, Cpu, Gauge, HardDrive, MemoryStick, Thermometer, X } from "lucide-react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  Boxes,
+  ChevronDown,
+  Cpu,
+  Gauge,
+  HardDrive,
+  Maximize,
+  MemoryStick,
+  Minimize,
+  Pause,
+  Play,
+  Settings2,
+  Thermometer,
+  X,
+} from "lucide-react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { usePoll } from "@/hooks/use-poll";
-import { PAGE_INTERVAL_MS } from "@/lib/prefs";
+import { PAGE_INTERVAL_MS, usePrefs } from "@/lib/prefs";
 import { useLive } from "@/components/layout/live-events";
-import { Maximize } from "lucide-react";
+import { usePwa } from "@/components/layout/pwa-provider";
+import { fetchDashboards } from "@/lib/dashboards";
+import { dashboardToSavedView } from "@/lib/dashboards";
 import { formatBytes, formatPercent, formatRate, formatTemp, formatUptime, humanState } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { CYCLE_PANELS, CyclePanel, type CyclePanelId } from "./panels";
 import type {
   DockerSummary,
   OverviewPayload,
   Section,
+  SharedDashboardDto,
   SystemMetricsSnapshot,
   TopConsumers,
 } from "@/lib/api-types";
 
 /**
- * NOC wallboard: fullscreen, dense, auto-refreshing, read-only.
+ * NOC wallboard v3: fullscreen, dense, auto-refreshing, read-only.
+ *
+ * v3 additions: shared-dashboard selection (layout applied), auto-cycle
+ * across Overview/Docker/Thermal/Storage/Network with pause-on-interaction,
+ * connection state + last-update timestamp, wake-lock re-acquisition, and
+ * a kiosk variant (?mode=kiosk) with larger touch targets and a page rail.
  * No lifecycle controls exist here by design.
  */
 
+const CYCLE_OPTIONS = [
+  { value: 0, label: "off" },
+  { value: 15, label: "15s" },
+  { value: 30, label: "30s" },
+  { value: 60, label: "60s" },
+] as const;
+
+/** Seconds of no interaction before auto-cycle resumes after a pause. */
+const CYCLE_RESUME_AFTER_IDLE_S = 30;
+
 function useFullscreen() {
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
   const enter = () => {
     void document.documentElement.requestFullscreen?.().catch(() => {});
   };
   const exit = () => {
     void document.exitFullscreen?.().catch(() => {});
   };
-  return { enter, exit };
+  return { isFullscreen, enter, exit };
+}
+
+/** Wake lock with re-acquisition on visibility change. */
+function useWakeLock() {
+  const [held, setHeld] = useState(false);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let sentinel: { release: () => Promise<void> } | null = null;
+    let released = false;
+    const nav = navigator as Navigator & {
+      wakeLock?: { request: (type: "screen") => Promise<{ release: () => Promise<void> }> };
+    };
+    const acquire = async () => {
+      if (released || !nav.wakeLock) return;
+      try {
+        sentinel = await nav.wakeLock.request("screen");
+        setHeld(true);
+        setFailed(false);
+      } catch {
+        // Denied or unsupported — show it, never block the wallboard.
+        setFailed(true);
+      }
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && !sentinel) void acquire();
+    };
+    void acquire();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      released = true;
+      document.removeEventListener("visibilitychange", onVisible);
+      void sentinel?.release().catch(() => {});
+    };
+  }, []);
+  return { held, failed };
 }
 
 function Tile({
@@ -39,58 +116,127 @@ function Tile({
   sub,
   alert,
   icon: Icon,
+  large,
 }: {
   label: string;
   value: string;
   sub?: string | null;
   alert?: boolean;
   icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" }>;
+  large?: boolean;
 }) {
   return (
     <div
       className={cn(
         "rounded-lg border bg-card/60 p-4",
+        large && "p-6",
         alert && "border-destructive/60",
       )}
     >
-      <p className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-muted-foreground">
+      <p className={cn("flex items-center gap-1.5 uppercase tracking-wider text-muted-foreground", large ? "text-sm" : "text-xs")}>
         <Icon className="size-3.5" aria-hidden={true} />
         {label}
       </p>
-      <p className={cn("mt-1 font-mono text-3xl font-semibold tabular-nums leading-none", alert && "text-destructive")}>
+      <p className={cn("mt-1 font-mono font-semibold tabular-nums leading-none", large ? "text-5xl" : "text-3xl", alert && "text-destructive")}>
         {value}
       </p>
-      {sub && <p className="mt-1 truncate text-xs text-muted-foreground">{sub}</p>}
+      {sub && <p className={cn("mt-1 truncate text-muted-foreground", large ? "text-base" : "text-xs")}>{sub}</p>}
     </div>
   );
 }
 
 export default function NocPage() {
+  return (
+    <Suspense fallback={<div className="safe-frame min-h-svh bg-background" />}>
+      <NocShell />
+    </Suspense>
+  );
+}
+
+function NocShell() {
+  const searchParams = useSearchParams();
+  const kiosk = searchParams.get("mode") === "kiosk";
   const overview = usePoll<OverviewPayload>("/api/overview?window=15m", PAGE_INTERVAL_MS.overview);
   const { status } = useLive();
+  const { online } = usePwa();
+  const { prefs, setPref } = usePrefs();
   const snapshot = usePoll<{ meta: import("@/lib/api-types").MetricMeta; data: SystemMetricsSnapshot | null }>(
     "/api/system/metrics",
     PAGE_INTERVAL_MS.systemMetrics,
   );
   const docker = usePoll<Section<DockerSummary>>("/api/docker", PAGE_INTERVAL_MS.docker);
-  const { enter } = useFullscreen();
+  const { isFullscreen, enter, exit } = useFullscreen();
+  const wakeLock = useWakeLock();
 
-  // Keep the wallboard awake where the browser supports it (no-op else).
+  const [panelsOpen, setPanelsOpen] = useState(false);
+  const [shared, setShared] = useState<SharedDashboardDto[] | null>(null);
+  const [cycleIndex, setCycleIndex] = useState(0);
+  const [cyclePaused, setCyclePaused] = useState(false);
+  const lastInteraction = useRef<number>(0);
   useEffect(() => {
-    let sentinel: { release: () => Promise<void> } | null = null;
-    const acquire = async () => {
-      try {
-        const nav = navigator as Navigator & { wakeLock?: { request: (type: "screen") => Promise<{ release: () => Promise<void> }> } };
-        sentinel = (await nav.wakeLock?.request("screen")) ?? null;
-      } catch {
-        // unsupported or denied — ignore
-      }
-    };
-    void acquire();
+    // Post-hydration init — Date.now() must not run during render.
+    lastInteraction.current = Date.now();
+  }, []);
+
+  // Applied shared dashboard (layout drives density/window hints in NOC).
+  const dashboard = useMemo(
+    () => shared?.find((entry) => entry.id === prefs.nocDashboardId) ?? null,
+    [shared, prefs.nocDashboardId],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchDashboards()
+      .then((payload) => {
+        if (!cancelled) setShared(payload.dashboards);
+      })
+      .catch(() => {});
     return () => {
-      void sentinel?.release().catch(() => {});
+      cancelled = true;
     };
   }, []);
+
+  // Shared dashboard preferences apply to the NOC view where they make
+  // sense (time window hint is shown; the wallboard tiles are fixed).
+  useEffect(() => {
+    if (!dashboard) return;
+    const view = dashboardToSavedView(dashboard);
+    setPref("density", view.density);
+    setPref("tempUnit", view.tempUnit);
+  }, [dashboard, setPref]);
+
+  // Auto-cycle: interval-driven panel rotation, paused on interaction and
+  // resumed after 30s idle. Interaction = pointer or key activity.
+  const cycleSeconds = prefs.nocCycleSeconds;
+  useEffect(() => {
+    const markInteraction = () => {
+      lastInteraction.current = Date.now();
+    };
+    window.addEventListener("pointerdown", markInteraction);
+    window.addEventListener("keydown", markInteraction);
+    window.addEventListener("wheel", markInteraction, { passive: true });
+    return () => {
+      window.removeEventListener("pointerdown", markInteraction);
+      window.removeEventListener("keydown", markInteraction);
+      window.removeEventListener("wheel", markInteraction);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (cycleSeconds <= 0) return;
+    const timer = setInterval(() => {
+      // Pause-on-interaction: skip while the user interacted recently;
+      // auto-resume after the idle window. The explicit pause button
+      // holds indefinitely until pressed again.
+      const idleFor = (Date.now() - lastInteraction.current) / 1000;
+      if (cyclePaused || idleFor < CYCLE_RESUME_AFTER_IDLE_S) return;
+      setCycleIndex((current) => (current + 1) % CYCLE_PANELS.length);
+    }, Math.max(5, cycleSeconds) * 1000);
+    return () => clearInterval(timer);
+  }, [cycleSeconds, cyclePaused]);
+
+  const activePanel: CyclePanelId = CYCLE_PANELS[cycleIndex]?.id ?? "overview";
+  const lastUpdated = overview.updatedAt;
 
   // Auto-hide cursor after inactivity (wallboard friendly).
   useEffect(() => {
@@ -113,6 +259,8 @@ export default function NocPage() {
     };
   }, []);
 
+  const togglePause = useCallback(() => setCyclePaused((value) => !value), []);
+
   const payload = overview.data;
   const extras = payload?.extras ?? null;
   const snap = snapshot.data?.data ?? null;
@@ -120,14 +268,24 @@ export default function NocPage() {
   const health = payload?.health;
   const topCpu = extras?.topConsumers?.cpu.slice(0, 5) ?? [];
 
+  const connectionLabel =
+    !online
+      ? "offline"
+      : status === "connected"
+        ? "live"
+        : status === "reconnecting"
+          ? "reconnecting…"
+          : status;
+
   return (
-    <div className="safe-frame min-h-svh bg-background">
+    <div className={cn("safe-frame min-h-svh bg-background", kiosk && "text-lg")}>
       {/* Header */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <p
           role={health?.level === "critical" ? "alert" : "status"}
           className={cn(
-            "flex min-w-0 shrink items-center gap-2 text-sm font-semibold",
+            "flex min-w-0 shrink items-center gap-2 font-semibold",
+            kiosk ? "text-lg" : "text-sm",
             health?.level === "critical"
               ? "text-destructive"
               : health?.level === "attention"
@@ -153,29 +311,115 @@ export default function NocPage() {
             {payload.identity.data.serverName} · up {formatUptime(payload.identity.data.uptimeSeconds)}
           </span>
         )}
-        <p
-          className={cn(
-            "ml-auto hidden min-w-0 truncate text-[11px] text-muted-foreground sm:block",
-          )}
+
+        {/* Connection state + last update (NOC v3) */}
+        <span
+          className="ml-auto flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground sm:text-xs"
           aria-live="polite"
         >
-          {status === "connected" ? "live" : status}
-        </p>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="gap-1 text-xs"
-          onClick={enter}
-          aria-label="Enter fullscreen"
-        >
-          <Maximize className="size-3.5" aria-hidden={true} /> Fullscreen
-        </Button>
-        <Button variant="ghost" size="sm" asChild className="shrink-0" aria-label="Exit NOC mode">
-          <Link href="/">
-            <X className="size-4" aria-hidden={true} /> Exit
-          </Link>
-        </Button>
+          <span
+            aria-hidden="true"
+            className={cn(
+              "size-2 rounded-full",
+              !online
+                ? "bg-destructive"
+                : status === "connected"
+                  ? "bg-success"
+                  : "animate-pulse bg-warning",
+            )}
+          />
+          {connectionLabel}
+          {lastUpdated && (
+            <span title="Last data update">· {new Date(lastUpdated).toLocaleTimeString()}</span>
+          )}
+          {wakeLock.failed && <span title="Screen wake lock unavailable">· no wake lock</span>}
+        </span>
+
+        {/* NOC controls */}
+        <div className="flex shrink-0 items-center gap-1">
+          {cycleSeconds > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1 text-xs"
+              onClick={togglePause}
+              aria-label={cyclePaused ? "Resume auto-cycle" : "Pause auto-cycle"}
+            >
+              {cyclePaused ? <Play className="size-3.5" aria-hidden={true} /> : <Pause className="size-3.5" aria-hidden={true} />}
+              {cyclePaused ? "paused" : "cycling"}
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-expanded={panelsOpen}
+            aria-label="NOC settings"
+            onClick={() => setPanelsOpen((value) => !value)}
+            className="gap-1 text-xs"
+          >
+            <Settings2 className="size-3.5" aria-hidden={true} />
+            <ChevronDown className={cn("size-3 transition", panelsOpen && "rotate-180")} aria-hidden={true} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1 text-xs"
+            onClick={isFullscreen ? exit : enter}
+            aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+          >
+            {isFullscreen ? <Minimize className="size-3.5" aria-hidden={true} /> : <Maximize className="size-3.5" aria-hidden={true} />}
+            {!kiosk && (isFullscreen ? "Exit" : "Fullscreen")}
+          </Button>
+          <Button variant="ghost" size="sm" asChild className="shrink-0" aria-label="Exit NOC mode">
+            <Link href="/">
+              <X className="size-4" aria-hidden={true} /> {!kiosk && "Exit"}
+            </Link>
+          </Button>
+        </div>
       </div>
+
+      {/* NOC settings drawer */}
+      {panelsOpen && (
+        <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border bg-card/60 p-3 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Auto-cycle</span>
+            <div role="group" aria-label="Auto-cycle interval" className="flex items-center gap-1">
+              {CYCLE_OPTIONS.map((option) => (
+                <Button
+                  key={option.value}
+                  size="sm"
+                  variant={prefs.nocCycleSeconds === option.value ? "secondary" : "ghost"}
+                  aria-pressed={prefs.nocCycleSeconds === option.value}
+                  onClick={() => setPref("nocCycleSeconds", option.value)}
+                  className="h-6 px-2 text-[11px]"
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 text-muted-foreground">Dashboard</span>
+            <select
+              value={prefs.nocDashboardId ?? ""}
+              onChange={(event) => setPref("nocDashboardId", event.target.value || null)}
+              aria-label="Shared dashboard for NOC mode"
+              className="h-7 max-w-[220px] rounded-md border bg-transparent px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <option value="">Built-in tiles</option>
+              {(shared ?? []).map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Auto-cycle pauses on interaction and resumes after {CYCLE_RESUME_AFTER_IDLE_S}s idle.
+            Wake lock: {wakeLock.held ? "held" : wakeLock.failed ? "unavailable" : "requesting…"}
+          </p>
+        </div>
+      )}
 
       {health && health.reasons.length > 0 && (
         <p className={cn("mb-4 truncate text-sm", health.level === "critical" ? "text-destructive" : "text-warning")}>
@@ -183,100 +427,159 @@ export default function NocPage() {
         </p>
       )}
 
-      {/* Main tiles */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-8">
-        <Tile
-          label="CPU"
-          icon={Cpu}
-          value={formatPercent(snap?.cpuPercent ?? payload?.cpu.data?.percentTotal)}
-          sub={
-            extras?.load?.five !== null && extras?.load
-              ? `load ${extras.load.five?.toFixed(2)} · ${extras.load.threads ?? "?"} threads`
-              : null
-          }
-          alert={(snap?.cpuPercent ?? 0) >= 90}
-        />
-        <Tile
-          label="RAM"
-          icon={MemoryStick}
-          value={formatPercent(payload?.memory.data?.percentTotal)}
-          sub={payload?.memory.data ? `${formatBytes(payload.memory.data.usedBytes)} / ${formatBytes(payload.memory.data.totalBytes)}` : null}
-          alert={(payload?.memory.data?.percentTotal ?? 0) >= 90}
-        />
-        <Tile
-          label="Package"
-          icon={Thermometer}
-          value={snapStatus === "unavailable" ? "—" : formatTemp(snap?.thermal?.packageC ?? null, "C")}
-          sub={snap?.thermal?.hottestName ? `hottest ${snap.thermal.hottestName}` : null}
-          alert={(snap?.thermal?.packageC ?? 0) >= 90}
-        />
-        <Tile
-          label="Array"
-          icon={HardDrive}
-          value={formatBytes(payload?.storage.data?.usedBytes)}
-          sub={payload?.storage.data ? `${humanState(payload.storage.data.state)} · ${payload.storage.data.disks.length} disks` : null}
-          alert={payload?.storage.data?.state !== "STARTED"}
-        />
-        <Tile
-          label="Docker"
-          icon={Boxes}
-          value={docker.data?.data ? `${docker.data.data.running}/${docker.data.data.total}` : "—"}
-          sub={extras?.unhealthyContainers ? `${extras.unhealthyContainers} unhealthy` : "all healthy"}
-          alert={(extras?.unhealthyContainers ?? 0) > 0}
-        />
-        <Tile
-          label="Net RX"
-          icon={ArrowDownToLine}
-          value={formatRate(extras?.primaryRx ?? payload?.network.data?.rxBytesPerSec)}
-          sub={extras?.primaryInterface ?? null}
-        />
-        <Tile
-          label="Net TX"
-          icon={ArrowUpFromLine}
-          value={formatRate(extras?.primaryTx ?? payload?.network.data?.txBytesPerSec)}
-          sub={extras?.diskIo ? `disk ${formatRate(extras.diskIo.readBytesPerSec)} r` : null}
-        />
-        <Tile
-          label="Load 5"
-          icon={Gauge}
-          value={extras?.load?.five !== null && extras?.load ? extras.load.five.toFixed(2) : "—"}
-          sub={extras?.load?.level ? `level: ${extras.load.level}` : null}
-        />
-      </div>
+      {/* Shared-dashboard banner */}
+      {dashboard && (
+        <p className="mb-3 text-xs text-muted-foreground">
+          Applying shared dashboard <strong>{dashboard.name}</strong> (owner {dashboard.owner}) — window{" "}
+          {dashboard.preferences.historyWindow}, {dashboard.preferences.density}.
+        </p>
+      )}
 
-      {/* Secondary row */}
-      <div className="mt-4 grid gap-3 lg:grid-cols-2">
-        <div className="rounded-lg border bg-card/60 p-4">
-          <p className="text-xs uppercase tracking-wider text-muted-foreground">Top CPU consumers</p>
-          <ul className="mt-2 space-y-1.5">
-            {topCpu.map((entry) => (
-              <li key={entry.name} className="flex items-center gap-2">
-                <span className="min-w-0 flex-1 truncate text-sm">{entry.name}</span>
-                <span className="font-mono text-sm tabular-nums">{formatPercent(entry.percent)}</span>
-                <div className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
-                  <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(100, entry.percent ?? 0)}%` }} />
-                </div>
-              </li>
-            ))}
-            {topCpu.length === 0 && <li className="text-sm text-muted-foreground">unavailable</li>}
-          </ul>
-        </div>
-        <div className="rounded-lg border bg-card/60 p-4">
-          <p className="text-xs uppercase tracking-wider text-muted-foreground">Disk throughput</p>
-          {extras?.diskIo ? (
-            <div className="mt-2 flex items-center gap-6">
-              <p className="font-mono text-2xl tabular-nums">{formatRate(extras.diskIo.readBytesPerSec)}</p>
-              <p className="text-xs text-muted-foreground">read</p>
-              <p className="font-mono text-2xl tabular-nums">{formatRate(extras.diskIo.writeBytesPerSec)}</p>
-              <p className="text-xs text-muted-foreground">write</p>
-            </div>
-          ) : (
-            <p className="mt-2 text-sm text-muted-foreground">unavailable</p>
+      {/* Main tiles (built-in) or cycled panel */}
+      {activePanel === "overview" || cycleSeconds === 0 ? (
+        <div className={cn("grid gap-3", kiosk ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-2 lg:grid-cols-4 xl:grid-cols-8")}>
+          <Tile
+            label="CPU"
+            icon={Cpu}
+            large={kiosk}
+            value={formatPercent(snap?.cpuPercent ?? payload?.cpu.data?.percentTotal)}
+            sub={
+              extras?.load?.five !== null && extras?.load
+                ? `load ${extras.load.five?.toFixed(2)} · ${extras.load.threads ?? "?"} threads`
+                : null
+            }
+            alert={(snap?.cpuPercent ?? 0) >= 90}
+          />
+          <Tile
+            label="RAM"
+            icon={MemoryStick}
+            large={kiosk}
+            value={formatPercent(payload?.memory.data?.percentTotal)}
+            sub={payload?.memory.data ? `${formatBytes(payload.memory.data.usedBytes)} / ${formatBytes(payload.memory.data.totalBytes)}` : null}
+            alert={(payload?.memory.data?.percentTotal ?? 0) >= 90}
+          />
+          <Tile
+            label="Package"
+            icon={Thermometer}
+            large={kiosk}
+            value={snapStatus === "unavailable" ? "—" : formatTemp(snap?.thermal?.packageC ?? null, "C")}
+            sub={snap?.thermal?.hottestName ? `hottest ${snap.thermal.hottestName}` : null}
+            alert={(snap?.thermal?.packageC ?? 0) >= 90}
+          />
+          <Tile
+            label="Array"
+            icon={HardDrive}
+            large={kiosk}
+            value={formatBytes(payload?.storage.data?.usedBytes)}
+            sub={payload?.storage.data ? `${humanState(payload.storage.data.state)} · ${payload.storage.data.disks.length} disks` : null}
+            alert={payload?.storage.data?.state !== "STARTED"}
+          />
+          {!kiosk && (
+            <>
+              <Tile
+                label="Docker"
+                icon={Boxes}
+                value={docker.data?.data ? `${docker.data.data.running}/${docker.data.data.total}` : "—"}
+                sub={extras?.unhealthyContainers ? `${extras.unhealthyContainers} unhealthy` : "all healthy"}
+                alert={(extras?.unhealthyContainers ?? 0) > 0}
+              />
+              <Tile
+                label="Net RX"
+                icon={ArrowDownToLine}
+                value={formatRate(extras?.primaryRx ?? payload?.network.data?.rxBytesPerSec)}
+                sub={extras?.primaryInterface ?? null}
+              />
+              <Tile
+                label="Net TX"
+                icon={ArrowUpFromLine}
+                value={formatRate(extras?.primaryTx ?? payload?.network.data?.txBytesPerSec)}
+                sub={extras?.diskIo ? `disk ${formatRate(extras.diskIo.readBytesPerSec)} r` : null}
+              />
+              <Tile
+                label="Load 5"
+                icon={Gauge}
+                value={extras?.load?.five !== null && extras?.load ? extras.load.five.toFixed(2) : "—"}
+                sub={extras?.load?.level ? `level: ${extras.load.level}` : null}
+              />
+            </>
           )}
         </div>
-      </div>
+      ) : (
+        <CyclePanel panel={activePanel} overview={payload} />
+      )}
 
-      <p className="mt-4 text-[11px] text-muted-foreground">
+      {/* Cycle indicator */}
+      {cycleSeconds > 0 && (
+        <div className="mt-3 flex items-center gap-2">
+          {CYCLE_PANELS.map((panel, index) => (
+            <span
+              key={panel.id}
+              aria-hidden="true"
+              className={cn(
+                "h-1.5 rounded-full transition-all",
+                index === cycleIndex ? "w-8 bg-primary" : "w-3 bg-muted",
+              )}
+            />
+          ))}
+          <span className="text-[11px] text-muted-foreground">{CYCLE_PANELS[cycleIndex]?.label}</span>
+        </div>
+      )}
+
+      {/* Secondary row (built-in overview only) */}
+      {(activePanel === "overview" || cycleSeconds === 0) && (
+        <div className={cn("mt-4 grid gap-3", kiosk ? "lg:grid-cols-1" : "lg:grid-cols-2")}>
+          <div className="rounded-lg border bg-card/60 p-4">
+            <p className="text-xs uppercase tracking-wider text-muted-foreground">Top CPU consumers</p>
+            <ul className={cn("mt-2 space-y-1.5", kiosk && "text-base")}>
+              {topCpu.map((entry) => (
+                <li key={entry.name} className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate text-sm">{entry.name}</span>
+                  <span className="font-mono text-sm tabular-nums">{formatPercent(entry.percent)}</span>
+                  <div className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
+                    <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(100, entry.percent ?? 0)}%` }} />
+                  </div>
+                </li>
+              ))}
+              {topCpu.length === 0 && <li className="text-sm text-muted-foreground">unavailable</li>}
+            </ul>
+          </div>
+          <div className="rounded-lg border bg-card/60 p-4">
+            <p className="text-xs uppercase tracking-wider text-muted-foreground">Disk throughput</p>
+            {extras?.diskIo ? (
+              <div className={cn("mt-2 flex items-center gap-6", kiosk && "text-lg")}>
+                <p className="font-mono text-2xl tabular-nums">{formatRate(extras.diskIo.readBytesPerSec)}</p>
+                <p className="text-xs text-muted-foreground">read</p>
+                <p className="font-mono text-2xl tabular-nums">{formatRate(extras.diskIo.writeBytesPerSec)}</p>
+                <p className="text-xs text-muted-foreground">write</p>
+              </div>
+            ) : (
+              <p className="mt-2 text-sm text-muted-foreground">unavailable</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Kiosk page rail: large touch targets, still read-only */}
+      {kiosk && (
+        <nav aria-label="Kiosk pages" className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {[
+            { href: "/", label: "Overview" },
+            { href: "/docker", label: "Containers" },
+            { href: "/system", label: "System & Temps" },
+            { href: "/storage", label: "Storage" },
+          ].map((entry) => (
+            <Link
+              key={entry.href}
+              href={entry.href}
+              className="flex min-h-[72px] items-center justify-center rounded-xl border bg-card/60 text-lg font-medium hover:bg-secondary/60"
+            >
+              {entry.label}
+            </Link>
+          ))}
+        </nav>
+      )}
+
+      <p className={cn("mt-4 text-[11px] text-muted-foreground")}>
         NOC mode is read-only by design — no lifecycle controls are exposed here.
       </p>
     </div>

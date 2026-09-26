@@ -33,6 +33,10 @@ export interface Prefs {
   overviewOrder: string[];
   /** User-saved views: named snapshots of display prefs. */
   savedViews: Record<string, SavedView>;
+  /** NOC auto-cycle interval in seconds (0 = off). */
+  nocCycleSeconds: number;
+  /** Shared dashboard applied inside NOC mode (null = built-in tiles). */
+  nocDashboardId: string | null;
 }
 
 /** A saved view snapshots the display prefs it covers (never secrets). */
@@ -109,6 +113,8 @@ const DEFAULTS: Prefs = {
   dockerMetrics: true,
   overviewOrder: [...DEFAULT_OVERVIEW_ORDER],
   savedViews: {},
+  nocCycleSeconds: 0,
+  nocDashboardId: null,
 };
 
 const STORAGE_KEY = "unraid-dashboard.prefs.v1";
