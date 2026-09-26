@@ -156,5 +156,16 @@ if [ "$HTTP_CODE" != "200" ]; then
   exit 1
 fi
 
+# --- rollback-tag normaliseren ------------------------------------------------
+# De zojuist vervangen image is de laatst bewezen werkende release: tag als
+# previous zodat de cleanup-script deze nooit raakt. Nooit fataal laten gaan.
+if [ "$CURRENT_IMAGE" != "$TARGET_IMAGE" ]; then
+  if docker tag "$CURRENT_IMAGE" "unraid-dashboard:previous" 2>/dev/null; then
+    echo "==> '$CURRENT_IMAGE' getagd als unraid-dashboard:previous"
+  else
+    echo "!! Kon previous-tag niet zetten (niet fataal) — cleanup laat <48h-images toch staan." >&2
+  fi
+fi
+
 echo "==> Update complete: $NAME is healthy and serving live data."
 docker ps --filter "name=$NAME" --format 'table {{.Image}}\t{{.Status}}\t{{.Ports}}'
