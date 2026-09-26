@@ -61,6 +61,27 @@ export function guardWrite(request: NextRequest): GuardResult<undefined> {
   return auth;
 }
 
+/**
+ * DELETE variant of guardWrite (v0.7): identical CSRF + auth posture,
+ * but for DELETE requests (no body). Used by resource-removal endpoints;
+ * GET/POST mutations remain the only other write forms.
+ */
+export function guardDelete(request: NextRequest): GuardResult<undefined> {
+  const auth = guardRead(request);
+  if (!auth.ok) return auth;
+
+  if (request.method !== "DELETE") {
+    return { ok: false, response: reject("Method not allowed.", 405) };
+  }
+
+  const originError = checkSameOrigin(request.headers, request.headers.get("host"));
+  if (originError) {
+    return { ok: false, response: reject(originError, 403) };
+  }
+
+  return auth;
+}
+
 /** Parses and structurally validates an action request body. */
 export async function parseActionBody(
   request: NextRequest,

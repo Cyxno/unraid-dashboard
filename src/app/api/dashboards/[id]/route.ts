@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { guardRead, guardWrite, type GuardResult } from "@/server/auth/guard";
+import { guardRead, guardWrite, guardDelete, type GuardResult } from "@/server/auth/guard";
 import {
   deleteDashboard,
   DashboardError,
@@ -65,7 +65,9 @@ async function guardedMutation(
       { status: 400, headers: { "cache-control": "no-store" } },
     );
   }
-  const guard = guardWrite(request);
+  // PUT (JSON body) uses the POST-form guard; DELETE uses the DELETE-form
+  // guard — both enforce auth + same-origin CSRF.
+  const guard = action === "update" ? guardWrite(request) : guardDelete(request);
   if (!guard.ok) return guard.response;
 
   const actor = guard.identity.user ?? "lan";
