@@ -3,6 +3,7 @@ import { guardWrite } from "@/server/auth/guard";
 import { requestUpdate } from "@/server/update/helper-client";
 import { recordAudit } from "@/server/actions/audit";
 import { checkWriteRate } from "@/server/dashboards/rate-limit";
+import { setPendingUpdateRequest } from "@/server/update/history";
 
 export const dynamic = "force-dynamic";
 
@@ -54,17 +55,27 @@ export async function POST(request: NextRequest) {
     action: "request",
     targetName: "unraid-dashboard",
     targetId: tag,
-    result: result.accepted ? "success" : "rejected",
+    result: result.accepted ? "success" : result.attached ? "already-in-state" : "rejected",
     durationMs: Date.now() - startedAt,
-    ...(result.reason ? { error: result.reason } : {}),
+    ...(result.reason && !result.attached ? { error: result.reason } : {}),
   }).catch(() => {});
 
+  if (result.attached) {
+    // Attach semantics: an operation is already running; the client
+    // follows the status poll / SSE for its phases.
+    return NextResponse.json(
+      { attached: true, phase: result.phase ?? null },
+      { status: 200, headers: { "cache-control": "no-store" } },
+    );
+  }
   if (!result.accepted) {
     return NextResponse.json(
       { error: result.reason ?? "Update request rejected." },
       { status: result.status, headers: { "cache-control": "no-store" } },
     );
   }
+  // Hand the real actor to the history reconciler.
+  setPendingUpdateRequest(tag, actor);
   return NextResponse.json(
     { accepted: true, tag, phase: "requested" },
     { status: 202, headers: { "cache-control": "no-store" } },

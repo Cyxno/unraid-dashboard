@@ -54,7 +54,7 @@ const HEALTH_TIMEOUT_MS = 150_000;
 const VERIFY_TIMEOUT_MS = 30_000;
 const STEP_TIMEOUT_MS = { inspect: 15_000, pull: 300_000, replace: 30_000 };
 
-const HELPER_VERSION = "0.7.0";
+const HELPER_VERSION = "0.7.1";
 
 /* ---- state ---------------------------------------------------------------- */
 
@@ -344,10 +344,42 @@ async function refreshCurrentImage() {
     state.currentVersion = current?.Config?.Labels?.["org.opencontainers.image.version"]
       ?? (current?.Config?.Env ?? []).find((entry) => entry.startsWith("APP_VERSION="))?.split("=")[1]
       ?? null;
+    state.currentRevision = current?.Config?.Labels?.["org.opencontainers.image.revision"] ?? null;
     state.currentImageId = current?.Image ? `sha256:${current.Image}` : null;
   } catch (error) {
     state.currentImage = null;
     log("status", `inspect failed: ${error.message}`);
+  }
+}
+
+/**
+ * Semver tags of the fixed repo present locally (bounded, newest first).
+ * This is what makes the update flow usable without a host GHCR login:
+ * locally built releases can be discovered and applied through the same
+ * validated machine (label check + newer-version rule still apply).
+ */
+async function refreshLocalVersions() {
+  try {
+    const { stdout } = await docker(
+      ["images", IMAGE_REPO, "--format", "{{.Tag}}"],
+      { timeoutMs: STEP_TIMEOUT_MS.inspect },
+    );
+    const tags = stdout
+      .split("\n")
+      .map((tag) => tag.trim())
+      .filter((tag) => /^v?\d+\.\d+\.\d+$/.test(tag))
+      .map((tag) => tag.replace(/^v/, ""));
+    tags.sort((a, b) => {
+      const pa = a.split(".").map(Number);
+      const pb = b.split(".").map(Number);
+      for (let i = 0; i < 3; i++) {
+        if ((pb[i] ?? 0) !== (pa[i] ?? 0)) return (pb[i] ?? 0) - (pa[i] ?? 0);
+      }
+      return 0;
+    });
+    state.localVersions = tags.slice(0, 10);
+  } catch {
+    state.localVersions = [];
   }
 }
 
@@ -409,7 +441,9 @@ const server = http.createServer(async (req, res) => {
       lastUpdate: state.lastUpdate,
       currentImage: state.currentImage,
       currentVersion: state.currentVersion,
+      currentRevision: state.currentRevision ?? null,
       currentImageId: state.currentImageId,
+      localVersions: state.localVersions ?? [],
       pullAvailable: state.pullAvailable,
     });
   }
@@ -444,6 +478,7 @@ const server = http.createServer(async (req, res) => {
     setPhase("requested", `${IMAGE_REPO}:${tag.replace(/^v/, "")}`);
     void runUpdate(tag).then(() => {
       void refreshCurrentImage();
+      void refreshLocalVersions();
     });
     return sendJson(res, 202, { accepted: true, tag: tag.replace(/^v/, ""), phase: state.phase });
   }
@@ -463,6 +498,7 @@ server.listen(PORT, LISTEN_HOST, () => {
       } catch (error) {
         state.pullAvailable = /unauthorized|denied/i.test(error.message) ? false : null;
       }
+      void refreshLocalVersions();
     };
     void probePull();
     setInterval(probePull, 3_600_000).unref();

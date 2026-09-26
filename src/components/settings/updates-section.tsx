@@ -30,6 +30,19 @@ import type { BuildInfoDto } from "@/lib/api-types";
  * events + a 5s status poll while a machine runs) — never synthetic.
  */
 
+interface UpdateHistoryEntry {
+  timestamp: string;
+  startedAt: string;
+  actor: string;
+  fromVersion: string;
+  toVersion: string;
+  durationMs: number;
+  result: "success" | "rolled-back" | "failed";
+  rollbackPerformed: boolean;
+  usedLocalImage: boolean;
+  error?: string;
+}
+
 interface UpdateStatusPayload {
   build: BuildInfoDto;
   release: {
@@ -40,6 +53,17 @@ interface UpdateStatusPayload {
     latestRevisionSha: string | null;
     registry: { tokenConfigured: boolean; reachable: boolean | null; authorized: boolean | null; reason: string | null };
   } | null;
+  releaseSource: "registry" | "local" | "none";
+  consistency: {
+    versionMatchesTag: boolean | null;
+    shaMatchesRevision: boolean | null;
+    runningDigest: string | null;
+    registryDigest: string | null;
+    locallyBuiltOnly: boolean;
+    unknownRegistryState: boolean;
+    summary: string;
+  };
+  history: UpdateHistoryEntry[];
   helper: {
     configured: boolean;
     reachable: boolean | null;
@@ -58,6 +82,7 @@ interface UpdateStatusPayload {
     currentImage: string | null;
     currentVersion: string | null;
     currentImageId: string | null;
+    localVersions: string[];
     pullAvailable: boolean | null;
     requestEnabled: boolean;
   };
@@ -204,6 +229,11 @@ export function UpdatesSection() {
           {(!data || data.release?.status === "unknown") && (
             <span className="text-muted-foreground" title={data?.release?.reason}>release check: unknown</span>
           )}
+          {data?.releaseSource === "local" && (
+            <Badge variant="muted" title="Discovery from locally present images — the host has no GHCR login">
+              source: local images
+            </Badge>
+          )}
           <span className="flex items-center gap-1 text-muted-foreground">
             <HardDriveDownload className="size-3" aria-hidden="true" />
             registry pull:{" "}
@@ -216,6 +246,21 @@ export function UpdatesSection() {
             )}
           </span>
         </div>
+
+        {/* Version/digest consistency (v0.7.1) — informational, not alarms */}
+        {data?.consistency && (
+          <p
+            className={cn(
+              "text-[11px]",
+              data.consistency.summary === "consistent" ? "text-muted-foreground" : "text-warning",
+            )}
+            title="Informational — mismatches are not treated as security incidents"
+          >
+            Consistency: {data.consistency.summary}
+            {data.consistency.versionMatchesTag === false && " · version/label mismatch"}
+            {data.consistency.shaMatchesRevision === false && " · SHA/revision mismatch"}
+          </p>
+        )}
 
         {/* Helper state */}
         {data?.helper && !data.helper.configured && (
@@ -303,11 +348,54 @@ export function UpdatesSection() {
           onCancel={() => setConfirmOpen(false)}
         >
           <p>
-            The update helper will pull <strong>ghcr.io/cyxno/unraid-dashboard:{targetTag}</strong>, replace
-            the container with identical configuration, health-check and verify it, and roll back
-            automatically on any failure. The dashboard restarts — this page reconnects afterwards.
+            The update helper will apply{" "}
+            <strong>ghcr.io/cyxno/unraid-dashboard:{targetTag}</strong>{" "}
+            {data?.helper.pullAvailable === false ? "(from the locally built image — the host has no GHCR login)" : "from GHCR"},
+            replace the container with identical configuration, health-check and verify it, and roll
+            back automatically on any failure. The dashboard restarts — this page reconnects afterwards.
           </p>
         </ConfirmDialog>
+
+        {/* Update history (v0.7.1) — mobile-friendly cards */}
+        {data?.history && data.history.length > 0 && (
+          <div>
+            <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              Update history
+            </p>
+            <ul className="space-y-1.5">
+              {data.history.slice(0, 6).map((entry, index) => (
+                <li key={`${entry.startedAt}-${index}`} className="rounded-md border p-2.5 text-xs">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge
+                      variant={
+                        entry.result === "success"
+                          ? "success"
+                          : entry.result === "rolled-back"
+                            ? "warning"
+                            : "destructive"
+                      }
+                    >
+                      {entry.result}
+                    </Badge>
+                    <span className="font-mono">
+                      v{entry.fromVersion} → v{entry.toVersion}
+                    </span>
+                    {entry.rollbackPerformed && <Badge variant="warning">rollback performed</Badge>}
+                    {entry.usedLocalImage && <Badge variant="muted">local image</Badge>}
+                  </div>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {formatDateTimeIso(entry.timestamp)} · {entry.actor} ·{" "}
+                    {entry.durationMs >= 1000 ? `${Math.round(entry.durationMs / 1000)}s` : `${entry.durationMs}ms`}
+                    {entry.error ? ` · ${entry.error.slice(0, 90)}` : ""}
+                  </p>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-1.5 text-[11px] text-muted-foreground">
+              Persisted to /app/data/update-history.jsonl — survives container replacement.
+            </p>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

@@ -39,7 +39,9 @@ export interface UpdateHelperStatus {
   } | null;
   currentImage: string | null;
   currentVersion: string | null;
+  currentRevision: string | null;
   currentImageId: string | null;
+  localVersions: string[];
   pullAvailable: boolean | null;
 }
 
@@ -88,7 +90,9 @@ export async function getHelperStatus(): Promise<UpdateHelperStatus> {
       lastUpdate: null,
       currentImage: null,
       currentVersion: null,
+      currentRevision: null,
       currentImageId: null,
+      localVersions: [],
       pullAvailable: null,
     };
   }
@@ -115,7 +119,9 @@ export async function getHelperStatus(): Promise<UpdateHelperStatus> {
       lastUpdate: body.lastUpdate ?? null,
       currentImage: body.currentImage ?? null,
       currentVersion: body.currentVersion ?? null,
+      currentRevision: body.currentRevision ?? null,
       currentImageId: body.currentImageId ?? null,
+      localVersions: body.localVersions ?? [],
       pullAvailable: body.pullAvailable ?? null,
     };
   } catch (error) {
@@ -139,7 +145,9 @@ function unavailable(reason: string, url: string): UpdateHelperStatus {
     lastUpdate: null,
     currentImage: null,
     currentVersion: null,
+    currentRevision: null,
     currentImageId: null,
+    localVersions: [],
     pullAvailable: null,
   };
 }
@@ -148,6 +156,9 @@ export interface UpdateRequestResult {
   accepted: boolean;
   status: number;
   reason?: string;
+  /** True when an operation was already running and the request attached. */
+  attached?: boolean;
+  phase?: string | null;
 }
 
 /** Requests an update to a validated semver tag. Audited by the caller. */
@@ -176,10 +187,11 @@ export async function requestUpdate(rawTag: string): Promise<UpdateRequestResult
           : "Requested tag is older than the running version.",
     };
   }
-  // Refuse while a machine is already active (helper enforces this too).
+  // Attach semantics: when a machine is already running, the client
+  // attaches to it instead of erroring (the status poll carries progress).
   const status = await getHelperStatus();
   if (status.reachable && isUpdatePhaseActive(status.phase)) {
-    return { accepted: false, status: 409, reason: `Update already running (phase ${status.phase}).` };
+    return { accepted: false, status: 200, reason: "attach", attached: true, phase: status.phase ?? null };
   }
   try {
     const response = await fetch(`${config.url}/update`, {
