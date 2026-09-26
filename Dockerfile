@@ -36,6 +36,16 @@ WORKDIR /app
 ARG APP_VERSION=0.7.0
 ARG GIT_SHA=dev
 ARG BUILD_TIME
+# OCI labels on the RUNTIME image too — local docker builds otherwise have
+# no version/revision labels, which the update helper's validation and
+# rollback allowlist rely on (registry builds get them via the workflow).
+LABEL org.opencontainers.image.title="unraid-dashboard" \
+      org.opencontainers.image.description="Self-hosted Unraid server dashboard (Unraid GraphQL + Prometheus)" \
+      org.opencontainers.image.vendor="Cyxno" \
+      org.opencontainers.image.source=https://github.com/Cyxno/unraid-dashboard \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.version=${APP_VERSION} \
+      org.opencontainers.image.revision=${GIT_SHA}
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \
