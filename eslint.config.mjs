@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // The update helper is a standalone CommonJS container script — it is
+    // intentionally outside the Next.js/TS toolchain and has its own checks.
+    "helper/**",
+    // Browser/soak validation harnesses run via plain node.
+    "validate-browser.mjs",
+    "soak-noc.mjs",
   ]),
 ]);
 

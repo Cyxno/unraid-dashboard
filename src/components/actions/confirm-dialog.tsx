@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { setBusyScope } from "@/lib/busy-guard";
 
 /**
  * Accessible confirmation dialog (focus trap, Escape closes, role=dialog).
@@ -44,6 +45,8 @@ export function ConfirmDialog({
 
   useEffect(() => {
     if (!open) return;
+    // An open confirmation dialog blocks deferred refreshes/activations.
+    setBusyScope("confirm-dialog", true);
     const previousFocus = document.activeElement as HTMLElement | null;
     confirmRef.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
@@ -72,6 +75,7 @@ export function ConfirmDialog({
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
+      setBusyScope("confirm-dialog", false);
       previousFocus?.focus?.();
     };
   }, [open, busy, onCancel]);

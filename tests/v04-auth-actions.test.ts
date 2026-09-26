@@ -68,11 +68,12 @@ describe("auth: proxy mode", () => {
   });
 
   it("REJECTS a spoofed identity header without the shared secret (LAN attacker)", () => {
-    for (const spoof of [
+    const spoofs: Array<Record<string, string>> = [
       { "x-forwarded-for": "1.2.3.4", "x-forwarded-user": "admin" },
       { "x-forwarded-user": "admin" },
       { "x-forwarded-for": "10.0.0.1", "x-forwarded-user": "admin" },
-    ]) {
+    ];
+    for (const spoof of spoofs) {
       const result = resolveAuth(headers(spoof), "unknown");
       assert.equal(result.allowed, false, JSON.stringify(spoof));
       assert.equal(result.status, 401, JSON.stringify(spoof));

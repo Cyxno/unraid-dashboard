@@ -12,6 +12,12 @@ import { useToast } from "./toast";
  * - the dashboard keeps polling regardless; SSE only accelerates
  */
 
+export interface UpdatePhaseEvent {
+  phase: string;
+  detail: string | null;
+  finishedAt: string | null;
+}
+
 export interface LiveState {
   status: SseStatus;
   snapshot: {
@@ -22,9 +28,11 @@ export interface LiveState {
     hottest: string | null;
   } | null;
   dockerCounts: { running: number; total: number } | null;
+  /** Latest update-machine phase (v0.7); null when none observed. */
+  updatePhase: UpdatePhaseEvent | null;
 }
 
-const LiveContext = createContext<LiveState>({ status: "connecting", snapshot: null, dockerCounts: null });
+const LiveContext = createContext<LiveState>({ status: "connecting", snapshot: null, dockerCounts: null, updatePhase: null });
 
 export function useLive(): LiveState {
   return useContext(LiveContext);
@@ -33,6 +41,7 @@ export function useLive(): LiveState {
 export function LiveEventsProvider({ children }: { children: React.ReactNode }) {
   const [snapshot, setSnapshot] = useState<LiveState["snapshot"]>(null);
   const [dockerCounts, setDockerCounts] = useState<LiveState["dockerCounts"]>(null);
+  const [updatePhase, setUpdatePhase] = useState<UpdatePhaseEvent | null>(null);
   const statusRef = useRef<SseStatus>("connecting");
   const everConnected = useRef(false);
   const { toast } = useToast();
@@ -42,6 +51,15 @@ export function LiveEventsProvider({ children }: { children: React.ReactNode }) 
       setSnapshot(data as LiveState["snapshot"]);
     } else if (name === "docker") {
       setDockerCounts(data as LiveState["dockerCounts"]);
+    } else if (name === "update") {
+      const phase = data as UpdatePhaseEvent;
+      setUpdatePhase(phase);
+      // One restrained toast per settled outcome, not per phase.
+      if (phase.phase === "complete") {
+        toast("success", "Dashboard update complete — refreshing is safe");
+      } else if (phase.phase === "failed") {
+        toast("error", `Dashboard update failed${phase.detail ? `: ${phase.detail}` : ""}`);
+      }
     } else if (name === "state-transition") {
       const transition = data as { name: string; from: string; to: string };
       // Subtle, factual — one line per observed change.
@@ -73,7 +91,7 @@ export function LiveEventsProvider({ children }: { children: React.ReactNode }) 
   }, [status, toast]);
 
   return (
-    <LiveContext.Provider value={{ status, snapshot, dockerCounts }}>
+    <LiveContext.Provider value={{ status, snapshot, dockerCounts, updatePhase }}>
       {children}
     </LiveContext.Provider>
   );

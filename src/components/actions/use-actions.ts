@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ActionsCapabilities, ActionResponseBody } from "@/lib/api-types";
 import { usePwa } from "@/components/layout/pwa-provider";
+import { setBusyScope } from "@/lib/busy-guard";
 
 /**
  * Client-side action support: capabilities (server decides whether
@@ -66,6 +67,7 @@ export function useActionRunner(
         return body;
       }
       setPending(request);
+      setBusyScope("action", true);
       setResult(null);
       try {
         const response = await fetch("/api/actions", {
@@ -88,6 +90,7 @@ export function useActionRunner(
         return body;
       } finally {
         setPending(null);
+        setBusyScope("action", false);
       }
     },
     [onDone, online],

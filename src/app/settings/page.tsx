@@ -25,6 +25,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useOverview } from "@/components/layout/overview-provider";
 import { InstallHint } from "@/components/layout/pwa-status-banner";
 import { DashboardsSection } from "@/components/settings/dashboards-section";
+import { UpdatesSection } from "@/components/settings/updates-section";
 import type {
   BuildInfoDto,
   ConnectionStatus,
@@ -617,6 +618,8 @@ export default function SettingsPage() {
           </Card>
 
           <SecuritySection />
+
+          <UpdatesSection />
 
           <DashboardsSection />
 

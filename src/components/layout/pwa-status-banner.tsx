@@ -1,51 +1,166 @@
 "use client";
 
-import { Download, RefreshCw, TriangleAlert, WifiOff } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Download, RefreshCw, TriangleAlert, WifiOff, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { usePwa } from "./pwa-provider";
+import { useLive } from "./live-events";
+import { isAnyBusyScope } from "@/lib/busy-guard";
 import { cn } from "@/lib/utils";
 
 /**
- * Global connectivity/PWA banner. Rendered inside the app shell on every
+ * Global connectivity/PWA banners, rendered inside the app shell on every
  * page (NOC renders its own inline status):
- * - offline: blocking banner — writes are disabled, data labeled stale
- * - SW update ready: subtle, user-initiated refresh (never auto-reloads)
+ * - offline: blocking banner — writes disabled, data labelled stale
+ * - dashboard update in progress: maintenance banner (SSE-driven)
+ * - backend version ahead of the browser bundle: restrained "newer
+ *   dashboard version available" banner with a guarded refresh
+ * - service-worker update ready: user-initiated refresh (never auto)
+ * Refresh actions are refused while a mutation, dialog or update is busy.
  */
-export function PwaStatusBanner() {
-  const { online, updateReady, applyUpdate } = usePwa();
 
-  if (online && !updateReady) return null;
+const VERSION_CHECK_MS = 300_000;
 
+/** Backend version vs the version baked into this browser bundle. */
+function useVersionMismatch(): { mismatch: boolean; serverVersion: string | null } {
+  const [serverVersion, setServerVersion] = useState<string | null>(null);
+
+  const check = useCallback(async () => {
+    try {
+      const response = await fetch("/api/version", { cache: "no-store" });
+      if (!response.ok) return;
+      const body = (await response.json()) as { version?: string };
+      if (body.version) setServerVersion(body.version);
+    } catch {
+      // unreachable — keep the last known value
+    }
+  }, []);
+
+  useEffect(() => {
+    // Initial version fetch (async — setState happens post-await).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void check();
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") void check();
+    }, VERSION_CHECK_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void check();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [check]);
+
+  // The bundle's build-time version (inlined by next.config env).
+  const bundleVersion = process.env.APP_VERSION_FALLBACK ?? null;
+  const mismatch =
+    Boolean(serverVersion) &&
+    Boolean(bundleVersion) &&
+    bundleVersion !== "unknown" &&
+    serverVersion !== bundleVersion;
+  return { mismatch, serverVersion };
+}
+
+function guardRefresh(action: () => void): void {
+  // Never refresh mid-mutation, mid-dialog or mid-update.
+  if (isAnyBusyScope()) return;
+  action();
+}
+
+function BannerRow({
+  tone,
+  icon: Icon,
+  children,
+  pulse = false,
+}: {
+  tone: "warning" | "destructive";
+  icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" }>;
+  children: React.ReactNode;
+  pulse?: boolean;
+}) {
   return (
     <div
-      role={online ? "status" : "alert"}
       className={cn(
-        "sticky z-40 flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-medium",
-        online
-          ? "top-14 border-b border-warning/30 bg-warning/15 text-warning"
-          : "top-14 border-b border-destructive/40 bg-destructive/15 text-destructive",
+        "sticky top-14 z-40 flex items-center justify-center gap-2 border-b px-4 py-1.5 text-xs font-medium",
+        tone === "destructive"
+          ? "border-destructive/40 bg-destructive/15 text-destructive"
+          : "border-warning/30 bg-warning/15 text-warning",
       )}
     >
-      {online ? (
-        <>
-          <RefreshCw className="size-3.5" aria-hidden="true" />
+      <Icon className={cn("size-3.5", pulse && "animate-pulse")} aria-hidden={true} />
+      {children}
+    </div>
+  );
+}
+
+/** All static banners (offline / version mismatch / SW update ready). */
+export function PwaStatusBanner() {
+  const { online, updateReady, applyUpdate } = usePwa();
+  const { mismatch } = useVersionMismatch();
+
+  if (!online && !mismatch && !updateReady) {
+    return (
+      <BannerRow tone="destructive" icon={TriangleAlert}>
+        Offline — showing last known state. Server data unavailable; lifecycle actions disabled.
+      </BannerRow>
+    );
+  }
+  if (online && !mismatch && !updateReady) return null;
+
+  return (
+    <>
+      {!online && (
+        <BannerRow tone="destructive" icon={TriangleAlert}>
+          Offline — showing last known state. Server data unavailable; lifecycle actions disabled.
+        </BannerRow>
+      )}
+      {online && mismatch && (
+        <BannerRow tone="warning" icon={RefreshCw}>
+          A newer dashboard version is available
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-6 px-2 text-[11px]"
+            onClick={() => guardRefresh(() => window.location.reload())}
+          >
+            Refresh
+          </Button>
+        </BannerRow>
+      )}
+      {online && updateReady && (
+        <BannerRow tone="warning" icon={RefreshCw}>
           Update ready — refresh to apply
           <Button
             size="sm"
             variant="outline"
             className="h-6 px-2 text-[11px]"
-            onClick={applyUpdate}
+            onClick={() => guardRefresh(applyUpdate)}
           >
             Refresh
           </Button>
-        </>
-      ) : (
-        <>
-          <TriangleAlert className="size-3.5" aria-hidden="true" />
-          Offline — showing last known state. Server data unavailable; lifecycle actions disabled.
-        </>
+        </BannerRow>
       )}
-    </div>
+    </>
+  );
+}
+
+/** Maintenance banner while an in-app dashboard update machine runs. */
+export function UpdateMaintenanceBanner() {
+  const { updatePhase } = useLive();
+  const active = Boolean(
+    updatePhase &&
+      updatePhase.phase !== "idle" &&
+      updatePhase.phase !== "complete" &&
+      updatePhase.phase !== "failed",
+  );
+  if (!active || !updatePhase) return null;
+  return (
+    <BannerRow tone="warning" icon={Wrench} pulse>
+      Dashboard update in progress — {updatePhase.phase}
+      {updatePhase.detail ? `: ${updatePhase.detail}` : ""}. Lifecycle actions are disabled until it completes.
+    </BannerRow>
   );
 }
 

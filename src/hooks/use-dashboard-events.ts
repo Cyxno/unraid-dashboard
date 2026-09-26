@@ -28,6 +28,8 @@ export interface DashboardEvents {
   notifications?: { info: number; warning: number; alert: number };
   "state-transition"?: { name: string; from: string; to: string; at: string };
   hello?: { transitions: Array<{ name: string; from: string; to: string; at: string }> };
+  /** v0.7: update-machine phase changes from the local helper. */
+  update?: { phase: string; detail: string | null; finishedAt: string | null };
 }
 
 export function useDashboardEvents(
@@ -102,6 +104,7 @@ export function useDashboardEvents(
         "notifications",
         "state-transition",
         "hello",
+        "update",
       ];
       for (const name of names) {
         source.addEventListener(name, forward(name) as EventListener);
