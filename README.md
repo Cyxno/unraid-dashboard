@@ -325,6 +325,117 @@ The documented proxy-auth pattern is now a concrete deployment:
   grid and a big-touch page rail (Overview / Containers / System / Storage)
   for tablets — landscape-responsive, still completely read-only.
 
+
+## Update helper & in-app updates (v0.7)
+
+The update path is now a real architecture, not just a script:
+
+- **Helper** (`helper/`, image `ghcr.io/cyxno/unraid-dashboard-helper`): a
+  single-purpose container — the ONLY component with Docker access. It binds
+  **127.0.0.1:8790** only, authenticates with a bearer token (constant-time
+  compare), and accepts exactly one operation: update container
+  `unraid-dashboard` from the pinned repo at a validated semver tag.
+  Image repo and container name are deployment constants — a request can
+  only choose the tag. No shell: every docker call is an argv-array spawn.
+- **Phase machine**: checking → pulling (host-registry auth via the Docker
+  daemon config; falls back to a local image) → validating (image label
+  must match the requested version) → replacing (full config preservation:
+  env minus build-provenance keys via a 0600 temp file, volumes, network,
+  restart policy) → healthchecking (docker health, 150 s cap) → verifying
+  (`/api/health`, `/api/version` tag match, `/api/overview`) → complete,
+  or **automatic rollback** to the previous image on any failure. Failures
+  before the first mutation never touch the running container.
+- **In-app UX** (Settings → Updates): stacked current/latest cards with
+  digests, registry-pull status, one primary action behind explicit
+  confirmation, and a live timeline driven by the helper's real phases via
+  SSE `update` events (5 s poll fallback that survives reloads). Never
+  synthetic progress. Every request is audited (actor, versions, result,
+  duration).
+- **Maintenance window**: while the machine runs, lifecycle actions are
+  refused server-side (503), a banner is shown, duplicate updates get 409,
+  and the UI reconnects cleanly after the restart (the version-mismatch
+  banner offers a controlled refresh).
+- Deploy once: `UPDATE_HELPER_TOKEN=$(openssl rand -hex 32) scripts/deploy-helper.sh`
+  then set the same `UPDATE_HELPER_TOKEN` + `UPDATE_HELPER_URL=http://127.0.0.1:8790`
+  on the dashboard container.
+- **GHCR host login** (one-time, still required for pulls of private
+  releases): `scripts/login-ghcr.sh` with a PAT holding only
+  `read:packages` — stored by the Docker daemon, never committed, never
+  displayed. Without it the helper updates from locally built images and
+  Settings labels pulls "login required".
+
+## Proxy-auth trust boundary (v0.7, live)
+
+`AUTH_MODE=proxy` is now enforced with a real trust boundary:
+
+- NPM injects `X-Forwarded-User` (Authelia identity) **plus a shared
+  secret** header (`X-Dashboard-Auth-Token` = `AUTH_PROXY_SECRET`, stored
+  at `/boot/config/custom/dashboard/proxy-auth-secret`). The app compares
+  the secret in constant time (API) and fails **closed** when unset.
+- Direct requests — including LAN clients forging `X-Forwarded-For` and an
+  identity header — are rejected: they cannot possess the secret.
+- Identity flows into shared-dashboard ownership (owner-only edit in
+  proxy mode) and audit entries (real authenticated actor).
+- Emergency recovery: SSH to the host, then recreate the container without
+  `AUTH_MODE` (or with `AUTH_MODE=disabled`) using
+  `scripts/update-dashboard.sh` semantics; the DockerMan template also
+  shows the current env.
+
+## Shared dashboards v2 (v0.7)
+
+- **Widget registry**: 12 validated widgets (system health, CPU, memory,
+  thermal, storage, Docker, top CPU/memory, network, disk I/O,
+  notifications, recent audit) with three predefined sizes (sm/md/lg on the
+  desktop 3-column grid). Server-side schema rejects anything outside the
+  registry — arbitrary component/config injection is unrepresentable.
+- **Edit mode** on `/dashboard/<id>` (owner-only in proxy mode): reorder
+  with move up/down (touch-friendly, no fragile drag), show/hide, size
+  selector, live preview, save/cancel. The server re-validates the whole
+  layout on save.
+- **Server backups**: Settings → Shared dashboards → "Server backup"
+  writes sanitized JSON to `/app/data/backups` (0600, newest 10 kept,
+  audited) and lists/downloads them; import restores with strict
+  validation (per-entry rejection with reasons).
+- **NOC/kiosk**: selecting a shared dashboard renders its actual widget
+  layout read-only; auto-cycle continues to apply to the built-in panels.
+
+## Thermal attribution (v0.7)
+
+Each sustained episode now reports: per-episode temp↔CPU and temp↔power
+correlations, the top-3 CPU containers during the episode (from name-keyed
+container CPU history; omitted entirely when no data exists — never
+fabricated), and a classification derived from documented rules: avg CPU
+≥ 50 % or r ≥ 0.5 → **load-correlated**; r(temp,power) ≥ 0.5 →
+**power-correlated**; both < 0.3 → **unexplained**; otherwise
+**weakly-correlated**. The wording is associative — correlation strength
+never implies causation, and no thermal-throttle claim is made (this host
+exposes no throttle counters).
+
+## Audit v2 (v0.7)
+
+The audit page gains debounced actor/target filters, a result filter
+(success/failed) and a source filter (dashboard action / dashboard
+config / update / notification action), plus JSON and CSV export of the
+current filtered view. Retention stays bounded (2 MiB live file + 4
+rotated). Actions accept an optional idempotency key: a repeated key
+within 10 minutes returns the recorded verdict instead of re-executing.
+
+## Diagnostics v3 (v0.7)
+
+Diagnostics now shows: auth mode, dashboard schema version, `/app/data`
+free space, update-helper configured/reachable/phase, running image digest
+vs latest GHCR digest, plus the earlier self-monitoring (CPU/RAM/uptime,
+SSE subscribers, audit size). Still no secret material.
+
+## PWA version handling (v0.7)
+
+The browser bundle knows its build-time version; it polls `/api/version`
+(5 min + on tab focus) and shows a restrained "A newer dashboard version
+is available" banner with a controlled refresh. Refreshes are refused
+while a lifecycle action runs, a confirmation dialog is open, or an update
+machine is active — the browser is never bounced mid-mutation, and the
+service worker activates only on explicit user action.
+
 ## Architecture
 
 ```
@@ -613,4 +724,5 @@ notifications, labels, container names) is rendered as text — no
   is deployed (header spoofing would also need 8090 LAN isolation tightening)
 - Per-container network charts if cAdvisor gets name labels (or via
   eBPF exporters)
-- NOC: per-panel shared-layout composition (widget-level wallboards)
+- Multi-user shared-editable dashboards (optional, cleanly designed)
+- cAdvisor name-label history for longer attribution windows

@@ -65,3 +65,16 @@ jobs:
             BUILD_TIME=${{ github.event.head_commit.timestamp }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Build and push update helper
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: helper/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper:${{ steps.ver.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper:sha-${{ github.sha }}
+          cache-from: type=gha,scope=helper
+          cache-to: type=gha,scope=helper,mode=max
