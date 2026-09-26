@@ -7,6 +7,8 @@
  *
  *   GET  /health   liveness
  *   GET  /status   update machine state (no secrets)
+ *   GET  /inventory token-authenticated read-only facts for ALL containers
+ *                  (classification input; no env/mounts/secrets)
  *   POST /update   {tag: "X.Y.Z"} — the ONLY mutation; updates the
  *                  configured container from the configured repo at the
  *                  requested semver tag.
@@ -469,7 +471,10 @@ const server = http.createServer(async (req, res) => {
   // Read-only inventory of ALL containers: what the central update manager
   // needs for classification. Facts only — no env, no mounts, no secrets.
   if (url.pathname === "/inventory" && req.method === "GET") {
-    (async () => {
+    if (!authorize(req)) {
+      return sendJson(res, 401, { error: "unauthorized" });
+    }
+    void (async () => {
       try {
         const psRaw = await docker(
           ["ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.State}}\t{{.Status}}"],
@@ -481,76 +486,78 @@ const server = http.createServer(async (req, res) => {
           .map((line) => line.split("\t"))
           .filter((parts) => parts.length >= 5);
         const containers = [];
+        const imageDigestCache = new Map();
         for (const [id, name, image, state, status] of entries) {
-          let health = null;
-          let labels = {};
-          let imageId = null;
-          let repoDigests = [];
-          let created = null;
           try {
-            const inspect = await dockerJson(
-              ["container", "inspect", "--format",
-                JSON.stringify({
-                  imageId: ".Image",
-                  repoDigests: ".RepoDigests",
-                  created: ".Created",
-                  health: ".State.Health.Status",
-                  labels: {
-                    composeProject: '{{index .Config.Labels "com.docker.compose.project"}}',
-                    composeService: '{{index .Config.Labels "com.docker.compose.service"}}',
-                    composeWorkdir: '{{index .Config.Labels "com.docker.compose.project.working_dir"}}',
-                    composeFiles: '{{index .Config.Labels "com.docker.compose.project.config_files"}}',
-                    unraidManaged: '{{index .Config.Labels "net.unraid.docker.managed"}}',
-                  },
-                })],
-              { timeoutMs: STEP_TIMEOUT_MS.inspect },
+            // Full JSON inspect parsed in JS: Go template arrays in --format
+            // render space-separated (invalid JSON) — {{json .}} is safe.
+            const inspectArray = await dockerJson(
+              ["container", "inspect", "--format", "{{json .}}", id],
+              STEP_TIMEOUT_MS.inspect,
             );
-            const parsed = typeof inspect[0] === "string" ? JSON.parse(inspect[0]) : inspect[0];
-            imageId = parsed.imageId ?? null;
-            repoDigests = Array.isArray(parsed.repoDigests) ? parsed.repoDigests : [];
-            created = parsed.created ?? null;
-            health = parsed.health === "<no value>" || parsed.health === "" ? null : parsed.health;
-            const rawLabels = parsed.labels ?? {};
-            for (const [key, value] of Object.entries(rawLabels)) {
-              if (typeof value === "string" && value.length > 0 && value !== "<no value>") labels[key] = value.slice(0, 300);
+            const current = Array.isArray(inspectArray) ? inspectArray[0] : inspectArray;
+            const rawLabels = current?.Config?.Labels ?? {};
+            const labels = {};
+            for (const key of [
+              "com.docker.compose.project",
+              "com.docker.compose.service",
+              "com.docker.compose.project.working_dir",
+              "com.docker.compose.project.config_files",
+              "net.unraid.docker.managed",
+            ]) {
+              if (typeof rawLabels[key] === "string" && rawLabels[key].length > 0) {
+                labels[key] = rawLabels[key].slice(0, 300);
+              }
             }
+            containers.push({
+              id,
+              name,
+              image,
+              state,
+              status,
+              health: current?.State?.Health?.Status ?? null,
+              imageId: current?.Image ?? null,
+              repoDigests: await (async () => {
+                // RepoDigests live on IMAGE inspect (absent from container
+                // inspect on newer Docker). Cache per image; this is the
+                // pulled index digest used for update comparison.
+                if (imageDigestCache.has(image)) return imageDigestCache.get(image) ?? [];
+                let digests = [];
+                try {
+                  // Inspect by IMAGE ID: the tag on the container ref may
+                  // have been re-pointed or removed and no longer resolves.
+                  const imageInspect = await dockerJson(
+                    ["image", "inspect", "--format", "{{json .RepoDigests}}", current.Image],
+                    STEP_TIMEOUT_MS.inspect,
+                  );
+                  const parsed = await dockerJson(
+                    ["image", "inspect", "--format", "{{json .RepoDigests}}", current.Image],
+                    STEP_TIMEOUT_MS.inspect,
+                  );
+                  // dockerJson already parsed: {{json .RepoDigests}} is an
+                  // array of "repo@digest" strings.
+                  const list = Array.isArray(parsed) ? parsed : [parsed];
+                  digests = list.map(String).slice(0, 4);
+                } catch {
+                  digests = [];
+                }
+                imageDigestCache.set(image, digests);
+                return digests;
+              })(),
+              created: current?.Created ?? null,
+              labels,
+            });
           } catch (inspectError) {
             log("inventory", `inspect failed for ${name}: ${String(inspectError.message).slice(0, 100)}`);
+            containers.push({ id, name, image, state, status, health: null, imageId: null, repoDigests: [], created: null, labels: {} });
           }
-          containers.push({
-            id, name, image, state, status, health, labels, imageId, repoDigests, created,
-          });
         }
-        // Docker storage model: folder mode (Docker root bind-mounted from a
-        // pool directory, typical Unraid 7.x) vs image-file mode (loop-mounted
-        // docker.img). /proc/mounts is world-readable inside this container.
-        let storageMode = "unknown";
-        let storageSource = null;
-        try {
-          const mounts = readFileSync("/proc/mounts", "utf8");
-          const line = mounts
-            .split("\n")
-            .find((entry) => entry.includes(" /var/lib/docker ") && !entry.includes("overlay"));
-          if (line) {
-            const source = line.split(" ")[0] ?? "";
-            storageSource = source.slice(0, 120);
-            storageMode = /^\/dev\//.test(source) || source.includes("/mnt/")
-              ? "folder"
-              : source.endsWith(".img") || source.includes("loop")
-                ? "image-file"
-                : "unknown";
-          } else {
-            // No dedicated mount of the docker root: either overlay-only
-            // (image-file mode) or the root filesystem itself is the pool.
-            storageMode = mounts.includes(" /var/lib/docker/overlay2 ") ? "image-file" : "unknown";
-          }
-        } catch {
-          storageMode = "unknown";
-        }
+        // Storage model: configured at deploy time by deploy-helper.sh (the
+        // script runs on the host where the docker root mount is visible).
         return sendJson(res, 200, {
           version: HELPER_VERSION,
           containers,
-          storage: { mode: storageMode, source: storageSource },
+          storage: { mode: process.env.DOCKER_STORAGE_MODE || "unknown", source: process.env.DOCKER_STORAGE_SOURCE || null },
         });
       } catch (error) {
         return sendJson(res, 500, { error: String(error.message ?? error).slice(0, 200) });

@@ -29,6 +29,22 @@ fi
 # Proxy-auth secret so the helper can reach protected dashboard endpoints
 # when the dashboard runs AUTH_MODE=proxy (same value as AUTH_PROXY_SECRET).
 DASHBOARD_AUTH_SECRET="${DASHBOARD_AUTH_SECRET:-}"
+
+# Docker storage model detection (host-side; folder mode on a pool is the
+# Unraid 7.x default, legacy installs use a loop-mounted docker.img).
+DOCKER_STORAGE_MODE="${DOCKER_STORAGE_MODE:-}"
+DOCKER_STORAGE_SOURCE="${DOCKER_STORAGE_SOURCE:-}"
+if [ -z "$DOCKER_STORAGE_MODE" ]; then
+  ROOT_MOUNT=$(awk '$2 == "/var/lib/docker" { print; exit }' /proc/mounts)
+  if [ -n "$ROOT_MOUNT" ]; then
+    DOCKER_STORAGE_SOURCE=$(echo "$ROOT_MOUNT" | awk '{print $1}')
+    case "$DOCKER_STORAGE_SOURCE" in
+      /dev/*|/mnt/*) DOCKER_STORAGE_MODE="folder" ;;
+      *.img|*loop*)  DOCKER_STORAGE_MODE="image-file" ;;
+      *)             DOCKER_STORAGE_MODE="unknown" ;;
+    esac
+  fi
+fi
 if [ -z "$DASHBOARD_AUTH_SECRET" ] && [ -f /boot/config/custom/dashboard/proxy-auth-secret ]; then
   DASHBOARD_AUTH_SECRET=$(cat /boot/config/custom/dashboard/proxy-auth-secret)
 fi
@@ -52,6 +68,8 @@ docker run -d \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -e UPDATE_HELPER_TOKEN="$UPDATE_HELPER_TOKEN" \
   -e DASHBOARD_AUTH_SECRET="$DASHBOARD_AUTH_SECRET" \
+  -e DOCKER_STORAGE_MODE="$DOCKER_STORAGE_MODE" \
+  -e DOCKER_STORAGE_SOURCE="$DOCKER_STORAGE_SOURCE" \
   -e HELPER_PORT=8790 \
   -e DASHBOARD_PORT="${DASHBOARD_PORT:-8090}" \
   "$IMAGE" >/dev/null

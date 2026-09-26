@@ -64,9 +64,7 @@ export async function fetchInventory(): Promise<{
   if (!env.UPDATE_HELPER_URL) return null;
   try {
     const response = await fetch(`${env.UPDATE_HELPER_URL}/inventory`, {
-      headers: env.UPDATE_HELPER_TOKEN
-        ? { authorization: `Bearer ${env.UPDATE_HELPER_TOKEN}` }
-        : {},
+      headers: { authorization: `Bearer ${env.UPDATE_HELPER_TOKEN ?? ""}` },
       signal: AbortSignal.timeout(30_000),
       cache: "no-store",
     });
@@ -112,6 +110,46 @@ function rawCheckFor(image: string): RawCheck | null {
   return cached ? cached.outcome : null;
 }
 
+/**
+ * Ensures every given image has a fresh-enough cached check. force=true
+ * re-HEADs everything (manual refresh); otherwise only missing/expired
+ * entries are fetched. Bounded concurrency, single in-flight run.
+ */
+async function ensureChecks(images: Array<{ image: string }>, force: boolean): Promise<void> {
+  const existing = globalStore.__dockerRefreshInFlight;
+  if (existing) {
+    await existing;
+    return;
+  }
+  const cache = checkCache();
+  const targets = images
+    .map((entry) => entry.image)
+    .filter((image) => {
+      if (force) return true;
+      const cached = cache.get(image);
+      return !cached || Date.now() - cached.at >= CHECK_TTL_MS;
+    });
+  if (targets.length === 0) return;
+
+  const run = async () => {
+    let index = 0;
+    const worker = async () => {
+      while (index < targets.length) {
+        const current = targets[index++];
+        if (!current) break;
+        await checkImageWithCache(current, true);
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(REFRESH_CONCURRENCY, targets.length) }, worker),
+    );
+  };
+  globalStore.__dockerRefreshInFlight = run().finally(() => {
+    globalStore.__dockerRefreshInFlight = null;
+  });
+  await globalStore.__dockerRefreshInFlight;
+}
+
 /** Full overview: managed model for every container + storage context. */
 export async function updatesOverview(options: { refresh?: boolean } = {}): Promise<{
   available: boolean;
@@ -132,36 +170,10 @@ export async function updatesOverview(options: { refresh?: boolean } = {}): Prom
     };
   }
 
-  // Serialize registry checks with bounded concurrency; skip local builds.
-  const needsCheck = inventory.containers.filter((facts) => facts.repoDigests.length > 0);
-  if (options.refresh) {
-    let inFlight = 0;
-    const queue = [...needsCheck];
-    const workers: Array<Promise<void>> = [];
-    const run = async () => {
-      while (queue.length > 0) {
-        if (inFlight >= REFRESH_CONCURRENCY) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-          continue;
-        }
-        const facts = queue.shift();
-        if (!facts) break;
-        inFlight += 1;
-        void checkImageWithCache(facts.image, true).finally(() => {
-          inFlight -= 1;
-        });
-        workers.push(Promise.resolve());
-      }
-      await Promise.all(workers);
-    };
-    const existing = globalStore.__dockerRefreshInFlight;
-    if (!existing) {
-      globalStore.__dockerRefreshInFlight = run().finally(() => {
-        globalStore.__dockerRefreshInFlight = null;
-      });
-    }
-    await globalStore.__dockerRefreshInFlight;
-  }
+  await ensureChecks(
+    inventory.containers.filter((facts) => facts.repoDigests.length > 0),
+    options.refresh === true,
+  );
 
   const containers = inventory.containers.map((facts) => {
     const localDigest = localDigestOf(facts);
