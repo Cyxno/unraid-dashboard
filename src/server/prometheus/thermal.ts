@@ -252,6 +252,8 @@ const HOST_CPU_RANGE_QUERY =
 
 export interface ThermalDiagnostics {
   meta: MetricMeta;
+  /** Window this attribution covers. */
+  attributionWindow: AttributionWindow;
   /** °C thresholds used for every judgment here (centralized). */
   thresholds: { warningC: number; criticalC: number };
   sensor: { name: string; chip: string } | null;
@@ -314,13 +316,27 @@ async function rangeSeries(
   }
 }
 
+export type AttributionWindow = "1h" | "6h" | "24h";
+
+const ATTRIBUTION_WINDOWS: Record<AttributionWindow, number> = {
+  "1h": 3600,
+  "6h": 6 * 3600,
+  "24h": 24 * 3600,
+};
+
 export async function getThermalDiagnostics(
   client: PromClient,
+  attributionWindow: AttributionWindow = "24h",
 ): Promise<ThermalDiagnostics> {
-  return withCache("thermal:diagnostics", 60_000, async () => {
+  // Cache key includes the window so 1h/6h/24h views never share entries;
+  // step scales with the window to bound query cost (§28).
+  return withCache(
+    `thermal:diagnostics:${attributionWindow}`,
+    60_000,
+    async () => {
     const warningC = CPU_TEMP_WARNING_C;
     const criticalC = CPU_TEMP_CRITICAL_C;
-    const windowSeconds = 24 * 3600;
+    const windowSeconds = ATTRIBUTION_WINDOWS[attributionWindow];
 
     const label = PACKAGE_SENSOR_LABEL;
     const base = (await instantValue(client, label)) !== null ? label : PACKAGE_FALLBACK_LABEL;
@@ -341,13 +357,15 @@ export async function getThermalDiagnostics(
         instantValue(client, `sum_over_time((${base} > bool ${criticalC})[24h:1m])`),
       ]);
 
-    // 24h range series at 60s step for buckets/episodes/correlation.
+    // Range series for buckets/episodes/correlation; step scales with the
+    // window (60s/1h, 120s/6h, 300s/24h) to keep query cost bounded.
+    const rangeStep = attributionWindow === "1h" ? 60 : attributionWindow === "6h" ? 120 : 300;
     const [tempRange, cpuRange, powerRange] = await Promise.all([
-      rangeSeries(client, base, windowSeconds, 60),
-      rangeSeries(client, HOST_CPU_RANGE_QUERY, windowSeconds, 60),
-      rangeSeries(client, PACKAGE_POWER_QUERY, windowSeconds, 60).then(async (series) => {
+      rangeSeries(client, base, windowSeconds, rangeStep),
+      rangeSeries(client, HOST_CPU_RANGE_QUERY, windowSeconds, rangeStep),
+      rangeSeries(client, PACKAGE_POWER_QUERY, windowSeconds, rangeStep).then(async (series) => {
         if (series.length > 0) return { series, zone: "package-0" as const };
-        const psys = await rangeSeries(client, SYSTEM_POWER_QUERY, windowSeconds, 60);
+        const psys = await rangeSeries(client, SYSTEM_POWER_QUERY, windowSeconds, rangeStep);
         return { series: psys, zone: psys.length > 0 ? ("psys" as const) : null };
       }),
     ]);
@@ -387,7 +405,7 @@ export async function getThermalDiagnostics(
     // must have ≥2 in-range samples to count (no fabricated attribution).
     let containerCpuSeries = new Map<string, Array<{ t: number; v: number | null }>>();
     try {
-      const matrix = await client.range("docker_stats_cpu_percent", Math.floor(Date.now() / 1000) - windowSeconds, Math.floor(Date.now() / 1000), 300);
+      const matrix = await client.range("docker_stats_cpu_percent", Math.floor(Date.now() / 1000) - windowSeconds, Math.floor(Date.now() / 1000), rangeStep);
       for (const entry of matrix) {
         const name = entry.metric.name;
         if (!name) continue;
@@ -470,8 +488,10 @@ export async function getThermalDiagnostics(
       },
       timeline: buildHourlyTimeline(tempRange),
       peakPowerWatts24h,
+      attributionWindow,
     };
-  });
+    },
+  );
 }
 
 /** Normalizes a diagnostics failure into an unavailable-meta payload. */

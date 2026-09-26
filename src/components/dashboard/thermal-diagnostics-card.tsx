@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Scatter,
   ScatterChart,
@@ -10,11 +11,11 @@ import {
   YAxis,
   ZAxis,
 } from "recharts";
-import { Activity, Flame } from "lucide-react";
+import { Activity, Flame, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { usePrefs } from "@/lib/prefs";
-import { formatPercent, formatTemp, formatWatts } from "@/lib/utils";
+import { cn, formatPercent, formatTemp, formatWatts } from "@/lib/utils";
 
 /**
  * Thermal diagnostics v2 (24h): duration buckets, sustained episodes,
@@ -22,11 +23,14 @@ import { formatPercent, formatTemp, formatWatts } from "@/lib/utils";
  * Prometheus range data; correlations are associative, never causal.
  */
 
+export type ThermalWindow = "1h" | "6h" | "24h";
+
 export interface ThermalDiagnosticsPayload {
   available: boolean;
   reason?: string;
   diagnostics?: {
     meta: { status: string; reason?: string };
+    attributionWindow: ThermalWindow;
     thresholds: { warningC: number; criticalC: number };
     sensor: { name: string; chip: string } | null;
     currentC: number | null;
@@ -80,12 +84,108 @@ function formatHour(ms: number): string {
   return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+type Episode = NonNullable<ThermalDiagnosticsPayload["diagnostics"]>["episodes"][number];
+
+function EpisodeDetail({ episode, onClose }: { episode: Episode; onClose: () => void }) {
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/60 sm:items-center sm:p-6">
+      <button
+        type="button"
+        aria-label="Close episode detail"
+        className="absolute inset-0"
+        onClick={onClose}
+        tabIndex={-1}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Thermal episode detail"
+        className="relative max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-t-2xl border bg-card p-5 shadow-xl sm:rounded-xl"
+      >
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <p className="text-sm font-semibold">
+            Episode · {formatHour(episode.startMs)} →{" "}
+            {episode.endMs === null ? "ongoing" : formatHour(episode.endMs)}
+          </p>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="rounded-full p-1.5 text-muted-foreground hover:bg-secondary"
+          >
+            <X className="size-4" aria-hidden="true" />
+          </button>
+        </div>
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+          {(
+            [
+              ["Duration", formatDuration(episode.durationSeconds) + (episode.endMs === null ? " (ongoing)" : "")],
+              ["Max temp", formatTemp(episode.maxC, "C")],
+              ["Avg temp", formatTemp(episode.avgC, "C")],
+              [
+                "CPU avg / peak",
+                episode.avgCpuPercent !== null
+                  ? formatPercent(episode.avgCpuPercent) + " / " + formatPercent(episode.peakCpuPercent)
+                  : "—",
+              ],
+              [
+                "Power avg / peak",
+                episode.avgPowerWatts !== null
+                  ? formatWatts(episode.avgPowerWatts) + " / " + formatWatts(episode.peakPowerWatts ?? null)
+                  : "—",
+              ],
+              ["Pattern", episode.classification ?? "—"],
+              ["temp ↔ CPU (episode)", episode.tempVsCpu != null ? episode.tempVsCpu.toFixed(2) : "—"],
+              ["temp ↔ power (episode)", episode.tempVsPower != null ? episode.tempVsPower.toFixed(2) : "—"],
+            ] as const
+          ).map(([label, value]) => (
+            <div key={label} className="flex justify-between gap-2">
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd className="font-mono">{value}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="mt-3 mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+          Top CPU containers during the episode
+        </p>
+        {episode.topContainers && episode.topContainers.length > 0 ? (
+          <ul className="space-y-1 text-xs">
+            {episode.topContainers.map((container) => (
+              <li key={container.name} className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate">{container.name}</span>
+                <span className="font-mono tabular-nums">
+                  avg {formatPercent(container.avgCpuPercent)} · peak{" "}
+                  {formatPercent(container.peakCpuPercent)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            No per-container data at this resolution — attribution is not fabricated.
+          </p>
+        )}
+        <p className="mt-3 text-[11px] text-muted-foreground">
+          Associations within the episode window only — never causal claims.
+        </p>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 export function ThermalDiagnosticsCard({
   payload,
+  attributionWindow,
+  onWindowChange,
 }: {
   payload: ThermalDiagnosticsPayload | null;
+  attributionWindow?: "1h" | "6h" | "24h";
+  onWindowChange?: (window: "1h" | "6h" | "24h") => void;
 }) {
   const { prefs } = usePrefs();
+  const [openEpisode, setOpenEpisode] = useState<number | null>(null);
 
   const bucketRows = useMemo(() => {
     const buckets = payload?.diagnostics?.buckets;
@@ -130,7 +230,27 @@ export function ThermalDiagnosticsCard({
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2">
           <Flame className="size-4 text-muted-foreground" aria-hidden="true" />
-          Thermal diagnostics (24h)
+          Thermal diagnostics
+          {onWindowChange && (
+            <span role="group" aria-label="Attribution window" className="flex items-center gap-1">
+              {(["1h", "6h", "24h"] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => onWindowChange(option)}
+                  aria-pressed={(attributionWindow ?? "24h") === option}
+                  className={cn(
+                    "rounded px-1.5 py-0.5 text-[10px] font-medium",
+                    (attributionWindow ?? "24h") === option
+                      ? "bg-secondary text-foreground"
+                      : "text-muted-foreground hover:bg-secondary/60",
+                  )}
+                >
+                  {option}
+                </button>
+              ))}
+            </span>
+          )}
           <Badge variant="muted">{d.sensor?.name ?? "package"}</Badge>
           {d.buckets && d.buckets.coverageRatio !== null && d.buckets.coverageRatio < 0.9 && (
             <Badge variant="warning" title="Prometheus has less than 90% of the window's samples">
@@ -193,7 +313,8 @@ export function ThermalDiagnosticsCard({
         {/* Episodes */}
         <section aria-label="Thermal episodes">
           <p className="mb-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Episodes (sustained ≥{d.thresholds.warningC}°C for ≥5 min, ends &lt;{d.thresholds.warningC - 5}°C for 10 min)
+            Episodes ({attributionWindow ?? "24h"} · sustained ≥{d.thresholds.warningC}°C for ≥5 min, ends
+            below {d.thresholds.warningC - 5}°C for 10 min — click one for detail)
           </p>
           {episodes.length === 0 ? (
             <p className="rounded-md border border-dashed p-2 text-center text-xs text-muted-foreground">
@@ -215,7 +336,11 @@ export function ThermalDiagnosticsCard({
                 </thead>
                 <tbody className="font-mono tabular-nums">
                   {episodes.slice(0, 8).map((episode) => (
-                    <tr key={episode.startMs} className="border-t align-top">
+                    <tr
+                      key={episode.startMs}
+                      className="cursor-pointer border-t align-top hover:bg-secondary/50"
+                      onClick={() => setOpenEpisode(episode.startMs)}
+                    >
                       <td className="py-1 pr-2">{formatHour(episode.startMs)}</td>
                       <td className="py-1 pr-2">
                         {formatDuration(episode.durationSeconds)}
@@ -359,6 +484,11 @@ export function ThermalDiagnosticsCard({
           </section>
         )}
 
+        {openEpisode !== null &&
+          (() => {
+            const episode = episodes.find((entry) => entry.startMs === openEpisode);
+            return episode ? <EpisodeDetail episode={episode} onClose={() => setOpenEpisode(null)} /> : null;
+          })()}
         <p className="text-[11px] text-muted-foreground">
           Buckets, episodes and correlations are computed from actual Prometheus range data
           (60s step, 24h). Power uses the RAPL <code>{d.correlation.powerZone ?? "n/a"}</code> zone.

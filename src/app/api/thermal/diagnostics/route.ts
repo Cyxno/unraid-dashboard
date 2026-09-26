@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { guardRead } from "@/server/auth/guard";
 import { PromClient, isPrometheusConfigured } from "@/server/prometheus/client";
-import { getThermalDiagnostics } from "@/server/prometheus/thermal";
+import { getThermalDiagnostics, type AttributionWindow } from "@/server/prometheus/thermal";
 
 export const dynamic = "force-dynamic";
 
@@ -20,8 +20,10 @@ export async function GET(request: NextRequest) {
       { headers: { "cache-control": "no-store" } },
     );
   }
+  const windowParam = request.nextUrl.searchParams.get("window") ?? "24h";
+  const window = windowParam === "1h" || windowParam === "6h" ? (windowParam as AttributionWindow) : "24h";
   try {
-    const diagnostics = await getThermalDiagnostics(new PromClient());
+    const diagnostics = await getThermalDiagnostics(new PromClient(), window);
     return NextResponse.json(
       { available: true, diagnostics },
       { headers: { "cache-control": "no-store" } },

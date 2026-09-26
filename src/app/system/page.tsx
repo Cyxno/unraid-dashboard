@@ -209,8 +209,11 @@ export default function SystemPage() {
     "/api/thermal/analysis",
     60_000,
   );
+  // Attribution window for the thermal diagnostics card (v0.7.5);
+  // defaults to 24h, switching refetches with the window-scoped cache.
+  const [attributionWindow, setAttributionWindow] = useState<"1h" | "6h" | "24h">("24h");
   const thermalDiagnostics = usePoll<ThermalDiagnosticsPayload>(
-    "/api/thermal/diagnostics",
+    `/api/thermal/diagnostics?window=${attributionWindow}`,
     120_000,
   );
   const history = usePoll<SystemHistoryPayload>(
@@ -413,7 +416,13 @@ export default function SystemPage() {
                   unavailableReason="History unavailable — Prometheus is unreachable. Unraid state pages remain live."
                 />
                 {tab === "temps" && <ThermalAnalysisCard payload={thermalAnalysis.data} />}
-                {tab === "temps" && <ThermalDiagnosticsCard payload={thermalDiagnostics.data} />}
+                {tab === "temps" && (
+                  <ThermalDiagnosticsCard
+                    payload={thermalDiagnostics.data}
+                    attributionWindow={attributionWindow}
+                    onWindowChange={setAttributionWindow}
+                  />
+                )}
                 {tab === "temps" && (
                   <ThermalHistoryList payload={history.data} />
                 )}
