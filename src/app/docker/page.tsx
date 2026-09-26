@@ -20,6 +20,7 @@ import {
   type HistoryWindowPref,
 } from "@/lib/prefs";
 import { PageHeader, LoadingPanel } from "@/components/dashboard/page-primitives";
+import { DockerUpdatesPanel } from "@/components/docker/updates-panel";
 import { MetricStatus, SectionStatus } from "@/components/dashboard/section-status";
 import { SeriesChart } from "@/components/dashboard/series-chart";
 import { WindowPicker } from "@/components/dashboard/window-picker";
@@ -277,6 +278,10 @@ export default function DockerPage() {
           />
         }
       />
+
+      {/* Central update detection (v0.7.6): read-only overview across ALL
+          containers — Unraid, Compose, deploy scripts, local builds. */}
+      <DockerUpdatesPanel />
 
       {data?.data?.metricsMeta && data.data.metricsMeta.status !== "live" && (
         <div className="mb-3">

@@ -443,11 +443,18 @@ function SecuritySection() {
   const [sessionState, setSessionState] = useState<"active" | "expired">("active");
   const [lastAlive, setLastAlive] = useState<number | null>(null);
   useEffect(() => {
-    setSessionState(isAuthExpired() ? "expired" : "active");
-    return onAuthChange(() => {
+    const sync = () => {
       setSessionState(isAuthExpired() ? "expired" : "active");
       setLastAlive(getLastAuthAliveAt());
-    });
+    };
+    // Sync after hydration; Date.now stays out of render via the stored
+    // timestamp + a formatted absolute time below.
+    const initial = setTimeout(sync, 0);
+    const unsubscribe = onAuthChange(sync);
+    return () => {
+      clearTimeout(initial);
+      unsubscribe();
+    };
   }, []);
 
   return (
@@ -480,8 +487,8 @@ function SecuritySection() {
                   {sessionState}
                 </Badge>
                 {lastAlive && (
-                  <span className="text-muted-foreground">
-                    last authed request {Math.max(0, Math.round((Date.now() - lastAlive) / 1000))}s ago
+                  <span className="text-muted-foreground" title={new Date(lastAlive).toISOString()}>
+                    last authed request {new Date(lastAlive).toLocaleTimeString()}
                   </span>
                 )}
               </dd>

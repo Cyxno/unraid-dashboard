@@ -35,6 +35,7 @@ const http = require("node:http");
 const { spawn } = require("node:child_process");
 const { randomUUID, timingSafeEqual } = require("node:crypto");
 const { writeFile, unlink } = require("node:fs/promises");
+const { readFileSync } = require("node:fs");
 const path = require("node:path");
 
 /* ---- deployment constants (env-overridable ONLY for isolated testing) ----- */
@@ -54,7 +55,7 @@ const HEALTH_TIMEOUT_MS = 150_000;
 const VERIFY_TIMEOUT_MS = 30_000;
 const STEP_TIMEOUT_MS = { inspect: 15_000, pull: 300_000, replace: 30_000 };
 
-const HELPER_VERSION = "0.7.4";
+const HELPER_VERSION = "0.7.6";
 
 /* ---- state ---------------------------------------------------------------- */
 
@@ -463,6 +464,99 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === "/health") {
     return sendJson(res, 200, { ok: true, version: HELPER_VERSION });
+  }
+
+  // Read-only inventory of ALL containers: what the central update manager
+  // needs for classification. Facts only — no env, no mounts, no secrets.
+  if (url.pathname === "/inventory" && req.method === "GET") {
+    (async () => {
+      try {
+        const psRaw = await docker(
+          ["ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.State}}\t{{.Status}}"],
+          { timeoutMs: 20_000 },
+        );
+        const entries = psRaw.stdout
+          .split("\n")
+          .filter((line) => line.trim().length > 0)
+          .map((line) => line.split("\t"))
+          .filter((parts) => parts.length >= 5);
+        const containers = [];
+        for (const [id, name, image, state, status] of entries) {
+          let health = null;
+          let labels = {};
+          let imageId = null;
+          let repoDigests = [];
+          let created = null;
+          try {
+            const inspect = await dockerJson(
+              ["container", "inspect", "--format",
+                JSON.stringify({
+                  imageId: ".Image",
+                  repoDigests: ".RepoDigests",
+                  created: ".Created",
+                  health: ".State.Health.Status",
+                  labels: {
+                    composeProject: '{{index .Config.Labels "com.docker.compose.project"}}',
+                    composeService: '{{index .Config.Labels "com.docker.compose.service"}}',
+                    composeWorkdir: '{{index .Config.Labels "com.docker.compose.project.working_dir"}}',
+                    composeFiles: '{{index .Config.Labels "com.docker.compose.project.config_files"}}',
+                    unraidManaged: '{{index .Config.Labels "net.unraid.docker.managed"}}',
+                  },
+                })],
+              { timeoutMs: STEP_TIMEOUT_MS.inspect },
+            );
+            const parsed = typeof inspect[0] === "string" ? JSON.parse(inspect[0]) : inspect[0];
+            imageId = parsed.imageId ?? null;
+            repoDigests = Array.isArray(parsed.repoDigests) ? parsed.repoDigests : [];
+            created = parsed.created ?? null;
+            health = parsed.health === "<no value>" || parsed.health === "" ? null : parsed.health;
+            const rawLabels = parsed.labels ?? {};
+            for (const [key, value] of Object.entries(rawLabels)) {
+              if (typeof value === "string" && value.length > 0 && value !== "<no value>") labels[key] = value.slice(0, 300);
+            }
+          } catch (inspectError) {
+            log("inventory", `inspect failed for ${name}: ${String(inspectError.message).slice(0, 100)}`);
+          }
+          containers.push({
+            id, name, image, state, status, health, labels, imageId, repoDigests, created,
+          });
+        }
+        // Docker storage model: folder mode (Docker root bind-mounted from a
+        // pool directory, typical Unraid 7.x) vs image-file mode (loop-mounted
+        // docker.img). /proc/mounts is world-readable inside this container.
+        let storageMode = "unknown";
+        let storageSource = null;
+        try {
+          const mounts = readFileSync("/proc/mounts", "utf8");
+          const line = mounts
+            .split("\n")
+            .find((entry) => entry.includes(" /var/lib/docker ") && !entry.includes("overlay"));
+          if (line) {
+            const source = line.split(" ")[0] ?? "";
+            storageSource = source.slice(0, 120);
+            storageMode = /^\/dev\//.test(source) || source.includes("/mnt/")
+              ? "folder"
+              : source.endsWith(".img") || source.includes("loop")
+                ? "image-file"
+                : "unknown";
+          } else {
+            // No dedicated mount of the docker root: either overlay-only
+            // (image-file mode) or the root filesystem itself is the pool.
+            storageMode = mounts.includes(" /var/lib/docker/overlay2 ") ? "image-file" : "unknown";
+          }
+        } catch {
+          storageMode = "unknown";
+        }
+        return sendJson(res, 200, {
+          version: HELPER_VERSION,
+          containers,
+          storage: { mode: storageMode, source: storageSource },
+        });
+      } catch (error) {
+        return sendJson(res, 500, { error: String(error.message ?? error).slice(0, 200) });
+      }
+    })();
+    return;
   }
 
   if (url.pathname === "/status") {
