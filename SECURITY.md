@@ -42,6 +42,14 @@ key); neither ever reaches the browser.
   `AUTH_MODE` (see /boot/config/plugins/dockerMan/templates-user/
   my-unraid-dashboard.xml for the current env); direct-LAN HTTP remains
   reachable at the firewall level for that path.
+- **Kiosk path exception (v0.7.2):** `kiosk-dashboard.familievalk.com`
+  skips Authelia forward-auth and injects a fixed `kiosk` identity. The
+  trust comes from the network allow-list at the proxy (LAN + named
+  Tailscale peers, deny all; CF-proxied traffic refused) plus the shared
+  secret — anyone on those networks acts as the auditable `kiosk`
+  identity. This is a deliberate, documented trade-off for unattended
+  wallboards; it grants no broader rights than a trusted-LAN user and
+  every action is audited as `kiosk`.
 
 The dashboard never performs password auth and holds no user store.
 

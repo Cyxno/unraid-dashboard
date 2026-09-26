@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePwa } from "@/components/layout/pwa-provider";
+import { isAuthExpired } from "@/lib/auth-state";
 
 /**
  * SSE client with automatic reconnection (bounded backoff) and a
@@ -63,6 +64,13 @@ export function useDashboardEvents(
       if (disposed) return;
       if (!navigator.onLine) {
         // Offline: no EventSource, no retries — the `online` event resumes.
+        clearSource();
+        setStatus("offline");
+        return;
+      }
+      if (isAuthExpired()) {
+        // Session expired: no stream, no retries — the auth overlay's
+        // probe reloads the page on recovery.
         clearSource();
         setStatus("offline");
         return;

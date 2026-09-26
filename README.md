@@ -381,6 +381,29 @@ The update path is now a real architecture, not just a script:
   `scripts/update-dashboard.sh` semantics; the DockerMan template also
   shows the current env.
 
+## Kiosk / unattended displays (v0.7.2)
+
+Long-running wallboards have a dedicated strategy:
+
+- **Simplest**: sign in on the device with **“Remember me”** checked — the
+  Authelia session then lasts one month instead of the 1-hour inactivity
+  window (policy: `inactivity: 1 hour, expiration: 1 day, remember_me:
+  1 month`).
+- **Unattended path**: `https://kiosk-dashboard.familievalk.com` is a
+  network-restricted route (LAN + explicit Tailscale peers, deny all) with
+  **no Authelia prompt**: the proxy injects a fixed `kiosk` identity plus
+  the shared secret. Everything done on this path is audited as actor
+  `kiosk`. Human users keep the 2FA-protected main hostname. Do not expose
+  the kiosk hostname beyond the trusted networks.
+- **Session expiry UX**: when the session expires, the UI pauses all
+  polling (no retry storms), shows a full-screen **Authentication
+  required** card with a portal link, and auto-recovers the moment the
+  session is valid again (10 s probe). Kiosk boards resume unattended once
+  a valid session exists.
+- **Session diagnostics** (Settings → Security): live session state
+  (active/expired), authenticated identity and the last successful
+  authenticated request — never cookies or tokens.
+
 ## Shared dashboards v2 (v0.7)
 
 - **Widget registry**: 12 validated widgets (system health, CPU, memory,

@@ -1,8 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { KeyRound, Plug, RotateCcw, ShieldCheck, Stethoscope } from "lucide-react";
 import { usePoll } from "@/hooks/use-poll";
 import { usePwa } from "@/components/layout/pwa-provider";
+import { getLastAuthAliveAt, isAuthExpired, onAuthChange } from "@/lib/auth-state";
 import {
   PAGE_INTERVAL_MS,
   REFRESH_INTERVAL_MS,
@@ -436,6 +438,17 @@ function SecuritySection() {
   const actions = usePoll<ActionsCapabilitiesPayload>("/api/actions/status", 30_000);
   const authData = auth.data;
   const actionsData = actions.data;
+  // Kiosk/session observability (v0.7.2): live session state + the last
+  // successful authenticated request, tracked client-side (no tokens).
+  const [sessionState, setSessionState] = useState<"active" | "expired">("active");
+  const [lastAlive, setLastAlive] = useState<number | null>(null);
+  useEffect(() => {
+    setSessionState(isAuthExpired() ? "expired" : "active");
+    return onAuthChange(() => {
+      setSessionState(isAuthExpired() ? "expired" : "active");
+      setLastAlive(getLastAuthAliveAt());
+    });
+  }, []);
 
   return (
     <Card>
@@ -457,6 +470,19 @@ function SecuritySection() {
                   <Badge variant="muted" className="max-w-[220px] gap-1 whitespace-normal text-left" title="Requests are not authenticated; the dashboard trusts the LAN. Put it behind a reverse proxy with AUTH_MODE=proxy for identity.">
                     disabled — trusted network mode
                   </Badge>
+                )}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted-foreground">Session</dt>
+              <dd className="flex items-center gap-2 text-xs">
+                <Badge variant={sessionState === "active" ? "success" : "destructive"}>
+                  {sessionState}
+                </Badge>
+                {lastAlive && (
+                  <span className="text-muted-foreground">
+                    last authed request {Math.max(0, Math.round((Date.now() - lastAlive) / 1000))}s ago
+                  </span>
                 )}
               </dd>
             </div>

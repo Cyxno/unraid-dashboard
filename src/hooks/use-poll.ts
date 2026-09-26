@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePwa } from "@/components/layout/pwa-provider";
+import { isAuthExpired, isAuthExpiredResponse, markAuthAlive, markAuthExpired } from "@/lib/auth-state";
 
 
 export interface PollResult<T> {
@@ -43,13 +44,22 @@ export function usePoll<T>(url: string, intervalMs: number): PollResult<T> {
     let cancelled = false;
 
     const run = async () => {
+      // Session expired: pause the loop entirely (no infinite retry
+      // storms against the Authelia redirect); the auth overlay's probe
+      // resumes everything after re-auth.
+      if (isAuthExpired()) return;
       try {
         const response = await fetch(url, { cache: "no-store" });
+        if (isAuthExpiredResponse(response)) {
+          markAuthExpired();
+          return;
+        }
         if (!response.ok) {
           throw new Error(`Request failed (HTTP ${response.status})`);
         }
         const payload = (await response.json()) as T;
         if (cancelled) return;
+        markAuthAlive();
         setData(payload);
         setUpdatedAt(Date.now());
         setError(null);
