@@ -54,7 +54,7 @@ const HEALTH_TIMEOUT_MS = 150_000;
 const VERIFY_TIMEOUT_MS = 30_000;
 const STEP_TIMEOUT_MS = { inspect: 15_000, pull: 300_000, replace: 30_000 };
 
-const HELPER_VERSION = "0.7.1";
+const HELPER_VERSION = "0.7.4";
 
 /* ---- state ---------------------------------------------------------------- */
 
@@ -197,7 +197,7 @@ async function recreateContainer(baseArgs, image, envLines) {
   await dockerRunWithEnv(baseArgs, image, envLines, STEP_TIMEOUT_MS.replace);
 }
 
-async function runUpdate(tag) {
+async function runUpdate(tag, options = {}) {
   const requestedAt = Date.now();
   const normalizedTag = tag.replace(/^v/, "");
   const targetImage = `${IMAGE_REPO}:${normalizedTag}`;
@@ -207,6 +207,20 @@ async function runUpdate(tag) {
   machineMutated = false;
 
   try {
+    // Rollback may target an older validated release; normal updates may not.
+    if (!options.forceOlder && state.currentVersion) {
+      const parse = (v) => String(v).replace(/^v/, "").split(".").map(Number);
+      const a = parse(tag);
+      const b = parse(state.currentVersion);
+      let comparison = 0;
+      for (let i = 0; i < 3; i++) {
+        if ((a[i] ?? 0) !== (b[i] ?? 0)) { comparison = (a[i] ?? 0) > (b[i] ?? 0) ? 1 : -1; break; }
+      }
+      if (comparison < 0) {
+        throw new Error(`refusing non-update: requested ${tag} is older than running ${state.currentVersion} (use /rollback)`);
+      }
+    }
+
     // Phase: checking — capture the current container configuration.
     // fromImage comes from THIS inspection, never from cached startup
     // state: a stale/null cache must never decide what rollback restores.
@@ -352,6 +366,28 @@ async function refreshCurrentImage() {
   }
 }
 
+/** Images of the fixed repo to keep locally (bounded retention). */
+const KEEP_IMAGES = 5;
+
+/**
+ * Retention: keeps the newest KEEP_IMAGES semver-tagged images of the
+ * fixed repo and NEVER touches any other repository or untagged layers
+ * of other images. Runs opportunistically after the hourly pull probe.
+ */
+async function pruneOldImages() {
+  await refreshLocalVersions();
+  const tags = state.localVersions ?? [];
+  const removable = tags.slice(KEEP_IMAGES);
+  for (const tag of removable) {
+    // Guard: never remove the running image's tag.
+    if (state.currentVersion === tag) continue;
+    log("retention", `removing old image ${IMAGE_REPO}:${tag}`);
+    await docker(["rmi", `${IMAGE_REPO}:${tag}`], { timeoutMs: 30_000 }).catch((error) => {
+      log("retention", `could not remove ${tag}: ${String(error.message).slice(0, 120)}`);
+    });
+  }
+}
+
 /**
  * Semver tags of the fixed repo present locally (bounded, newest first).
  * This is what makes the update flow usable without a host GHCR login:
@@ -446,6 +482,54 @@ const server = http.createServer(async (req, res) => {
       localVersions: state.localVersions ?? [],
       pullAvailable: state.pullAvailable,
     });
+  }
+
+  if (url.pathname === "/rollback" && req.method === "POST") {
+    if (!authorize(req)) {
+      log("rejected", "unauthorized rollback request");
+      return sendJson(res, 401, { error: "unauthorized" });
+    }
+    if (state.lock) {
+      return sendJson(res, 409, {
+        error: "an update/rollback is already running",
+        phase: state.phase,
+        startedAt: state.startedAt,
+      });
+    }
+    let body;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return sendJson(res, 400, { error: "malformed JSON body" });
+    }
+    // Only the tag is read; image repo + container are deployment constants.
+    const tag = typeof body?.tag === "string" ? body.tag.trim().replace(/^v/, "") : "";
+    if (!TAG_RE.test(tag)) {
+      return sendJson(res, 400, { error: "invalid tag — expected semantic version like 0.7.2" });
+    }
+    const targetImage = `${IMAGE_REPO}:${tag}`;
+    // Allowlist check: the image must exist locally and its OCI version
+    // label must match the requested tag — no arbitrary refs, no pulls.
+    let labels;
+    try {
+      const inspectArray = await dockerJson(["image", "inspect", targetImage], STEP_TIMEOUT_MS.inspect);
+      labels = inspectArray[0]?.Config?.Labels ?? {};
+    } catch {
+      return sendJson(res, 404, { error: `no local image for ${targetImage} — nothing validated to roll back to` });
+    }
+    const labelVersion = labels["org.opencontainers.image.version"];
+    if (!labelVersion || labelVersion !== tag) {
+      return sendJson(res, 400, { error: `image label version (${labelVersion ?? "unlabeled"}) does not match requested ${tag} — refusing unvalidated rollback` });
+    }
+    state.lock = { token: randomUUID(), since: new Date().toISOString() };
+    state.startedAt = new Date().toISOString();
+    state.finishedAt = null;
+    setPhase("requested", `rollback to ${targetImage}`);
+    void runUpdate(tag, { forceOlder: true }).then(() => {
+      void refreshCurrentImage();
+      void refreshLocalVersions();
+    });
+    return sendJson(res, 202, { accepted: true, tag, phase: state.phase });
   }
 
   if (url.pathname === "/update" && req.method === "POST") {

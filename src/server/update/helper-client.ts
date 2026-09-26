@@ -221,6 +221,41 @@ export async function requestUpdate(rawTag: string): Promise<UpdateRequestResult
   }
 }
 
+/**
+ * Requests a rollback to a previously validated local release. The helper
+ * allowlists the tag: the image must exist locally and its OCI version
+ * label must match — no arbitrary refs.
+ */
+export async function requestRollback(tag: string): Promise<UpdateRequestResult> {
+  const config = helperConfig();
+  if (!config) return { accepted: false, status: 503, reason: "Update helper not configured." };
+  if (!config.token) return { accepted: false, status: 503, reason: "UPDATE_HELPER_TOKEN not configured." };
+  const clean = tag.trim().replace(/^v/, "");
+  if (!/^\d+\.\d+\.\d+$/.test(clean)) {
+    return { accepted: false, status: 400, reason: "Invalid tag — semantic version required." };
+  }
+  try {
+    const response = await fetch(`${config.url}/rollback`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${config.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ tag: clean }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const body = (await response.json().catch(() => ({}))) as { error?: string; accepted?: boolean };
+    if (response.status === 202 && body.accepted) return { accepted: true, status: 202 };
+    return {
+      accepted: false,
+      status: response.status,
+      reason: body.error ?? `Helper responded with HTTP ${response.status}.`,
+    };
+  } catch (error) {
+    return { accepted: false, status: 502, reason: error instanceof Error ? error.message : "Helper request failed." };
+  }
+}
+
 /** Explicit same-version validation transition (helper-level smoke test). */
 export function compareSemver(a: string, b: string): number {
   const pa = a.replace(/^v/, "").split(".").map(Number);

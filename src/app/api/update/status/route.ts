@@ -3,7 +3,7 @@ import { guardRead } from "@/server/auth/guard";
 import { getHelperStatus, isUpdatePhaseActive, compareSemver } from "@/server/update/helper-client";
 import { checkForUpdate } from "@/server/actions/update-check";
 import { getBuildInfo } from "@/server/version";
-import { readUpdateHistory, maybeRecordFromHelper } from "@/server/update/history";
+import { readUpdateHistory, maybeRecordFromHelper, validatedVersions } from "@/server/update/history";
 
 export const dynamic = "force-dynamic";
 
@@ -78,6 +78,11 @@ export async function GET(request: NextRequest) {
   /* Persist any helper-recorded update result not yet in history ---------- */
   await maybeRecordFromHelper(helper).catch(() => {});
   const history = await readUpdateHistory().catch(() => []);
+  // Rollback candidates: successfully-run releases whose images are still
+  // present locally (the helper's local list is the presence oracle).
+  const rollbackCandidates = validatedVersions(history).filter((tag) =>
+    helper.reachable ? helper.localVersions.includes(tag) : false,
+  );
 
   return NextResponse.json(
     {
@@ -110,6 +115,7 @@ export async function GET(request: NextRequest) {
       },
       consistency,
       updateInProgress: isUpdatePhaseActive(helper.phase),
+      rollbackCandidates,
       history: history.slice(0, 10),
     },
     { headers: { "cache-control": "no-store" } },

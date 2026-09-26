@@ -86,6 +86,7 @@ interface UpdateStatusPayload {
     pullAvailable: boolean | null;
     requestEnabled: boolean;
   };
+  rollbackCandidates: string[];
   updateInProgress: boolean;
 }
 
@@ -148,6 +149,7 @@ export function UpdatesSection() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
   const [requesting, setRequesting] = useState(false);
+  const [rollbackTarget, setRollbackTarget] = useState<string | null>(null);
 
   // Poll fast while a machine runs (SSE is primary; this is the fallback
   // that also survives a page reload mid-update).
@@ -189,6 +191,30 @@ export function UpdatesSection() {
       setConfirmOpen(false);
     }
   }, [targetTag]);
+
+  const performRollback = useCallback(
+    async (tag: string) => {
+      setRequesting(true);
+      setRequestError(null);
+      try {
+        const response = await fetch("/api/update/rollback", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ tag, confirm: "yes" }),
+        });
+        const body = (await response.json().catch(() => ({}))) as { error?: string };
+        if (!response.ok) {
+          setRequestError(body.error ?? `Rollback failed (HTTP ${response.status}).`);
+        }
+      } catch (error) {
+        setRequestError(error instanceof Error ? error.message : "Rollback request failed.");
+      } finally {
+        setRequesting(false);
+        setRollbackTarget(null);
+      }
+    },
+    [],
+  );
 
   return (
     <Card>
@@ -395,6 +421,54 @@ export function UpdatesSection() {
               Persisted to /app/data/update-history.jsonl — survives container replacement.
             </p>
           </div>
+        )}
+
+        {/* Rollback (v0.7.4) — only to validated releases, strong confirmation */}
+        {!machineRunning && (data?.rollbackCandidates.length ?? 0) > 0 && (
+          <div className="rounded-md border p-2.5 text-xs">
+            <p className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+              Rollback — validated releases on this host
+            </p>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {data!.rollbackCandidates
+                .filter((tag: string) => tag !== data?.build.version)
+                .slice(0, 3)
+                .map((tag: string) => (
+                  <Button
+                    key={tag}
+                    size="sm"
+                    variant="outline"
+                    disabled={requesting || !online}
+                    onClick={() => setRollbackTarget(tag)}
+                  >
+                    Roll back to v{tag}
+                  </Button>
+                ))}
+              {data!.rollbackCandidates.filter((tag: string) => tag !== data?.build.version).length === 0 && (
+                <span className="text-muted-foreground">
+                  Only the current version is validated — nothing to roll back to.
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+        {rollbackTarget && (
+          <ConfirmDialog
+            open
+            title={`Roll back to v${rollbackTarget}?`}
+            severity="destructive"
+            busy={requesting}
+            confirmLabel="Roll back now"
+            onConfirm={() => void performRollback(rollbackTarget)}
+            onCancel={() => setRollbackTarget(null)}
+          >
+            <p>
+              The helper replaces the dashboard with the validated{" "}
+              <strong>v{rollbackTarget}</strong> image (same safety path as an update: config
+              preserved, health-checked, verified — automatic restore if it fails). The dashboard
+              restarts.
+            </p>
+          </ConfirmDialog>
         )}
       </CardContent>
     </Card>

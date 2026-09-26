@@ -201,6 +201,29 @@ async function appendRotated(entry: UpdateHistoryEntry): Promise<void> {
   });
 }
 
+/**
+ * Versions this host has run successfully (from the persisted history) —
+ * the rollback allowlist. A version qualifies only via a `success` run;
+ * rolled-back or failed targets are excluded by definition.
+ */
+export function validatedVersions(history: UpdateHistoryEntry[]): string[] {
+  const validated = new Set<string>();
+  for (const entry of history) {
+    if (entry.result === "success" && entry.toVersion) {
+      validated.add(entry.toVersion);
+    }
+  }
+  return [...validated].sort((a, b) => {
+    const pa = a.split(".").map(Number);
+    const pb = b.split(".").map(Number);
+    for (let index = 0; index < 3; index++) {
+      const diff = (pb[index] ?? 0) - (pa[index] ?? 0);
+      if (diff !== 0) return diff;
+    }
+    return 0;
+  });
+}
+
 /** Test hook. */
 export function resetUpdateHistoryQueue(): void {
   globalStore.__dashboardUpdateHistoryQueue = undefined;
