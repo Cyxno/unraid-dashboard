@@ -48,6 +48,16 @@ import {
   getTopConsumers,
 } from "./prometheus/containers";
 import { getBuildInfo } from "./version";
+import { getEnv, getEnvSafe } from "./env";
+import { mkdir, open, rm, stat as statFile } from "node:fs/promises";
+import os from "node:os";
+import {
+  dashboardsStorageHealth,
+} from "./dashboards/store";
+import {
+  samplerRunning,
+  subscriberCount,
+} from "./events/sampler";
 import { getConnectionStatus, sectionLastSuccess } from "./unraid/service";
 import type {
   ContainerHistoryPayload,
@@ -537,6 +547,44 @@ export async function getOverviewExtras(counts?: {
 
 /* Diagnostics ---------------------------------------------------------------------- */
 
+interface SelfCpuSample {
+  cpuUsageMs: number;
+  wallMs: number;
+}
+
+const globalDiagnosticsStore = globalThis as unknown as {
+  __dashboardSelfCpu?: SelfCpuSample;
+};
+
+/** Dashboard process CPU% since the previous call (null on first call). */
+function selfCpuPercent(): number | null {
+  const usage = process.cpuUsage();
+  const cpuUsageMs = (usage.user + usage.system) / 1000;
+  const now = Date.now();
+  const previous = globalDiagnosticsStore.__dashboardSelfCpu;
+  globalDiagnosticsStore.__dashboardSelfCpu = { cpuUsageMs, wallMs: now };
+  if (!previous) return null;
+  const deltaCpu = cpuUsageMs - previous.cpuUsageMs;
+  const deltaWall = now - previous.wallMs;
+  if (deltaWall <= 0) return null;
+  // Single process, possibly multi-threaded; cap at 100% of one core pool.
+  const percent = (deltaCpu / deltaWall) * 100;
+  return Math.max(0, Math.min(100 * Math.max(1, os.cpus().length), Math.round(percent * 10) / 10));
+}
+
+async function probeWritable(dir: string): Promise<boolean> {
+  try {
+    await mkdir(dir, { recursive: true });
+    const probe = `${dir}/.write-probe-${Date.now()}`;
+    const handle = await open(probe, "w");
+    await handle.close();
+    await rm(probe, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function getDiagnostics(): Promise<DiagnosticsPayload> {
   const connection = await getConnectionStatus().catch(() => null);
   const promReachable = { reachable: false, latencyMs: null as number | null };
@@ -558,6 +606,35 @@ export async function getDiagnostics(): Promise<DiagnosticsPayload> {
     sections[key] = value ? new Date(value).toISOString() : null;
   }
   const promSuccess = lastSuccessMap().get("system") ?? null;
+
+  // v0.6 self-monitoring + persistence health (never fatal to diagnostics).
+  let auditFileBytes: number | null = null;
+  try {
+    const auditDir = getEnv().AUDIT_DIR;
+    const stat = await statFile(`${auditDir}/audit.jsonl`);
+    auditFileBytes = stat.size;
+  } catch {
+    auditFileBytes = null;
+  }
+  const auditWritable = await probeWritable(getEnvSafe().AUDIT_DIR).catch(() => false);
+  const dashboardsHealth = await dashboardsStorageHealth();
+  const mem = process.memoryUsage();
+
+  const self: DiagnosticsPayload["self"] = {
+    cpuPercent: selfCpuPercent(),
+    memoryRssBytes: mem.rss,
+    uptimeSeconds: Math.round(process.uptime()),
+    sseSubscribers: subscriberCount(),
+    sseSamplerRunning: samplerRunning(),
+    audit: { fileBytes: auditFileBytes, writable: auditWritable },
+    dashboards: {
+      count: dashboardsHealth.dashboardCount,
+      writable: dashboardsHealth.writable,
+      invalidFiles: dashboardsHealth.invalidFiles,
+    },
+    dataVolumeWritable: auditWritable && dashboardsHealth.writable,
+  };
+
   return {
     version: getBuildInfo(),
     sources: {
@@ -576,6 +653,7 @@ export async function getDiagnostics(): Promise<DiagnosticsPayload> {
       },
     },
     sections,
+    self,
     generatedAt: new Date().toISOString(),
   };
 }

@@ -2,6 +2,7 @@
 
 import { KeyRound, Plug, RotateCcw, ShieldCheck, Stethoscope } from "lucide-react";
 import { usePoll } from "@/hooks/use-poll";
+import { usePwa } from "@/components/layout/pwa-provider";
 import {
   PAGE_INTERVAL_MS,
   REFRESH_INTERVAL_MS,
@@ -11,12 +12,16 @@ import {
   type RefreshPreset,
   type TempUnit,
 } from "@/lib/prefs";
+import {
+  formatBytes,
+  formatDateTimeIso,
+  formatUptime,
+} from "@/lib/utils";
 import { PageHeader, LoadingPanel } from "@/components/dashboard/page-primitives";
 import { SectionStatus } from "@/components/dashboard/section-status";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatDateTimeIso } from "@/lib/utils";
 import { useOverview } from "@/components/layout/overview-provider";
 import { InstallHint } from "@/components/layout/pwa-status-banner";
 import { DashboardsSection } from "@/components/settings/dashboards-section";
@@ -102,6 +107,15 @@ interface UpdateStatusPayload {
   };
 }
 
+function DiagnosticsRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="flex items-center gap-2 text-xs">{children}</dd>
+    </div>
+  );
+}
+
 function AboutAndDiagnostics() {
   const version = usePoll<UpdateStatusPayload>("/api/update-check", 300_000);
   const diagnostics = usePoll<DiagnosticsPayload>(
@@ -110,6 +124,7 @@ function AboutAndDiagnostics() {
   );
   const diag = diagnostics.data;
   const update = version.data?.update;
+  const pwa = usePwa();
 
   return (
     <div className="space-y-3">
@@ -177,6 +192,76 @@ function AboutAndDiagnostics() {
                 <dt className="text-muted-foreground">Generated</dt>
                 <dd className="text-xs">{formatDateTimeIso(diag.generatedAt)}</dd>
               </div>
+
+              {/* PWA + browser state (client-side) */}
+              <div className="border-t pt-2">
+                <DiagnosticsRow label="Service worker">
+                  <Badge variant={pwa.sw === "ready" ? "success" : pwa.sw === "unsupported" ? "muted" : "warning"}>
+                    {pwa.sw}
+                  </Badge>
+                  {pwa.updateReady && <Badge variant="warning">update ready</Badge>}
+                </DiagnosticsRow>
+                <DiagnosticsRow label="App mode">
+                  <Badge variant={pwa.standalone ? "success" : "muted"}>
+                    {pwa.standalone ? "standalone (installed)" : "browser tab"}
+                  </Badge>
+                </DiagnosticsRow>
+                <DiagnosticsRow label="Network">
+                  <Badge variant={pwa.online ? "success" : "destructive"}>
+                    {pwa.online ? "online" : "offline"}
+                  </Badge>
+                </DiagnosticsRow>
+              </div>
+
+              {/* Server self-monitoring + persistence (v0.6) */}
+              {diag?.self && (
+                <div className="border-t pt-2">
+                  <DiagnosticsRow label="Dashboard CPU">
+                    <span className="font-mono">
+                      {diag.self.cpuPercent != null ? `${diag.self.cpuPercent}%` : "—"}
+                    </span>
+                  </DiagnosticsRow>
+                  <DiagnosticsRow label="Dashboard memory">
+                    <span className="font-mono">{formatBytes(diag.self.memoryRssBytes)}</span>
+                  </DiagnosticsRow>
+                  <DiagnosticsRow label="Dashboard uptime">
+                    <span className="font-mono">{formatUptime(diag.self.uptimeSeconds)}</span>
+                  </DiagnosticsRow>
+                  <DiagnosticsRow label="SSE">
+                    <span className="font-mono">
+                      {diag.self.sseSubscribers} subscriber(s) · sampler{" "}
+                      {diag.self.sseSamplerRunning ? "running" : "idle"}
+                    </span>
+                  </DiagnosticsRow>
+                  <DiagnosticsRow label="Audit log">
+                    <span className="font-mono">
+                      {diag.self.audit.fileBytes != null
+                        ? `${formatBytes(diag.self.audit.fileBytes, 0)}`
+                        : "no file yet"}
+                    </span>
+                    <Badge variant={diag.self.audit.writable ? "success" : "destructive"}>
+                      {diag.self.audit.writable ? "writable" : "read-only"}
+                    </Badge>
+                  </DiagnosticsRow>
+                  <DiagnosticsRow label="Shared dashboards">
+                    <span className="font-mono">{diag.self.dashboards.count} stored</span>
+                    <Badge variant={diag.self.dashboards.writable ? "success" : "destructive"}>
+                      {diag.self.dashboards.writable ? "writable" : "read-only"}
+                    </Badge>
+                  </DiagnosticsRow>
+                  <DiagnosticsRow label="/app/data volume">
+                    <Badge variant={diag.self.dataVolumeWritable ? "success" : "destructive"}>
+                      {diag.self.dataVolumeWritable ? "persistent + writable" : "NOT writable"}
+                    </Badge>
+                  </DiagnosticsRow>
+                  {!diag.self.dataVolumeWritable && (
+                    <p className="text-[11px] text-warning">
+                      Persistence is degraded: the audit log and shared dashboards will not
+                      survive container recreation. Mount a host directory at /app/data.
+                    </p>
+                  )}
+                </div>
+              )}
             </dl>
           ) : (
             <p className="text-muted-foreground">Diagnostics unavailable.</p>

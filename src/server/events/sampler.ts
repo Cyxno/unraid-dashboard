@@ -247,3 +247,8 @@ export function resetSseStore(): void {
 export function subscriberCount(): number {
   return store().subscribers.size;
 }
+
+/** True when the shared sampler loop is currently ticking. */
+export function samplerRunning(): boolean {
+  return globalStore.__dashboardSse?.timer != null;
+}

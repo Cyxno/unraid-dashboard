@@ -147,3 +147,20 @@ export function getEnv(): Env {
 export function resetEnvCache(): void {
   cached = null;
 }
+
+/**
+ * Safe variant for diagnostics paths: returns defaults instead of
+ * throwing when required vars are missing (boot-time diagnostics).
+ * Placeholder Unraid values are never used for requests — only
+ * AUDIT_DIR/DASHBOARDS_DIR defaults are meaningful here.
+ */
+export function getEnvSafe(): Env {
+  try {
+    return getEnv();
+  } catch {
+    return envSchema.parse({
+      UNRAID_URL: "http://127.0.0.1",
+      UNRAID_API_KEY: "unavailable",
+    });
+  }
+}

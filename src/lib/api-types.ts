@@ -514,6 +514,19 @@ export interface DiagnosticsPayload {
   sources: DataSourceStatus;
   /** ISO timestamps of last successful fetch per server-side domain. */
   sections: Record<string, string | null>;
+  /** v0.6 self-monitoring + persistence health (server-side). */
+  self: {
+    /** Dashboard process CPU% since the previous diagnostics call. */
+    cpuPercent: number | null;
+    memoryRssBytes: number | null;
+    uptimeSeconds: number | null;
+    sseSubscribers: number;
+    sseSamplerRunning: boolean;
+    audit: { fileBytes: number | null; writable: boolean };
+    dashboards: { count: number; writable: boolean; invalidFiles: string[] };
+    /** Overall /app/data verdict: audit + dashboards writable. */
+    dataVolumeWritable: boolean;
+  };
   generatedAt: string;
 }
 
