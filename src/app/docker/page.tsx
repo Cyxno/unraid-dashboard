@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { usePoll } from "@/hooks/use-poll";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import {
   HISTORY_INTERVAL_MS,
   PAGE_INTERVAL_MS,
@@ -149,6 +150,9 @@ export default function DockerPage() {
   );
   const { prefs, setPref } = usePrefs();
   const [query, setQuery] = useState("");
+  // Light debounce: filtering stays instant-feeling but the full
+  // filter+sort+group pass runs at most every 150ms while typing.
+  const debouncedQuery = useDebouncedValue(query, 150);
   const [filter, setFilter] = useState<StatusFilter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortAsc, setSortAsc] = useState(true);
@@ -172,7 +176,7 @@ export default function DockerPage() {
 
   const visible = useMemo(() => {
     let list = containers;
-    const q = query.trim().toLowerCase();
+    const q = debouncedQuery.trim().toLowerCase();
     if (q) {
       list = list.filter(
         (container) =>
@@ -206,7 +210,7 @@ export default function DockerPage() {
       return sortAsc ? comparison : -comparison;
     });
     return sorted;
-  }, [containers, query, filter, sortKey, sortAsc]);
+  }, [containers, debouncedQuery, filter, sortKey, sortAsc]);
 
   const grouped = useMemo<
     Array<{ project: string | null; items: DockerContainerSummary[] }>
@@ -381,7 +385,10 @@ export default function DockerPage() {
           {visible.map((container) => {
             const cMeta = STATE_META[container.state] ?? STATE_META.EXITED;
             return (
-              <Card key={container.id} className="gap-0 p-3">
+              <Card
+                key={container.id}
+                className="gap-0 p-3 [contain-intrinsic-size:auto_76px] [content-visibility:auto]"
+              >
                 <button
                   type="button"
                   className="w-full text-left"
@@ -518,6 +525,7 @@ export default function DockerPage() {
                         className={cn(
                           "cursor-pointer border-b last:border-0 hover:bg-secondary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                           compact ? "text-xs" : "",
+                          "[contain-intrinsic-size:auto_44px] [content-visibility:auto]",
                         )}
                       >
                         <td className="max-w-[220px] px-4 py-2.5">
