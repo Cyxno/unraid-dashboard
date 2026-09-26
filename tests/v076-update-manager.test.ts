@@ -135,7 +135,6 @@ describe("v0.7.6 digest comparison (Phase D)", () => {
   it("update available when digests differ (multi-arch index digest)", () => {
     const outcome = compareDigests("sha256:old", "sha256:new");
     assert.equal(outcome.status, "UPDATE_AVAILABLE");
-    assert.equal(outcome.status !== "CHECK_FAILED", true);
   });
 
   it("localDigestOf reads the RepoDigest", () => {
