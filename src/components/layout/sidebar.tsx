@@ -37,6 +37,7 @@ export function Sidebar({ mobileOpen, onMobileClose, collapsed, onToggleCollapse
           "w-60",
           mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
         )}
+        style={{ paddingLeft: "env(safe-area-inset-left)" }}
       >
         <div
           className={cn(

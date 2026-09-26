@@ -1,11 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { usePwa } from "@/components/layout/pwa-provider";
 
 /**
  * SSE client with automatic reconnection (bounded backoff) and a
  * visibility guard for sleep/wake. The dashboard never DEPENDS on SSE:
  * callers keep their polling and treat this as an accelerator.
+ *
+ * While the browser is offline the stream is closed instead of retried —
+ * EventSource's own retry would otherwise hammer a dead network. The
+ * browser's `online` event resumes it immediately.
  */
 
 export type SseStatus = "connecting" | "connected" | "reconnecting" | "offline";
@@ -30,6 +35,7 @@ export function useDashboardEvents(
 ): SseStatus {
   const [status, setStatus] = useState<SseStatus>("connecting");
   const handlerRef = useRef(onEvent);
+  const { online } = usePwa();
 
   useEffect(() => {
     // Keep the latest handler without re-subscribing the EventSource.
@@ -39,12 +45,29 @@ export function useDashboardEvents(
   useEffect(() => {
     let source: EventSource | null = null;
     let retry = 0;
-    let closed = false;
+    let disposed = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
+    const clearSource = () => {
+      source?.close();
+      source = null;
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
+    };
+
     const connect = () => {
-      if (closed) return;
-      setStatus((current) => (current === "connected" ? current : retry === 0 ? "connecting" : "reconnecting"));
+      if (disposed) return;
+      if (!navigator.onLine) {
+        // Offline: no EventSource, no retries — the `online` event resumes.
+        clearSource();
+        setStatus("offline");
+        return;
+      }
+      setStatus((current) =>
+        current === "connected" ? current : retry === 0 ? "connecting" : "reconnecting",
+      );
       source = new EventSource("/api/events");
 
       source.onopen = () => {
@@ -55,7 +78,7 @@ export function useDashboardEvents(
       source.onerror = () => {
         source?.close();
         source = null;
-        if (closed) return;
+        if (disposed) return;
         setStatus("reconnecting");
         // Bounded backoff: 1s, 2s, 4s … capped at 30s.
         const delay = Math.min(30_000, 1000 * 2 ** retry);
@@ -98,12 +121,11 @@ export function useDashboardEvents(
     document.addEventListener("visibilitychange", onVisible);
 
     return () => {
-      closed = true;
-      if (retryTimer) clearTimeout(retryTimer);
+      disposed = true;
+      clearSource();
       document.removeEventListener("visibilitychange", onVisible);
-      source?.close();
     };
-  }, []);
+  }, [online]);
 
   return status;
 }

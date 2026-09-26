@@ -121,7 +121,7 @@ export default function NocPage() {
   const topCpu = extras?.topConsumers?.cpu.slice(0, 5) ?? [];
 
   return (
-    <div className="min-h-svh bg-background p-4 sm:p-6">
+    <div className="safe-frame min-h-svh bg-background">
       {/* Header */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <p

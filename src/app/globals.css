@@ -95,3 +95,25 @@
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* ---------------------------------------------------------------------------
+ * Standalone PWA geometry.
+ * viewport-fit=cover (see layout.tsx) exposes the safe-area insets; env()
+ * values are 0 in normal browser tabs, so these rules are no-ops there.
+ * - .safe-top pads the sticky header below an iPhone notch/status bar
+ *   (black-translucent status bar draws over the page).
+ * - .safe-frame is used by the NOC wallboard for full-bleed layouts.
+ * Viewport height uses svh/dvh semantics (Tailwind min-h-svh etc.);
+ * raw 100vh is never used, avoiding the classic mobile URL-bar bug.
+ * ------------------------------------------------------------------------- */
+@supports (padding: env(safe-area-inset-top)) {
+  .safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+  .safe-frame {
+    padding-top: max(1rem, env(safe-area-inset-top));
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+  }
+}

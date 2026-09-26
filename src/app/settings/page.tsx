@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDateTimeIso } from "@/lib/utils";
 import { useOverview } from "@/components/layout/overview-provider";
+import { InstallHint } from "@/components/layout/pwa-status-banner";
 import type {
   BuildInfoDto,
   ConnectionStatus,
@@ -218,6 +219,12 @@ function AboutAndDiagnostics() {
           ) : (
             <p className="text-muted-foreground">Version information unavailable.</p>
           )}
+          <div className="mt-3 border-t pt-3">
+            <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              Install as app
+            </p>
+            <InstallHint />
+          </div>
         </CardContent>
       </Card>
     </div>

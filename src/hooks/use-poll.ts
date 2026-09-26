@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { usePwa } from "@/components/layout/pwa-provider";
 
 
 export interface PollResult<T> {
@@ -20,6 +21,11 @@ export interface PollResult<T> {
  * Polls a dashboard API endpoint without reloading. On failure the last
  * successful payload is retained (the server marks it stale) and only the
  * error flag flips — the UI never blanks out during a transient outage.
+ *
+ * While the browser is offline the interval keeps ticking but requests are
+ * skipped (no pointless retries); the moment connectivity returns a single
+ * refresh fires immediately so "stale" panels recover without waiting a
+ * full interval.
  */
 export function usePoll<T>(url: string, intervalMs: number): PollResult<T> {
   const [data, setData] = useState<T | null>(null);
@@ -28,6 +34,7 @@ export function usePoll<T>(url: string, intervalMs: number): PollResult<T> {
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [tick, setTick] = useState(0);
   const mounted = useRef(true);
+  const { online } = usePwa();
 
   const refresh = useCallback(() => setTick((value) => value + 1), []);
 
@@ -55,13 +62,31 @@ export function usePoll<T>(url: string, intervalMs: number): PollResult<T> {
     };
 
     void run();
-    const timer = setInterval(run, Math.max(2000, intervalMs));
+    const timer = setInterval(() => {
+      if (navigator.onLine) run();
+    }, Math.max(2000, intervalMs));
+
+    // Recover instantly when connectivity returns.
+    const onOnline = () => {
+      if (!cancelled) run();
+    };
+    window.addEventListener("online", onOnline);
+
     return () => {
       cancelled = true;
       mounted.current = false;
       clearInterval(timer);
+      window.removeEventListener("online", onOnline);
     };
   }, [url, intervalMs, tick]);
+
+  // Expose the paused state through the error message so callers can
+  // distinguish "offline, not retrying" from a real request failure.
+  useEffect(() => {
+    if (mounted.current && !online && updatedAt !== null) {
+      setError((current) => current ?? "Offline — showing last known data");
+    }
+  }, [online, updatedAt]);
 
   return { data, loading, error, ready: updatedAt !== null, updatedAt, refresh };
 }

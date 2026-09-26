@@ -9,6 +9,8 @@ import { PrefsProvider } from "@/lib/prefs";
 import { ToastProvider } from "./toast";
 import { LiveEventsProvider } from "./live-events";
 import { BottomNav } from "./bottom-nav";
+import { PwaProvider } from "./pwa-provider";
+import { PwaStatusBanner } from "./pwa-status-banner";
 import { cn } from "@/lib/utils";
 import { CommandPalette } from "./command-palette";
 
@@ -81,6 +83,8 @@ function Shell({ children }: { children: React.ReactNode }) {
       >
         <Header overview={overview} onMenuClick={() => setMobileNavOpen(true)} />
         <CommandPalette />
+        {/* Offline / service-worker-update banner; sticky under the header. */}
+        <PwaStatusBanner />
         <main className="mx-auto w-full max-w-7xl p-3 pb-[calc(env(safe-area-inset-bottom)+4.75rem)] sm:p-6 md:pb-6">{children}</main>
         <footer className="mx-auto w-full max-w-7xl px-4 pb-6 sm:px-6">
           <p className="text-[11px] text-muted-foreground">
@@ -98,14 +102,16 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
-    <PrefsProvider>
-      <OverviewProvider>
-        <ToastProvider>
-          <LiveEventsProvider>
-            <Shell>{children}</Shell>
-          </LiveEventsProvider>
-        </ToastProvider>
-      </OverviewProvider>
-    </PrefsProvider>
+    <PwaProvider>
+      <PrefsProvider>
+        <OverviewProvider>
+          <ToastProvider>
+            <LiveEventsProvider>
+              <Shell>{children}</Shell>
+            </LiveEventsProvider>
+          </ToastProvider>
+        </OverviewProvider>
+      </PrefsProvider>
+    </PwaProvider>
   );
 }
