@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { guardWrite, parseActionBody } from "@/server/auth/guard";
 import { performAction } from "@/server/actions";
+import { isUpdatePhaseActive, getHelperStatus } from "@/server/update/helper-client";
 import {
   DOCKER_ACTIONS,
   NOTIFICATION_ACTIONS,
@@ -14,10 +15,26 @@ export const dynamic = "force-dynamic";
  * exist in the live inventory, policy guards + audit apply, and the
  * whole subsystem is disabled unless ENABLE_ACTIONS + the action key
  * are configured.
+ *
+ * v0.7: lifecycle actions are refused while a dashboard update machine
+ * is running (maintenance window) — no mutations during replace.
  */
 export async function POST(request: NextRequest) {
   const guard = guardWrite(request);
   if (!guard.ok) return guard.response;
+
+  // Maintenance gate: refuse mutations during an in-app update.
+  const helper = await getHelperStatus().catch(() => null);
+  if (helper && isUpdatePhaseActive(helper.phase)) {
+    return NextResponse.json(
+      {
+        ok: false,
+        status: "rejected",
+        message: `Dashboard update in progress (phase ${helper.phase}) — actions are temporarily disabled.`,
+      },
+      { status: 503, headers: { "cache-control": "no-store" } },
+    );
+  }
 
   const parsed = await parseActionBody(request);
   if (!parsed.ok) return parsed.response;

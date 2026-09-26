@@ -98,6 +98,34 @@ const envSchema = z.object({
     .string()
     .regex(/^[a-z0-9-]+\/[a-z0-9-]+$/)
     .default("cyxno/unraid-dashboard"),
+
+  /* ---- v0.7: update helper (the only component with Docker access) ---- */
+
+  /**
+   * Base URL of the local update helper (default http://127.0.0.1:8790).
+   * The helper binds localhost only and updates exactly one container.
+   */
+  UPDATE_HELPER_URL: z
+    .string()
+    .url()
+    .transform((value) => value.replace(/\/+$/, ""))
+    .optional(),
+  /**
+   * Shared secret for update requests to the helper (Bearer). Required
+   * for in-app updates; its presence never reaches the browser — only
+   * "updates available: yes/no".
+   */
+  UPDATE_HELPER_TOKEN: z.string().min(32).optional(),
+  /**
+   * Secret the reverse proxy must inject (AUTH_PROXY_SECRET header) in
+   * proxy auth mode: direct clients cannot spoof an identity header
+   * without it. Fail-closed when unset in proxy mode.
+   */
+  AUTH_PROXY_SECRET: z.string().min(16).optional(),
+  AUTH_PROXY_SECRET_HEADER: z
+    .string()
+    .regex(/^[a-zA-Z0-9-]+$/)
+    .default("X-Dashboard-Auth-Token"),
 });
 
 /** True when a Prometheus server is configured for this process. */

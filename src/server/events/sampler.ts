@@ -200,6 +200,9 @@ function ensureSampler(): void {
     for (const event of events) {
       dispatch(event);
     }
+    // Update-machine phase changes (only while the helper is configured
+    // and only on this cadence; poll is skipped when already in flight).
+    void pollUpdatePhase().catch(() => {});
   }, 5_000);
   // Never keep the process alive just for the sampler.
   (s.timer as unknown as { unref?: () => void }).unref?.();
@@ -235,6 +238,80 @@ export function recordTransitionForTest(
 /** Test hook: dispatch an event to current subscribers. */
 export function dispatchForTest(event: SampledEvent): void {
   dispatch(event);
+}
+
+/* ---- update-phase watcher (v0.7) -------------------------------------------
+ * Polls the update helper while an update machine is active (or just
+ * finished) and fans phase changes out as `update` events. The poll only
+ * runs when subscribers exist and only while the machine is non-idle —
+ * never a standing interval against the helper.
+ */
+
+interface HelperStatusPayload {
+  phase: string;
+  detail: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  lastUpdate?: {
+    from: string; to: string; result: string;
+    startedAt: string; finishedAt: string; durationMs: number;
+    digest?: string | null; usedLocalImage?: boolean; error?: string;
+  } | null;
+}
+
+const updateWatcherState = globalStore as unknown as {
+  __dashboardUpdateWatcher?: { lastPhase: string | null; pollTimer: ReturnType<typeof setTimeout> | null };
+};
+
+export function isUpdateInProgress(): boolean {
+  const watcher = (updateWatcherState as unknown as { __dashboardUpdateWatcher?: { lastPhase: string | null } }).__dashboardUpdateWatcher;
+  const phase = watcher?.lastPhase;
+  return phase !== null && phase !== undefined && phase !== "idle" && phase !== "complete" && phase !== "failed";
+}
+
+async function pollHelperStatus(): Promise<HelperStatusPayload | null> {
+  const env = await import("@/server/env").then((mod) => mod.getEnvSafe());
+  if (!env.UPDATE_HELPER_URL) return null;
+  try {
+    const response = await fetch(`${env.UPDATE_HELPER_URL}/status`, {
+      signal: AbortSignal.timeout(3_000),
+      cache: "no-store",
+    });
+    if (!response.ok) return null;
+    return (await response.json()) as HelperStatusPayload;
+  } catch {
+    return null;
+  }
+}
+
+function watcherStore() {
+  if (!updateWatcherState.__dashboardUpdateWatcher) {
+    updateWatcherState.__dashboardUpdateWatcher = { lastPhase: null, pollTimer: null };
+  }
+  return updateWatcherState.__dashboardUpdateWatcher;
+}
+
+/** Called on every sampler tick: emits update events on phase change. */
+export async function pollUpdatePhase(): Promise<void> {
+  const watcher = watcherStore();
+  if (watcher.pollTimer) return; // a poll is already in flight
+  watcher.pollTimer = setTimeout(() => {}, 0);
+  try {
+    const status = await pollHelperStatus();
+    if (status) {
+      if (status.phase !== watcher.lastPhase) {
+        watcher.lastPhase = status.phase;
+        dispatch({ event: "update", data: { phase: status.phase, detail: status.detail, finishedAt: status.finishedAt } });
+      }
+    } else if (watcher.lastPhase !== null && watcher.lastPhase !== "idle" && watcher.lastPhase !== "unreachable") {
+      // Helper disappeared mid-update — surface that honestly.
+      watcher.lastPhase = "unreachable";
+      dispatch({ event: "update", data: { phase: "unreachable", detail: "update helper did not answer", finishedAt: null } });
+    }
+  } finally {
+    clearTimeout(watcher.pollTimer);
+    watcher.pollTimer = null;
+  }
 }
 
 /** Test hooks. */

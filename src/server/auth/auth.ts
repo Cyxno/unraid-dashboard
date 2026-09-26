@@ -1,4 +1,5 @@
 import { getEnv } from "@/server/env";
+import { timingSafeEqual } from "node:crypto";
 import type { AuthIdentity } from "@/lib/api-types";
 
 /**
@@ -64,13 +65,17 @@ function normalizeUser(value: string | null): string | null {
  * Resolve the request's auth state. Pure function of env + headers:
  * no I/O, trivially testable.
  *
- * Trust model (documented in README): self-hosted Next.js cannot observe
- * the socket peer address, so proxy mode relies on (a) the request
- * arriving via a reverse proxy (evidenced by X-Forwarded-For), and
- * (b) the proxy-injected identity header, and (c) the OPERATOR ensuring
- * the dashboard port is only reachable by the proxy (firewall/binding).
- * Without (c), LAN clients could spoof headers — this is the standard
- * caveat of proxy authentication and is called out in Settings.
+ * Trust model (documented in README/SECURITY.md):
+ * - "proxy" mode requires the request to carry BOTH:
+ *   (a) the proxy-injected identity header (AUTH_HEADER), and
+ *   (b) the proxy-injected shared secret (AUTH_PROXY_SECRET_HEADER
+ *       matching AUTH_PROXY_SECRET) — injected by the reverse proxy and
+ *       impossible to guess from outside. Direct requests, including LAN
+ *       clients forging X-Forwarded-For and an identity header, are
+ *       rejected: they cannot possess the secret.
+ * - A reverse proxy MUST overwrite (not append) identity and forwarded
+ *   headers; the NPM config in the README does exactly that.
+ * - The dashboard never performs password auth and holds no user store.
  */
 export function resolveAuth(
   headers: Headers,
@@ -85,13 +90,11 @@ export function resolveAuth(
     };
   }
 
-  // Proxy mode: the request must have traversed a proxy that appends
-  // X-Forwarded-For, and must present the identity header.
-  const xff = headers.get("x-forwarded-for");
-  const peer = remoteAddress ?? "unknown";
-  const viaProxy = xff !== null || isPrivateIp(peer);
-
-  if (!viaProxy) {
+  // Proxy mode. The shared secret is the actual trust boundary: headers
+  // are forgeable on any network that can reach the port, the secret is
+  // not. When the secret is not configured the mode fails CLOSED.
+  const secretHeader = headers.get(env.AUTH_PROXY_SECRET_HEADER);
+  if (!proxySecretProvided(env, secretHeader)) {
     return {
       allowed: false,
       identity: { mode: "proxy", user: null },
@@ -123,6 +126,20 @@ export function resolveAuth(
   }
 
   return { allowed: true, identity: { mode: "proxy", user } };
+}
+
+/** Constant-time shared-secret comparison; absent config never matches. */
+function proxySecretProvided(
+  env: { AUTH_PROXY_SECRET?: string; AUTH_PROXY_SECRET_HEADER: string },
+  headerValue: string | null,
+): boolean {
+  const secret = env.AUTH_PROXY_SECRET;
+  if (!secret) return false;
+  if (!headerValue) return false;
+  const a = Buffer.from(secret);
+  const b = Buffer.from(headerValue);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 /** CIDR-aware match for IPv4; exact/loopback otherwise. */

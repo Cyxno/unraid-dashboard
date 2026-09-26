@@ -47,37 +47,87 @@ describe("auth: proxy mode", () => {
     baseEnv({
       AUTH_MODE: "proxy",
       AUTH_HEADER: "X-Forwarded-User",
+      AUTH_PROXY_SECRET: "test-secret-0123456789abcdef",
+      AUTH_PROXY_SECRET_HEADER: "X-Dashboard-Auth-Token",
     });
     delete process.env.AUTH_ALLOWED_USERS;
     resetEnvCache();
   });
 
-  it("accepts a proxied request with an identity header", () => {
+  it("accepts a proxied request carrying secret + identity header", () => {
     const result = resolveAuth(
-      headers({ "x-forwarded-for": "192.168.1.50", "x-forwarded-user": "remco" }),
+      headers({
+        "x-forwarded-for": "192.168.1.50",
+        "x-forwarded-user": "remco",
+        "x-dashboard-auth-token": "test-secret-0123456789abcdef",
+      }),
       "unknown",
     );
     assert.equal(result.allowed, true);
     assert.equal(result.identity.user, "remco");
   });
 
-  it("rejects direct requests without proxy evidence", () => {
+  it("REJECTS a spoofed identity header without the shared secret (LAN attacker)", () => {
+    for (const spoof of [
+      { "x-forwarded-for": "1.2.3.4", "x-forwarded-user": "admin" },
+      { "x-forwarded-user": "admin" },
+      { "x-forwarded-for": "10.0.0.1", "x-forwarded-user": "admin" },
+    ]) {
+      const result = resolveAuth(headers(spoof), "unknown");
+      assert.equal(result.allowed, false, JSON.stringify(spoof));
+      assert.equal(result.status, 401, JSON.stringify(spoof));
+    }
+  });
+
+  it("rejects a WRONG secret (fail closed)", () => {
+    const result = resolveAuth(
+      headers({
+        "x-forwarded-user": "remco",
+        "x-dashboard-auth-token": "wrong-secret-0123456789abcdef",
+      }),
+      "unknown",
+    );
+    assert.equal(result.allowed, false);
+    assert.equal(result.status, 401);
+  });
+
+  it("fails closed when no proxy secret is configured", () => {
+    delete process.env.AUTH_PROXY_SECRET;
+    resetEnvCache();
+    const result = resolveAuth(
+      headers({
+        "x-forwarded-user": "remco",
+        "x-dashboard-auth-token": "anything",
+      }),
+      "unknown",
+    );
+    assert.equal(result.allowed, false);
+    assert.equal(result.status, 401);
+  });
+
+  it("rejects direct requests without any proxy evidence", () => {
     const result = resolveAuth(headers(), null);
     assert.equal(result.allowed, false);
     assert.equal(result.status, 401);
   });
 
-  it("rejects proxied requests missing the identity header", () => {
-    const result = resolveAuth(headers({ "x-forwarded-for": "192.168.1.50" }), "unknown");
+  it("rejects secret-carrying requests missing the identity header", () => {
+    const result = resolveAuth(
+      headers({ "x-dashboard-auth-token": "test-secret-0123456789abcdef" }),
+      "unknown",
+    );
     assert.equal(result.allowed, false);
     assert.equal(result.status, 401);
   });
 
-  it("rejects users outside the allowlist", () => {
+  it("rejects users outside the allowlist (even with valid secret)", () => {
     process.env.AUTH_ALLOWED_USERS = "remco,admin";
     resetEnvCache();
     const result = resolveAuth(
-      headers({ "x-forwarded-for": "10.0.0.9", "x-forwarded-user": "mallory" }),
+      headers({
+        "x-forwarded-user": "mallory",
+        "x-dashboard-auth-token": "test-secret-0123456789abcdef",
+      }),
       "unknown",
     );
     assert.equal(result.allowed, false);
@@ -88,7 +138,10 @@ describe("auth: proxy mode", () => {
     process.env.AUTH_ALLOWED_USERS = "remco";
     resetEnvCache();
     const result = resolveAuth(
-      headers({ "x-forwarded-for": "10.0.0.9", "x-forwarded-user": "remco" }),
+      headers({
+        "x-forwarded-user": "remco",
+        "x-dashboard-auth-token": "test-secret-0123456789abcdef",
+      }),
       "unknown",
     );
     assert.equal(result.allowed, true);
