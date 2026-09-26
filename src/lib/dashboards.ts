@@ -19,6 +19,7 @@ export interface DashboardWriteInput {
   name: string;
   widgets: SharedDashboardDto["widgets"];
   preferences: SharedDashboardDto["preferences"];
+  access: SharedDashboardDto["access"];
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -61,8 +62,16 @@ export async function deleteSharedDashboard(id: string): Promise<void> {
   await requestJson<{ deleted: boolean }>(`/api/dashboards/${id}`, { method: "DELETE" });
 }
 
-export async function fetchSharedDashboard(id: string): Promise<SharedDashboardDto> {
-  const body = await requestJson<{ dashboard: SharedDashboardDto }>(`/api/dashboards/${id}`);
+export async function fetchSharedDashboard(id: string): Promise<{ dashboard: SharedDashboardDto; canEdit: boolean }> {
+  return requestJson<{ dashboard: SharedDashboardDto; canEdit: boolean }>(`/api/dashboards/${id}`);
+}
+
+/** Forks a viewable dashboard into a new one owned by the requester. */
+export async function forkSharedDashboard(id: string): Promise<SharedDashboardDto> {
+  const body = await requestJson<{ dashboard: SharedDashboardDto }>(`/api/dashboards/${id}/fork`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
   return body.dashboard;
 }
 
@@ -94,8 +103,12 @@ export function savedViewToDashboardInput(
       dockerFilter: options?.dockerFilter ?? "",
       networkInterface: "",
     },
+    access: DEFAULT_ACCESS,
   };
 }
+
+/** Default access for new dashboards (matches server default). */
+export const DEFAULT_ACCESS = { mode: "shared-readonly" as const, editors: [], viewers: [] };
 
 /** Applies a shared dashboard's preferences into local pref keys. */
 export function dashboardToSavedView(dashboard: SharedDashboardDto): SavedView {

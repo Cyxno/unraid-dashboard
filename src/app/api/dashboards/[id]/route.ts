@@ -1,8 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { guardRead, guardWrite, guardDelete, type GuardResult } from "@/server/auth/guard";
 import {
+  canView,
   deleteDashboard,
   DashboardError,
+  forkDashboard,
   getDashboard,
   updateDashboard,
 } from "@/server/dashboards/store";
@@ -28,18 +30,16 @@ export async function GET(
     );
   }
   const dashboard = await getDashboard(id);
-  if (!dashboard) {
+  // Private dashboards of other users read as "not found" — no existence leak.
+  if (!dashboard || !canView(dashboard, guard.identity)) {
     return NextResponse.json(
       { error: "Dashboard not found." },
       { status: 404, headers: { "cache-control": "no-store" } },
     );
   }
-  // View for everyone, edit for the owner (or everyone in trusted-LAN mode).
-  const canEdit =
-    guard.identity.mode === "disabled" ||
-    (guard.identity.mode === "proxy" &&
-      Boolean(guard.identity.user) &&
-      dashboard.owner === guard.identity.user);
+  // View for viewers; edit per the access model (owner, editors, LAN).
+  const { canMutate } = await import("@/server/dashboards/store");
+  const canEdit = canMutate(dashboard, guard.identity);
   return NextResponse.json(
     { dashboard, identity: guard.identity, canEdit },
     { headers: { "cache-control": "no-store" } },
@@ -50,6 +50,7 @@ interface DashboardBody {
   name?: unknown;
   widgets?: unknown;
   preferences?: unknown;
+  access?: unknown;
 }
 
 /** Shared mutation path: id check → guard → rate limit → audit → JSON. */
@@ -126,12 +127,25 @@ export async function PUT(
 ) {
   const { id } = await params;
   return guardedMutation(request, id, "update", async (body, guard) => {
+    const existing = await getDashboard(id);
     const dashboard = await updateDashboard(
       id,
-      { name: String(body.name ?? ""), widgets: body.widgets, preferences: body.preferences },
+      {
+        name: String(body.name ?? ""),
+        widgets: body.widgets,
+        preferences: body.preferences,
+        access: body.access,
+      },
       guard.identity,
     );
-    return { dashboardName: dashboard.name, payload: { dashboard } };
+    const accessChanged =
+      existing &&
+      JSON.stringify(existing.access) !== JSON.stringify(dashboard.access);
+    return {
+      dashboardName: dashboard.name,
+      accessChanged: Boolean(accessChanged),
+      payload: { dashboard },
+    };
   });
 }
 
@@ -145,4 +159,56 @@ export async function DELETE(
     await deleteDashboard(id, guard.identity);
     return { dashboardName: existing?.name ?? id, payload: { deleted: true } };
   });
+}
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  if (!ID_PATTERN.test(id)) {
+    return NextResponse.json(
+      { error: "Invalid dashboard id." },
+      { status: 400, headers: { "cache-control": "no-store" } },
+    );
+  }
+  const guard = guardWrite(request);
+  if (!guard.ok) return guard.response;
+  const actor = guard.identity.user ?? "lan";
+  const rate = checkWriteRate(`fork:${actor}@${guard.sourceIp}`);
+  if (!rate.allowed) {
+    return NextResponse.json(
+      { error: "Too many dashboard writes — slow down." },
+      { status: 429, headers: { "cache-control": "no-store" } },
+    );
+  }
+  const startedAt = Date.now();
+  try {
+    const fork = await forkDashboard(id, guard.identity);
+    await recordAudit({
+      actor,
+      sourceIp: guard.sourceIp,
+      kind: "dashboard",
+      action: "fork",
+      targetName: fork.name,
+      targetId: `${id} → ${fork.id}`,
+      result: "success",
+      durationMs: Date.now() - startedAt,
+    });
+    return NextResponse.json(
+      { dashboard: fork },
+      { status: 201, headers: { "cache-control": "no-store" } },
+    );
+  } catch (error) {
+    if (error instanceof DashboardError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.status, headers: { "cache-control": "no-store" } },
+      );
+    }
+    return NextResponse.json(
+      { error: "Dashboard storage failure." },
+      { status: 500, headers: { "cache-control": "no-store" } },
+    );
+  }
 }

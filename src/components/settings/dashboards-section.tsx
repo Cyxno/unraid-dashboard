@@ -112,18 +112,7 @@ export function DashboardsSection() {
                 )}
               </span>
             </div>
-            {list.dashboards.length > 0 && (
-              <ul className="max-h-40 space-y-1 overflow-y-auto rounded-md border p-2 text-xs">
-                {list.dashboards.slice(0, 12).map((dashboard) => (
-                  <li key={dashboard.id} className="flex items-center justify-between gap-2">
-                    <span className="min-w-0 truncate">{dashboard.name}</span>
-                    <span className="shrink-0 text-muted-foreground">
-                      {formatDateTimeIso(dashboard.updatedAt)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
+            {list.dashboards.length > 0 && <DashboardLibrary list={list} onChanged={load} />}
           </>
         ) : (
           <p className="text-muted-foreground">Shared dashboard storage unavailable.</p>
@@ -219,3 +208,99 @@ export function DashboardsSection() {
 
 /** Kept for potential external reuse (e.g. backup tooling UI). */
 export { buildExportPayload };
+
+/* Dashboard library (v0.7.3): Mine / Shared with me / All shared, with
+ * access mode, widget counts and one-click fork. Server-side permissions
+ * govern everything — this UI only mirrors what the API returns. */
+function DashboardLibrary({
+  list,
+  onChanged,
+}: {
+  list: DashboardListPayload;
+  onChanged: () => void;
+}) {
+  const { online } = usePwa();
+  const { toast } = useToast();
+  const [tab, setTab] = useState<"mine" | "shared" | "all">("mine");
+  const me = list.identity.user ?? "lan";
+  const mine = list.dashboards.filter((dashboard) => dashboard.owner === me);
+  const shared = list.dashboards.filter((dashboard) => dashboard.owner !== me);
+  const shown = tab === "mine" ? mine : tab === "shared" ? shared : list.dashboards;
+
+  const fork = async (id: string) => {
+    try {
+      const response = await fetch(`/api/dashboards/${id}/fork`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Fork failed");
+      toast("success", "Forked to your dashboards");
+      onChanged();
+    } catch (error) {
+      toast("error", error instanceof Error ? error.message : "Fork failed");
+    }
+  };
+
+  return (
+    <div>
+      <div role="group" aria-label="Dashboard library filter" className="mb-2 flex flex-wrap items-center gap-1">
+        {(
+          [
+            ["mine", `Mine (${mine.length})`],
+            ["shared", `Shared with me (${shared.length})`],
+            ["all", `All shared (${list.dashboards.length})`],
+          ] as const
+        ).map(([value, label]) => (
+          <Button
+            key={value}
+            size="sm"
+            variant={tab === value ? "secondary" : "ghost"}
+            aria-pressed={tab === value}
+            onClick={() => setTab(value)}
+            className="h-7 px-2 text-[11px]"
+          >
+            {label}
+          </Button>
+        ))}
+      </div>
+      <ul className="max-h-64 space-y-1 overflow-y-auto rounded-md border p-2 text-xs">
+        {shown.map((dashboard) => (
+          <li key={dashboard.id} className="flex flex-wrap items-center gap-2">
+            <span className="min-w-0 flex-1 truncate font-medium">{dashboard.name}</span>
+            <Badge
+              variant={
+                dashboard.access.mode === "private"
+                  ? "secondary"
+                  : dashboard.access.mode === "shared-editable"
+                    ? "warning"
+                    : "muted"
+              }
+              className="text-[10px]"
+            >
+              {dashboard.access.mode === "private" ? "private" : dashboard.access.mode === "shared-editable" ? "editable" : "read-only"}
+            </Badge>
+            <span className="shrink-0 text-muted-foreground">
+              {dashboard.owner === me ? "you" : dashboard.owner} · {dashboard.widgets.length} widgets ·{" "}
+              {formatDateTimeIso(dashboard.updatedAt)}
+            </span>
+            {dashboard.owner !== me && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 px-1.5 text-[10px]"
+                disabled={!online}
+                aria-label={`Fork ${dashboard.name} into your own dashboards`}
+                onClick={() => void fork(dashboard.id)}
+              >
+                Fork
+              </Button>
+            )}
+          </li>
+        ))}
+        {shown.length === 0 && <li className="text-muted-foreground">Nothing here yet.</li>}
+      </ul>
+    </div>
+  );
+}

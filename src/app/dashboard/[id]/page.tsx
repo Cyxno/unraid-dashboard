@@ -11,6 +11,7 @@ import { WidgetGrid, WIDGET_ICONS } from "@/components/dashboard/widget-registry
 import { usePoll } from "@/hooks/use-poll";
 import { PAGE_INTERVAL_MS, usePrefs } from "@/lib/prefs";
 import {
+  DEFAULT_ACCESS,
   dashboardToSavedView,
   fetchSharedDashboard,
   updateSharedDashboard,
@@ -44,6 +45,7 @@ export default function SharedDashboardPage({ params }: { params: Promise<{ id: 
 
   const [editMode, setEditMode] = useState(false);
   const [draft, setDraft] = useState<WidgetEntry[]>([]);
+  const [draftAccess, setDraftAccess] = useState<SharedDashboardDto["access"]>({ mode: "shared-readonly", editors: [], viewers: [] });
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const { setPref } = usePrefs();
@@ -51,8 +53,8 @@ export default function SharedDashboardPage({ params }: { params: Promise<{ id: 
   useEffect(() => {
     let cancelled = false;
     fetchSharedDashboard(id)
-      .then((loaded) => {
-        if (!cancelled) setPayload({ dashboard: loaded, identity: { mode: "disabled", user: null }, canEdit: true });
+      .then((body) => {
+        if (!cancelled) setPayload({ dashboard: body.dashboard, identity: { mode: "disabled", user: null }, canEdit: body.canEdit });
       })
       .catch((error: unknown) => {
         if (!cancelled) setLoadError(error instanceof Error ? error.message : "Failed to load dashboard");
@@ -114,6 +116,7 @@ export default function SharedDashboardPage({ params }: { params: Promise<{ id: 
   const startEdit = () => {
     if (!dashboard) return;
     setDraft(dashboard.widgets.map((widget) => ({ ...widget })));
+    setDraftAccess(dashboard.access);
     setSaveError(null);
     setEditMode(true);
   };
@@ -155,6 +158,7 @@ export default function SharedDashboardPage({ params }: { params: Promise<{ id: 
         name: dashboard.name,
         widgets: draft,
         preferences: dashboard.preferences,
+        access: draftAccess,
       });
       setPayload({ dashboard: updated, identity: payload?.identity ?? { mode: "disabled", user: null }, canEdit });
       setEditMode(false);
@@ -210,6 +214,46 @@ export default function SharedDashboardPage({ params }: { params: Promise<{ id: 
 
       {editMode ? (
         <div className="space-y-4">
+          {/* Access editor (v0.7.3): mode + editors list; server enforces. */}
+          <div className="rounded-lg border bg-card/60 p-3">
+            <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Who can use this dashboard
+            </p>
+            <div role="group" aria-label="Access mode" className="mb-2 flex flex-wrap items-center gap-1">
+              {(["private", "shared-readonly", "shared-editable"] as const).map((mode) => (
+                <Button
+                  key={mode}
+                  size="sm"
+                  variant={draftAccess.mode === mode ? "secondary" : "ghost"}
+                  aria-pressed={draftAccess.mode === mode}
+                  onClick={() => setDraftAccess({ ...DEFAULT_ACCESS, ...draftAccess, mode })}
+                  className="h-7 px-2 text-[11px]"
+                >
+                  {mode === "private" ? "Private (me + viewers)" : mode === "shared-readonly" ? "Shared · view only" : "Shared · editable"}
+                </Button>
+              ))}
+            </div>
+            {draftAccess.mode !== "shared-readonly" && (
+              <input
+                value={draftAccess.mode === "private" ? draftAccess.viewers.join(", ") : draftAccess.editors.join(", ")}
+                onChange={(event) => {
+                  const list = event.target.value.split(",").map((entry) => entry.trim()).filter(Boolean).slice(0, 50);
+                  setDraftAccess(
+                    draftAccess.mode === "private"
+                      ? { ...draftAccess, viewers: list }
+                      : { ...draftAccess, editors: list.slice(0, 20) },
+                  );
+                }}
+                placeholder={draftAccess.mode === "private" ? "Viewer identities, comma-separated (empty = only you)" : "Editor identities, comma-separated (empty = everyone)"}
+                aria-label="Identity list"
+                className="h-8 w-full max-w-md rounded-md border bg-transparent px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            )}
+            <p className="mt-1.5 text-[11px] text-muted-foreground">
+              Identities come from the sign-on provider. The server enforces these permissions —
+              hiding buttons is never the enforcement.
+            </p>
+          </div>
           <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card/60 p-3">
             <p className="mr-auto text-xs text-muted-foreground">
               Reorder with the arrows, pick a size, hide widgets — then save. The server re-validates

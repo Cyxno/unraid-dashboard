@@ -1,9 +1,10 @@
 {
   "name": "unraid-dashboard",
-  "version": "0.7.0",
+  "version": "0.7.3",
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/sync-sw-version.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { guardRead, guardWrite } from "@/server/auth/guard";
 import {
+  canView,
   createDashboard,
   DashboardError,
   listDashboards,
@@ -14,7 +15,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const guard = guardRead(request);
   if (!guard.ok) return guard.response;
-  const { dashboards, invalid } = await listDashboards();
+  const { dashboards, invalid } = await listDashboards(guard.identity);
   return NextResponse.json(
     { dashboards, invalid, identity: guard.identity },
     { headers: { "cache-control": "no-store" } },
@@ -25,6 +26,7 @@ interface DashboardBody {
   name?: unknown;
   widgets?: unknown;
   preferences?: unknown;
+  access?: unknown;
 }
 
 /** Creates a shared dashboard. Guarded (auth + CSRF + rate limit + audit). */
@@ -58,6 +60,7 @@ export async function POST(request: NextRequest) {
         name: String(body.name ?? ""),
         widgets: body.widgets,
         preferences: body.preferences,
+        access: body.access,
       },
       guard.identity,
     );

@@ -175,6 +175,7 @@ export function ViewsMenu() {
         name: nextName,
         widgets: dashboard.widgets,
         preferences: dashboard.preferences,
+        access: dashboard.access,
       });
       await loadShared(true);
     } catch (error) {

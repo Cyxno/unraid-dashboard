@@ -664,6 +664,16 @@ export interface AuditLogPayload {
 export type { WidgetId } from "@/lib/widgets";
 import type { WidgetId } from "@/lib/widgets";
 
+export type DashboardAccessMode = "private" | "shared-readonly" | "shared-editable";
+
+export interface DashboardAccess {
+  mode: DashboardAccessMode;
+  /** Additional identities allowed to edit (shared-editable only). */
+  editors: string[];
+  /** Identities allowed to view a private dashboard. */
+  viewers: string[];
+}
+
 /** Mirrors the server's versioned dashboard schema (validated there too). */
 export interface SharedDashboardDto {
   schemaVersion: number;
@@ -672,6 +682,8 @@ export interface SharedDashboardDto {
   name: string;
   /** Proxy identity or "lan" in trusted-LAN mode. */
   owner: string;
+  /** Permission model (v0.7.3). */
+  access: DashboardAccess;
   /** Widget layout: registry ids with predefined sizes (v2). */
   widgets: Array<{ id: WidgetId; size: "sm" | "md" | "lg" }>;
   preferences: {

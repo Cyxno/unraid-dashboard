@@ -259,7 +259,7 @@ describe("v06 shared dashboard store", () => {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     for (const key of Object.keys(parsed)) {
       assert.ok(
-        ["schemaVersion", "id", "name", "owner", "widgets", "preferences", "createdAt", "updatedAt"].includes(key),
+        ["schemaVersion", "id", "name", "owner", "widgets", "preferences", "access", "createdAt", "updatedAt"].includes(key),
         `unexpected top-level field ${key}`,
       );
     }

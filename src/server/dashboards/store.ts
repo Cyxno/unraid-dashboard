@@ -37,7 +37,7 @@ const widgetSizeSchema = z.enum(["sm", "md", "lg"]);
  *   anyone on the trusted network. No accounts are invented.
  */
 
-export const DASHBOARD_SCHEMA_VERSION = 2;
+export const DASHBOARD_SCHEMA_VERSION = 3;
 
 /** Bounded resource limits — reject oversized or sprawling payloads. */
 export const DASHBOARD_LIMITS = {
@@ -63,6 +63,25 @@ const dashboardPreferencesBase = z.object({
   /** Optional selected network interface for the network widget. */
   networkInterface: z.string().trim().max(32).default(""),
 });
+
+/**
+ * Permission model (v0.7.3): simple modes, no RBAC.
+ * - private: owner (+viewers) only
+ * - shared-readonly: every authenticated user can view (default — matches
+ *   pre-v0.7.3 behavior; trusted-LAN mode can edit everything as before)
+ * - shared-editable: every authenticated user can view; editors list
+ *   governs editing (empty list = all authenticated users may edit)
+ */
+const dashboardAccessBase = z.object({
+  mode: z.enum(["private", "shared-readonly", "shared-editable"]).default("shared-readonly"),
+  editors: z.array(z.string().trim().min(1).max(64)).max(20).default([]),
+  viewers: z.array(z.string().trim().min(1).max(64)).max(50).default([]),
+});
+
+/** Strict access schema for stored documents. */
+export const dashboardAccessSchema = dashboardAccessBase.strict();
+/** Input variant: unknown fields stripped. */
+const dashboardAccessInputSchema = dashboardAccessBase.strip();
 
 /** Widget list: registry ids only, predefined sizes only (v2 layout). */
 const widgetEntryBase = z.object({
@@ -101,6 +120,8 @@ export const dashboardSchema = z
     /** Widget layout: registry ids with predefined sizes (v2). */
     widgets: dashboardWidgetsSchema,
     preferences: dashboardPreferencesSchema,
+    /** Permission model (v3). */
+    access: dashboardAccessSchema,
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
   })
@@ -115,6 +136,7 @@ const importEntrySchema = z
     name: z.string().trim().min(1).max(DASHBOARD_LIMITS.maxNameLength),
     widgets: dashboardWidgetsInputSchema.optional(),
     preferences: dashboardPreferencesInputSchema.optional(),
+    access: dashboardAccessInputSchema.optional(),
   })
   .strict();
 
@@ -174,12 +196,32 @@ export function ownerFor(identity: AuthIdentity): string {
   return "lan";
 }
 
-/** True when the requester may mutate the dashboard. */
+/**
+ * True when the requester may mutate the dashboard (v0.7.3 access model):
+ * - trusted-LAN mode: shared resources of the trusted network (unchanged)
+ * - proxy mode: the owner; OR shared-editable dashboards where the editors
+ *   list is empty (all authenticated users) or contains the identity
+ */
 export function canMutate(dashboard: SharedDashboard, identity: AuthIdentity): boolean {
-  if (identity.mode === "proxy") {
-    return Boolean(identity.user) && dashboard.owner === identity.user;
+  if (identity.mode !== "proxy") return true;
+  const user = identity.user;
+  if (!user) return false;
+  if (dashboard.owner === user) return true;
+  if (dashboard.access?.mode === "shared-editable") {
+    return dashboard.access.editors.length === 0 || dashboard.access.editors.includes(user);
   }
-  // Trusted-LAN mode: shared resources of the trusted network.
+  return false;
+}
+
+/** True when the requester may see the dashboard at all. */
+export function canView(dashboard: SharedDashboard, identity: AuthIdentity): boolean {
+  if (identity.mode !== "proxy") return true;
+  const user = identity.user;
+  if (!user) return true;
+  if (dashboard.owner === user) return true;
+  if (dashboard.access?.mode === "private") {
+    return dashboard.access.viewers.includes(user);
+  }
   return true;
 }
 
@@ -222,7 +264,7 @@ function parseDashboardJson(raw: string): SharedDashboard | null {
  * `invalid` (names only) so Diagnostics can flag them without exposing
  * content.
  */
-export async function listDashboards(): Promise<{
+export async function listDashboards(identity?: AuthIdentity): Promise<{
   dashboards: SharedDashboard[];
   invalid: string[];
 }> {
@@ -239,8 +281,13 @@ export async function listDashboards(): Promise<{
     if (!name.endsWith(".json")) continue;
     const id = name.slice(0, -".json".length);
     const dashboard = await readOne(id).catch(() => null);
-    if (dashboard) dashboards.push(dashboard);
-    else invalid.push(name);
+    if (!dashboard) {
+      invalid.push(name);
+      continue;
+    }
+    // Identity-aware visibility (no-op in trusted-LAN mode).
+    if (identity && !canView(dashboard, identity)) continue;
+    dashboards.push(dashboard);
   }
   dashboards.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return { dashboards, invalid };
@@ -254,6 +301,7 @@ interface DashboardWriteInput {
   name: string;
   widgets?: unknown;
   preferences?: unknown;
+  access?: unknown;
 }
 
 /** Validates user input strictly, stripping unknown fields. */
@@ -273,7 +321,14 @@ function validateInput(input: DashboardWriteInput) {
       400,
     );
   }
-  return { name, widgets: widgets.data, preferences: preferences.data };
+  const access = dashboardAccessInputSchema.safeParse(input.access ?? {});
+  if (!access.success) {
+    throw new DashboardError(
+      `Invalid access: ${access.error.issues.map((i) => i.message).join("; ")}`,
+      400,
+    );
+  }
+  return { name, widgets: widgets.data, preferences: preferences.data, access: access.data };
 }
 
 async function writeAtomic(dashboard: SharedDashboard): Promise<void> {
@@ -293,7 +348,7 @@ export async function createDashboard(
   input: DashboardWriteInput,
   identity: AuthIdentity,
 ): Promise<SharedDashboard> {
-  const { name, widgets, preferences } = validateInput(input);
+  const { name, widgets, preferences, access } = validateInput(input);
 
   const { dashboards } = await listDashboards();
   if (dashboards.length >= DASHBOARD_LIMITS.maxDashboards) {
@@ -311,6 +366,7 @@ export async function createDashboard(
     owner: ownerFor(identity),
     widgets,
     preferences,
+    access,
     createdAt: now,
     updatedAt: now,
   };
@@ -329,16 +385,55 @@ export async function updateDashboard(
   if (!canMutate(existing, identity)) {
     throw new DashboardError("Only the owner may modify this dashboard.", 403);
   }
-  const { name, widgets, preferences } = validateInput(input);
+  const { name, widgets, preferences, access } = validateInput(input);
   const updated: SharedDashboard = {
     ...existing,
     name,
     widgets,
     preferences,
+    access,
     updatedAt: new Date().toISOString(),
   };
   await writeAtomic(updated);
   return updated;
+}
+
+/**
+ * Forks a viewable dashboard into a new one owned by the requester.
+ * Copies widgets + preferences; fresh id/name/owner; default access.
+ * The original is never mutated.
+ */
+export async function forkDashboard(
+  id: string,
+  identity: AuthIdentity,
+): Promise<SharedDashboard> {
+  const source = await getDashboard(id);
+  if (!source) throw new DashboardError("Dashboard not found.", 404);
+  if (!canView(source, identity)) {
+    // Same response as a missing dashboard — do not leak existence.
+    throw new DashboardError("Dashboard not found.", 404);
+  }
+  const { dashboards } = await listDashboards();
+  if (dashboards.length >= DASHBOARD_LIMITS.maxDashboards) {
+    throw new DashboardError(
+      `Dashboard limit reached (${DASHBOARD_LIMITS.maxDashboards}).`,
+      409,
+    );
+  }
+  const now = new Date().toISOString();
+  const fork: SharedDashboard = {
+    schemaVersion: DASHBOARD_SCHEMA_VERSION,
+    id: newDashboardId(),
+    name: `${source.name} (fork)`.slice(0, DASHBOARD_LIMITS.maxNameLength),
+    owner: ownerFor(identity),
+    widgets: source.widgets,
+    preferences: source.preferences,
+    access: dashboardAccessInputSchema.parse({}),
+    createdAt: now,
+    updatedAt: now,
+  };
+  await writeAtomic(fork);
+  return fork;
 }
 
 export async function deleteDashboard(id: string, identity: AuthIdentity): Promise<void> {
@@ -411,6 +506,7 @@ export async function importDashboards(
         owner: ownerFor(identity),
         widgets: entryParsed.data.widgets ?? DEFAULT_WIDGETS,
         preferences: entryParsed.data.preferences ?? dashboardPreferencesInputSchema.parse({}),
+        access: entryParsed.data.access ?? dashboardAccessInputSchema.parse({}),
         createdAt: now,
         updatedAt: now,
       };
@@ -481,6 +577,8 @@ export async function migrateStoredDashboard(id: string): Promise<SharedDashboar
       owner: typeof doc.owner === "string" && doc.owner.trim() ? doc.owner : "lan",
       widgets,
       preferences: doc.preferences ?? {},
+      // v2 → v3: dashboards were shared with everyone; preserve that.
+      access: doc.access ?? { mode: "shared-readonly", editors: [], viewers: [] },
     });
     if (!migrated.success) return null;
     const stamp = new Date().toISOString();
