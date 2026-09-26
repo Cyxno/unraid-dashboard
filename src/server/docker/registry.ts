@@ -92,8 +92,12 @@ export async function checkRemoteDigest(image: string, ghcrToken?: string): Prom
   let authHeader: string | undefined =
     registry === "ghcr.io" && ghcrToken ? `Bearer ${ghcrToken}` : undefined;
 
+  // docker.io is the web frontend; the registry API lives on
+  // registry-1.docker.io. All other hosts serve /v2 directly.
+  const apiHost = registry === "docker.io" ? "registry-1.docker.io" : registry;
+
   try {
-    let check = await checkV2(registry, repo, tag, authHeader);
+    let check = await checkV2(apiHost, repo, tag, authHeader);
 
     // 401 challenge → try an anonymous grant against the advertised realm
     // (works for public repos on Docker Hub, lscr.io, ghcr.io, quay.io…).
@@ -103,7 +107,7 @@ export async function checkRemoteDigest(image: string, ghcrToken?: string): Prom
         const granted = await anonymousToken(challenge.realm, challenge.service, repo);
         if (granted) {
           authHeader = granted;
-          check = await checkV2(registry, repo, tag, authHeader);
+          check = await checkV2(apiHost, repo, tag, authHeader);
         }
       }
     }

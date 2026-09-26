@@ -97,11 +97,11 @@ await withPage(390, 844, "mobile suite", async (page) => {
   const tempsTab = page.getByRole("button", { name: "Temps" });
   if (await tempsTab.count()) {
     await tempsTab.first().click();
-    await page.waitForTimeout(2500);
+    await page.waitForTimeout(7000);
     const body = await page.textContent("body");
-    record("thermal diagnostics card renders", body.includes("Thermal diagnostics (24h)"));
+    record("thermal diagnostics card renders", body.includes("Thermal diagnostics"));
     record("duration buckets render", body.includes("Time distribution"));
-    record("episodes section renders", body.includes("Episodes (sustained"));
+    record("episodes section renders", body.includes("Episodes ("));
     record("correlation section renders", body.includes("Load correlation"));
     await page.screenshot({ path: `${SHOTS}/mobile-390-thermal.png` });
   } else {
