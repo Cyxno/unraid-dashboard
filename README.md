@@ -1,6 +1,7 @@
 # Unraid Dashboard
 
-A self-hosted, dark-first server console for Unraid. The Next.js server acts
+A self-hosted, dark-first server console for Unraid — an installable PWA with
+server-shared dashboard layouts. The Next.js server acts
 as a backend-for-frontend (BFF): it polls the Unraid GraphQL API and a
 Prometheus server server-side, and the browser never sees your API key or a
 raw metric payload.
@@ -36,8 +37,11 @@ raw metric payload.
 - **Logs** — read-only viewer for the files the Unraid API reports.
 - **Settings** — local preferences (refresh preset, temperature unit, density,
   default history window 5m–7d, per-core visibility, Docker metric columns,
-  virtual interfaces), a **Diagnostics** panel (Unraid + Prometheus reachability,
-  latencies, last-success times) and **About** (version, git SHA, build time).
+  virtual interfaces), **shared dashboards** (server-persisted layouts with
+  import/export), a **Diagnostics** panel (Unraid + Prometheus reachability,
+  latencies, last-success times, PWA/service-worker state, self-monitoring
+  and persistence health) and **About** (version, git SHA, build time,
+  registry update status).
 
 ## Lifecycle actions (v0.4)
 
@@ -152,7 +156,7 @@ dashboard keeps REST polling (the overview poll stretches 3× only while SSE
 is healthy). Connection loss/recovery and observed container state changes
 surface as restrained toasts — never per-metric spam.
 
-## Thermal analysis (v0.5)
+## Thermal analysis & diagnostics (v0.5 → v0.6)
 
 System → Temps shows a 24h thermal analysis computed from Prometheus:
 current, 5m average, 1h/24h max, 24h median and average, and approximate
@@ -169,6 +173,150 @@ Unread notifications can be archived from the dashboard (reversible in
 Unraid via "unread"). The action uses the same narrowly-scoped action key,
 validates the target against the live unread list, requires confirmation,
 and writes an audit entry. Delete is not implemented.
+
+
+## Installable PWA (v0.6)
+
+The dashboard is a fully installable PWA — no external CDNs, every asset
+bundled:
+
+- **Manifest**: `/manifest.webmanifest` (name "Unraid Dashboard", standalone
+  display, dark theme `#1c1c22`, portrait/landscape, any + maskable icons
+  generated from `public/icon-source.svg` via `scripts/generate-icons.mjs`).
+- **iOS**: Share → *Add to Home Screen* gives a full-screen app with
+  black-translucent status bar. `viewport-fit=cover` + `env(safe-area-inset-*)`
+  keep the header, sidebar and bottom nav clear of the notch/home indicator;
+  heights use `svh`/`dvh` (never raw `100vh`), so the classic mobile
+  URL-bar bug does not apply. Landscape insets are handled too.
+- **Install UX**: quiet, never nagging — a hint lives in Settings → About
+  ("Install as app") with the native prompt where the browser offers one and
+  iOS-specific guidance where detectable. No first-visit modal.
+- Diagnostics shows service-worker state, standalone/browser mode and
+  network state.
+
+### Service worker strategy
+
+`/sw.js` is deliberately conservative — app-shell resilience, **never**
+fake offline data:
+
+- Precached: the navigation shell (`/`), manifest and bundled icons.
+- Runtime-cached: immutable `/_next/static/*` chunks and static assets
+  (cache-first, bounded to 120 entries).
+- Navigations: network-first; offline → the cached shell is served and the
+  app renders a blocking **offline banner** labelling all data as stale.
+- `/api/*` is **never cached** (not even failures); live data, SSE, actions
+  and audit state always hit the network. Non-GET requests are never
+  intercepted, stored or replayed. Cross-origin requests are ignored.
+- **Updates**: a new worker installs but waits; the app shows an "Update
+  ready — refresh" banner and activates it only on user action (never
+  mid-action, never auto-reload).
+
+### Offline / disconnected UX
+
+- Global banner while offline: "Offline — showing last known state.
+  Server data unavailable; lifecycle actions disabled."
+- Polling pauses (no pointless retries) and fires one refresh the moment
+  connectivity returns; SSE stops retrying offline and reconnects on the
+  browser `online` event; lifecycle actions are refused client-side —
+  nothing is queued or replayed.
+
+## Shared dashboards (v0.6)
+
+Saved views can now live on the server and be shared across devices:
+
+- **Storage**: one JSON file per dashboard under `DASHBOARDS_DIR` (default
+  `/app/data/dashboards`) — the same narrow app-data volume as the audit
+  log. No database. Atomic writes (0600), schema-versioned, backup before
+  migration, future versions are never touched.
+- **Schema** (strictly validated server-side, unknown fields stripped on
+  input): `schemaVersion, id (opaque 12-char), name, owner, layout
+  (widget order + visibility), preferences (history window, density, temp
+  unit, refresh, docker metrics, per-core, docker filter), createdAt,
+  updatedAt`. Limits: 50 dashboards, 64 KiB per dashboard, allowlisted
+  widget ids only, bounded strings. No secrets can be stored — the schema
+  cannot represent them.
+- **Local vs shared**: local views stay in localStorage; shared dashboards
+  are labelled "Shared — server" in the Views menu. **Nothing is uploaded
+  automatically** — a local view becomes shared only via its explicit
+  upload action. Save as local / save as shared / duplicate / rename /
+  delete are all available.
+- **Shareable links**: `/dashboard/<id>` renders a shared layout read-only
+  (widget order/visibility, default window, docker filter applied). Ids are
+  opaque and path-validated; no state is encoded in URLs.
+- **Import/export**: Settings → Shared dashboards exports all shared
+  layouts as sanitized JSON and imports validated files (size-bounded,
+  unknown fields stripped, per-entry rejection with reasons).
+- **Ownership**: with `AUTH_MODE=proxy` the authenticated proxy identity
+  owns the dashboards it creates and only the owner may modify them. With
+  auth disabled (trusted-LAN mode, the current deployment), shared
+  dashboards are **trusted-LAN shared resources**: everyone on the trusted
+  network can manage them and no accounts are invented. Both mutations are
+  audit-logged.
+
+## Update management (v0.6)
+
+Read-only update status first — no update action ships until a safe
+mechanism exists (see SECURITY.md):
+
+- Settings → About shows: running version/SHA/build time, latest GHCR
+  semver tag, the registry manifest digest, the remote image's git
+  revision, same-version-newer-build detection, and the registry
+  connectivity/auth state (hourly cache; `GHCR_TOKEN` read:packages
+  server-side, never exposed).
+- Updates are applied host-side with `scripts/update-dashboard.sh`: it
+  recreates the container with identical env/keys/network/volumes,
+  health-checks `/api/overview`, and **rolls back automatically** on any
+  failure. The dashboard container never sees the Docker socket and cannot
+  update itself.
+- Host pulls require the one-time `scripts/login-ghcr.sh` login (PAT with
+  minimum `read:packages`, stored by the Docker daemon, never in the repo
+  or the UI). Until then, `docker pull` of new releases fails with
+  *unauthorized* and Settings says exactly that.
+- An in-app update helper (webhook → safe script, or an isolated
+  purpose-built helper) is **designed but not shipped**; the missing
+  preconditions (persistent host GHCR credential, security review) are
+  stated in Settings instead of hidden.
+
+## Reverse proxy deployment (v0.6, live on this host)
+
+The documented proxy-auth pattern is now a concrete deployment:
+
+- **Host**: `https://dashboard.familievalk.com` via Nginx Proxy Manager's
+  supported custom include (`data/nginx/custom/http.conf`, no database
+  edits), wildcard cert `npm-2`.
+- **Authelia forward-auth** (v4.39): `auth_request` → `/api/verify` with
+  `X-Original-URL`; unauthenticated browsers are 302-redirected to the
+  Authelia portal (two_factor policy for this domain); the verdict identity
+  is forwarded as `X-Forwarded-User` (+ groups/name/email), always
+  **overwriting** client-supplied values. `AUTH_MODE=proxy` flips the app
+  into enforcing mode (currently disabled — trusted-LAN mode is the
+  production setting; see SECURITY.md for the trust model).
+- **SSE hardening**: `proxy_buffering off`, `proxy_cache off`,
+  `proxy_read_timeout 86400s`, HTTP/1.1, correct `X-Forwarded-Proto/For/Host`,
+  host preserved, websocket upgrade headers where needed.
+- **Access list**: LAN (192.168.1.0/24) + specific Tailscale peers, deny
+  all — Cloudflare-proxied wildcard traffic (CF edge IPs) is deliberately
+  refused; remote clients reach the origin via Tailscale.
+- **Port 8090 isolation**: iptables restrict direct access to loopback, the
+  LAN, Docker bridges (the NPM hop), Tailscale (100.64/10) and Unraid
+  WireGuard (10.253/16); everything else on 8090 is dropped. Persisted via
+  `/boot/config/go` (commented, one-command disable). SSH stays untouched
+  as the recovery path; direct 8090 from the LAN remains the trusted-LAN
+  access path and recovery fallback.
+
+## NOC v3, kiosk & tablet (v0.6)
+
+- **NOC wallboard** (`/noc`): fullscreen, wake lock with re-acquisition on
+  visibility change, live connection state + reconnect indicator + last
+  data-update timestamp, and **auto-cycle** across Overview / Docker /
+  Thermal / Storage / Network panels (15s / 30s / 60s / off, persisted).
+  Cycling pauses on interaction and resumes after 30s idle; an explicit
+  pause button holds indefinitely. No lifecycle controls by design.
+- **Dashboards in NOC**: a shared dashboard can be selected; its density
+  and temperature unit apply and its name/owner/window are shown.
+- **Kiosk mode** (`/noc?mode=kiosk`): larger tiles and text, a 4-tile main
+  grid and a big-touch page rail (Overview / Containers / System / Storage)
+  for tablets — landscape-responsive, still completely read-only.
 
 ## Architecture
 
@@ -245,6 +393,11 @@ node:test + tsx for tests.
 | `UNRAID_TIMEOUT_MS` | no | `10000` | Timeout for Unraid API requests |
 | `UNRAID_GRAPHQL_PATH` | no | `/graphql` | Path appended to `UNRAID_URL` |
 | `PORT` | no | `3000` | HTTP port the server binds |
+| `AUDIT_DIR` | no | `/app/data` | Directory for the append-only audit log |
+| `DASHBOARDS_DIR` | no | `/app/data/dashboards` | Directory for shared dashboard JSON files |
+| `GHCR_TOKEN` | no | — | Server-side read:packages token for registry update checks |
+| `AUTH_MODE` / `AUTH_HEADER` / `AUTH_ALLOWED_USERS` | no | disabled | Proxy-auth enforcement (see Security model) |
+| `PUBLIC_BASE_URL` | no | — | External origin behind a reverse proxy (CSRF allow-list) |
 | `TZ` | no | — | Container timezone |
 | `APP_VERSION` / `GIT_SHA` / `BUILD_TIME` / `IMAGE_REF` | no | — | Build provenance, injected by the Dockerfile / GHCR workflow; exposed via `/api/version` |
 
@@ -447,9 +600,10 @@ notifications, labels, container names) is rendered as text — no
 
 ## Roadmap
 
-- Container lifecycle actions (start/stop/restart) behind explicit
-  confirmation, requiring a broader-permission key
+- In-app update flow behind a narrowly-scoped host-side helper (design in
+  SECURITY.md) once the host holds a persistent read:packages credential
+- AUTH_MODE=proxy production flip now that the Authelia forward-auth path
+  is deployed (header spoofing would also need 8090 LAN isolation tightening)
 - Per-container network charts if cAdvisor gets name labels (or via
   eBPF exporters)
-- Auth (SSO/reverse-proxy header trust)
-- PWA manifest + offline shell, NOC mode, saved compare sets
+- NOC: per-panel shared-layout composition (widget-level wallboards)
