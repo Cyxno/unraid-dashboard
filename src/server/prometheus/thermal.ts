@@ -217,6 +217,230 @@ export function thermalErrorMeta(error: unknown): MetricMeta {
   );
 }
 
+/* v0.6: thermal diagnostics ---------------------------------------------------
+ * 24h package-temperature diagnostics built on Prometheus range data:
+ * duration buckets, sustained episodes (hysteresis, no spikes), load and
+ * power correlation (associative only), and an hourly timeline. All math
+ * lives in thermal-diagnostics.ts (pure, unit-tested); this module only
+ * fetches series and assembles the payload. Cached 60s.
+ */
+
+import {
+  alignSeries,
+  buildBuckets,
+  buildHourlyTimeline,
+  describeCorrelation,
+  detectThermalEpisodes,
+  pearsonCorrelation,
+  type TempSeriesPoint,
+  type ThermalEpisode,
+  type TempBuckets,
+  type ThermalTimelineHour,
+} from "./thermal-diagnostics";
+import {
+  CPU_TEMP_CRITICAL_C,
+  CPU_TEMP_WARNING_C,
+} from "@/server/thresholds";
+
+/** True CPU package power zone (verified on this host via RAPL). */
+const PACKAGE_POWER_QUERY = 'homelab_power_watts{zone="package-0"}';
+const SYSTEM_POWER_QUERY = 'homelab_power_watts{zone="psys"}';
+const HOST_CPU_RANGE_QUERY =
+  '100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[2m])))';
+
+export interface ThermalDiagnostics {
+  meta: MetricMeta;
+  /** °C thresholds used for every judgment here (centralized). */
+  thresholds: { warningC: number; criticalC: number };
+  sensor: { name: string; chip: string } | null;
+  currentC: number | null;
+  averages: {
+    avg5mC: number | null;
+    avg15mC: number | null;
+    avg1hC: number | null;
+    avg24hC: number | null;
+  };
+  maxima: { max1hC: number | null; max6hC: number | null; max24hC: number | null };
+  median24hC: number | null;
+  /** Approximate minutes at/above thresholds over 24h. */
+  minutesAboveWarning: number | null;
+  minutesAboveCritical: number | null;
+  /** 24h temperature distribution across fixed duration buckets. */
+  buckets: TempBuckets | null;
+  /** Sustained episodes (never single-sample spikes). */
+  episodes: ThermalEpisode[];
+  /** Associative Pearson correlations (no causal claim). */
+  correlation: {
+    tempVsCpu: number | null;
+    tempVsCpuLabel: string;
+    tempVsPower: number | null;
+    tempVsPowerLabel: string;
+    /** Downsampled aligned series for the scatter/overlay chart. */
+    points: Array<{ t: number; tempC: number; cpuPercent: number; powerWatts: number | null }>;
+    powerZone: "package-0" | "psys" | null;
+  };
+  timeline: ThermalTimelineHour[];
+  /** Peak package/system power over 24h (W). */
+  peakPowerWatts24h: number | null;
+}
+
+async function instantValue(client: PromClient, query: string): Promise<number | null> {
+  try {
+    const samples = await client.instant(query);
+    return samples.find((sample) => sample.v !== null)?.v ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function rangeSeries(
+  client: PromClient,
+  query: string,
+  windowSeconds: number,
+  stepSeconds: number,
+): Promise<TempSeriesPoint[]> {
+  const end = Math.floor(Date.now() / 1000);
+  const start = end - windowSeconds;
+  try {
+    const matrix = await client.range(query, start, end, stepSeconds);
+    // Single-series selectors: flatten the first result.
+    const entry = matrix[0];
+    if (!entry) return [];
+    return entry.points.map((point) => ({ t: point.t, v: point.v }));
+  } catch {
+    return [];
+  }
+}
+
+export async function getThermalDiagnostics(
+  client: PromClient,
+): Promise<ThermalDiagnostics> {
+  return withCache("thermal:diagnostics", 60_000, async () => {
+    const warningC = CPU_TEMP_WARNING_C;
+    const criticalC = CPU_TEMP_CRITICAL_C;
+    const windowSeconds = 24 * 3600;
+
+    const label = PACKAGE_SENSOR_LABEL;
+    const base = (await instantValue(client, label)) !== null ? label : PACKAGE_FALLBACK_LABEL;
+
+    // Instant stats (Prometheus aggregates; cached per-query upstream).
+    const [current, avg5m, avg15m, avg1h, max1h, max6h, max24h, avg24h, median24h, aboveWarn, aboveCrit] =
+      await Promise.all([
+        instantValue(client, `${base}`),
+        instantValue(client, `avg_over_time(${base}[5m])`),
+        instantValue(client, `avg_over_time(${base}[15m])`),
+        instantValue(client, `avg_over_time(${base}[1h])`),
+        instantValue(client, `max_over_time(${base}[1h])`),
+        instantValue(client, `max_over_time(${base}[6h])`),
+        instantValue(client, `max_over_time(${base}[24h])`),
+        instantValue(client, `avg_over_time(${base}[24h])`),
+        instantValue(client, `quantile_over_time(0.5, ${base}[24h])`),
+        instantValue(client, `sum_over_time((${base} > bool ${warningC})[24h:1m])`),
+        instantValue(client, `sum_over_time((${base} > bool ${criticalC})[24h:1m])`),
+      ]);
+
+    // 24h range series at 60s step for buckets/episodes/correlation.
+    const [tempRange, cpuRange, powerRange] = await Promise.all([
+      rangeSeries(client, base, windowSeconds, 60),
+      rangeSeries(client, HOST_CPU_RANGE_QUERY, windowSeconds, 60),
+      rangeSeries(client, PACKAGE_POWER_QUERY, windowSeconds, 60).then(async (series) => {
+        if (series.length > 0) return { series, zone: "package-0" as const };
+        const psys = await rangeSeries(client, SYSTEM_POWER_QUERY, windowSeconds, 60);
+        return { series: psys, zone: psys.length > 0 ? ("psys" as const) : null };
+      }),
+    ]);
+
+    const buckets = buildBuckets(tempRange, windowSeconds);
+
+    const episodes = detectThermalEpisodes(tempRange);
+
+    // Correlate aligned samples.
+    const tempCpuPairs = alignSeries(tempRange, cpuRange);
+    const tempPowerPairs = alignSeries(tempRange, powerRange.series);
+    const tempVsCpu = pearsonCorrelation(tempCpuPairs.map((pair) => ({ av: pair.av, bv: pair.bv })));
+    const tempVsPower = pearsonCorrelation(tempPowerPairs.map((pair) => ({ av: pair.av, bv: pair.bv })));
+
+    // Downsample aligned chart points (~5-minute spacing → ≤288 points).
+    const cpuByTime = new Map(cpuRange.filter((p) => p.v !== null).map((p) => [p.t, p.v as number]));
+    const powerByTime = new Map(powerRange.series.filter((p) => p.v !== null).map((p) => [p.t, p.v as number]));
+    const chartPoints = tempRange
+      .filter((point) => point.v !== null)
+      .filter((_, index) => index % 5 === 0)
+      .map((point) => ({
+        t: point.t * 1000,
+        tempC: point.v as number,
+        cpuPercent: cpuByTime.get(point.t) ?? null,
+        powerWatts: powerByTime.get(point.t) ?? null,
+      }))
+      .filter((point): point is { t: number; tempC: number; cpuPercent: number; powerWatts: number | null } =>
+        point.cpuPercent !== null,
+      );
+
+    // Episode CPU/power stats via aligned series within bounds.
+    const cpuPoints = tempCpuPairs;
+    const powerPoints = tempPowerPairs;
+    for (const episode of episodes) {
+      const endT = episode.endMs ?? Date.now();
+      const inEpisodeCpu = cpuPoints.filter(
+        (pair) => pair.t * 1000 >= episode.startMs && pair.t * 1000 <= endT,
+      );
+      const inEpisodePower = powerPoints.filter(
+        (pair) => pair.t * 1000 >= episode.startMs && pair.t * 1000 <= endT,
+      );
+      if (inEpisodeCpu.length > 0) {
+        episode.avgCpuPercent =
+          Math.round((inEpisodeCpu.reduce((sum, pair) => sum + pair.bv, 0) / inEpisodeCpu.length) * 10) / 10;
+        episode.peakCpuPercent = Math.round(Math.max(...inEpisodeCpu.map((pair) => pair.bv)) * 10) / 10;
+      }
+      if (inEpisodePower.length > 0) {
+        episode.avgPowerWatts =
+          Math.round((inEpisodePower.reduce((sum, pair) => sum + pair.bv, 0) / inEpisodePower.length) * 10) / 10;
+        episode.peakPowerWatts = Math.round(Math.max(...inEpisodePower.map((pair) => pair.bv)) * 10) / 10;
+      }
+    }
+
+    const peakPowerWatts24h =
+      powerRange.series.length > 0
+        ? Math.round(Math.max(...powerRange.series.map((point) => point.v ?? -Infinity)) * 10) / 10
+        : null;
+
+    return {
+      meta:
+        buckets.sampleCount === 0 && current === null
+          ? meta("unavailable", "No 24h temperature data available.")
+          : meta("live"),
+      thresholds: { warningC, criticalC },
+      sensor:
+        base === PACKAGE_SENSOR_LABEL
+          ? { name: "Package id 0", chip: "coretemp" }
+          : { name: "x86_pkg_temp", chip: "thermal_zone" },
+      currentC: current,
+      averages: { avg5mC: avg5m, avg15mC: avg15m, avg1hC: avg1h, avg24hC: avg24h },
+      maxima: { max1hC: max1h, max6hC: max6h, max24hC: max24h },
+      median24hC: median24h,
+      minutesAboveWarning: aboveWarn,
+      minutesAboveCritical: aboveCrit,
+      buckets,
+      episodes,
+      correlation: {
+        tempVsCpu,
+        tempVsCpuLabel: describeCorrelation(tempVsCpu),
+        tempVsPower,
+        tempVsPowerLabel: describeCorrelation(tempVsPower),
+        points: chartPoints,
+        powerZone: powerRange.zone,
+      },
+      timeline: buildHourlyTimeline(tempRange),
+      peakPowerWatts24h,
+    };
+  });
+}
+
+/** Normalizes a diagnostics failure into an unavailable-meta payload. */
+export function thermalDiagnosticsErrorMeta(error: unknown): MetricMeta {
+  return thermalErrorMeta(error);
+}
+
 /* v0.5: 24h thermal analysis ------------------------------------------------
  * Definitions (documented in README):
  * - max/avg/median over the window: Prometheus aggregate functions.
@@ -246,6 +470,7 @@ export interface ThermalAnalysis {
 }
 
 const PACKAGE_SENSOR_LABEL = 'homelab_temperature_celsius{chip="coretemp",sensor="Package id 0"}';
+export { PACKAGE_SENSOR_LABEL };
 const PACKAGE_FALLBACK_LABEL = 'node_thermal_zone_temp{type="x86_pkg_temp"}';
 
 export async function getThermalAnalysis(

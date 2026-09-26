@@ -27,6 +27,8 @@ export interface HealthInputs {
   temperatureCriticalCount: number | null;
   /** CPU package temperature in °C (Prometheus, when available). */
   cpuPackageC: number | null;
+  /** 5-minute average package temp — sustained heat signal (v0.6). */
+  cpuPackage5mAvgC: number | null;
   /** 5-minute average host CPU% (Prometheus, when available). */
   sustainedCpuPercent: number | null;
   /** Thread-count-relative load classification (null = unknown). */
@@ -125,25 +127,38 @@ export function deriveHealth(inputs: HealthInputs): HealthSummary {
     }
   }
 
-  // Temperature (Unraid critical counts, then Prometheus package temps)
+  // Temperature (Unraid critical counts, then Prometheus package temps).
+  // Hysteresis (v0.6): a single hot sample never escalates to critical on
+  // its own — critical requires the SUSTAINED (5m) average; an extreme
+  // instantaneous reading still triggers an immediate attention-level
+  // warning while the average confirms.
   if (inputs.temperatureCriticalCount !== null && inputs.temperatureCriticalCount > 0) {
     escalate(
       "critical",
       `${inputs.temperatureCriticalCount} temperature sensor(s) past critical threshold`,
     );
   }
-  if (inputs.cpuPackageC !== null) {
-    if (inputs.cpuPackageC >= CPU_TEMP_CRITICAL_C) {
-      escalate(
-        "critical",
-        `CPU package at ${Math.round(inputs.cpuPackageC)}°C (critical threshold ${CPU_TEMP_CRITICAL_C}°C)`,
-      );
-    } else if (inputs.cpuPackageC >= CPU_TEMP_WARNING_C) {
-      escalate(
-        "attention",
-        `CPU package at ${Math.round(inputs.cpuPackageC)}°C`,
-      );
-    }
+  const package5m = inputs.cpuPackage5mAvgC;
+  if (package5m !== null && package5m >= CPU_TEMP_CRITICAL_C) {
+    escalate(
+      "critical",
+      `CPU package averaging ${Math.round(package5m)}°C over 5 minutes (critical threshold ${CPU_TEMP_CRITICAL_C}°C)`,
+    );
+  } else if (inputs.cpuPackageC !== null && inputs.cpuPackageC >= CPU_TEMP_CRITICAL_C) {
+    escalate(
+      "attention",
+      `CPU package at ${Math.round(inputs.cpuPackageC)}°C (critical threshold ${CPU_TEMP_CRITICAL_C}°C) — sustained average still ${package5m !== null ? `${Math.round(package5m)}°C` : "below critical"}`,
+    );
+  }
+  if (package5m !== null && package5m >= CPU_TEMP_WARNING_C && package5m < CPU_TEMP_CRITICAL_C) {
+    escalate("attention", `CPU package averaging ${Math.round(package5m)}°C over 5 minutes`);
+  } else if (
+    package5m === null &&
+    inputs.cpuPackageC !== null &&
+    inputs.cpuPackageC >= CPU_TEMP_WARNING_C &&
+    inputs.cpuPackageC < CPU_TEMP_CRITICAL_C
+  ) {
+    escalate("attention", `CPU package at ${Math.round(inputs.cpuPackageC)}°C`);
   }
 
   // Sustained CPU (5m average, not instantaneous spikes)

@@ -27,6 +27,10 @@ import {
   ThermalAnalysisCard,
   type ThermalAnalysisPayload,
 } from "@/components/dashboard/thermal-analysis-card";
+import {
+  ThermalDiagnosticsCard,
+  type ThermalDiagnosticsPayload,
+} from "@/components/dashboard/thermal-diagnostics-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -204,6 +208,10 @@ export default function SystemPage() {
   const thermalAnalysis = usePoll<ThermalAnalysisPayload>(
     "/api/thermal/analysis",
     60_000,
+  );
+  const thermalDiagnostics = usePoll<ThermalDiagnosticsPayload>(
+    "/api/thermal/diagnostics",
+    120_000,
   );
   const history = usePoll<SystemHistoryPayload>(
     `/api/system/history?metric=${tab}&window=${prefs.historyWindow}`,
@@ -405,6 +413,7 @@ export default function SystemPage() {
                   unavailableReason="History unavailable — Prometheus is unreachable. Unraid state pages remain live."
                 />
                 {tab === "temps" && <ThermalAnalysisCard payload={thermalAnalysis.data} />}
+                {tab === "temps" && <ThermalDiagnosticsCard payload={thermalDiagnostics.data} />}
                 {tab === "temps" && (
                   <ThermalHistoryList payload={history.data} />
                 )}

@@ -539,6 +539,8 @@ export interface OverviewExtras {
   /** Package temp + 1h peak, when Prometheus is available. */
   thermal: {
     packageC: number | null;
+    /** 5-minute average package temp — sustained heat, not a spike. */
+    package5mAvgC: number | null;
     peak1hC: number | null;
     hottestC: number | null;
     hottestName: string | null;

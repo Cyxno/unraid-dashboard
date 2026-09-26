@@ -47,6 +47,7 @@ function healthInputs(overrides: Partial<HealthInputs> = {}): HealthInputs {
     memoryPercent: 40,
     temperatureCriticalCount: 0,
     cpuPackageC: null,
+    cpuPackage5mAvgC: null,
     sustainedCpuPercent: null,
     loadLevel: null,
     prometheusStatus: null,
@@ -146,7 +147,14 @@ describe("deriveHealth", () => {
     assert.equal(attention.level, "attention");
     assert.ok(attention.reasons.some((reason) => reason.includes("CPU package")));
 
-    const critical = deriveHealth(healthInputs({ cpuPackageC: 92 }));
+    // v0.6 hysteresis: a single critical SAMPLE escalates to attention
+    // only; critical requires the sustained (5m) average.
+    const singleSpike = deriveHealth(healthInputs({ cpuPackageC: 92 }));
+    assert.equal(singleSpike.level, "attention");
+
+    const critical = deriveHealth(
+      healthInputs({ cpuPackageC: 92, cpuPackage5mAvgC: 90.5 }),
+    );
     assert.equal(critical.level, "critical");
 
     // Below the documented threshold: healthy.

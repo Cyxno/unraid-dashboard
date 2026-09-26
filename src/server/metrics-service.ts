@@ -29,6 +29,7 @@ import {
   getPackagePeak,
   getThermalHistory,
   getThermalSnapshot,
+  PACKAGE_SENSOR_LABEL,
 } from "./prometheus/thermal";
 import {
   getSystemHistory,
@@ -475,7 +476,7 @@ export async function getOverviewExtras(counts?: {
     };
   }
 
-  const [system, sustained, peak, disk, ifaces, top] = await Promise.all([
+  const [system, sustained, peak, thermal5m, disk, ifaces, top] = await Promise.all([
     getSystemMetrics(),
     withDegrade("sustained-cpu", "cpu:sustained-5m", 15_000, async () => {
       const client = promClient();
@@ -487,6 +488,13 @@ export async function getOverviewExtras(counts?: {
     withDegrade("thermal-peak", "thermal:peak:3600", 30_000, async () => {
       const client = promClient();
       return await getPackagePeak(client, 3600);
+    }),
+    withDegrade("thermal-5m", "thermal:avg5m", 30_000, async () => {
+      const client = promClient();
+      const samples = await client.instant(
+        `avg_over_time(${PACKAGE_SENSOR_LABEL}[5m])`,
+      );
+      return samples[0]?.v ?? null;
     }),
     getDiskIoSnapshot(),
     getInterfacesInstant(promClient()).catch(() => null),
@@ -506,6 +514,7 @@ export async function getOverviewExtras(counts?: {
     thermal: system.data
       ? {
           packageC: system.data.thermal.packageC,
+          package5mAvgC: thermal5m.data ?? null,
           peak1hC: peak.data ?? null,
           hottestC: system.data.thermal.hottestC,
           hottestName: system.data.thermal.hottestName,

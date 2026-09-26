@@ -20,6 +20,27 @@ export const BOARD_TEMP_WARNING_C = 70;
 /** Motherboard / ACPI temperature considered critical (°C). */
 export const BOARD_TEMP_CRITICAL_C = 85;
 
+/**
+ * Thermal-episode definition (v0.6 diagnostics). An episode is a
+ * *sustained* excursion, never a one-sample spike:
+ * - starts when the package temp stays at/above START for MIN_DURATION
+ * - ends only after the temp has stayed below END for END_HOLD
+ *   (hysteresis: re-crossing START within the hold continues the episode)
+ */
+export const THERMAL_EPISODE_START_C = CPU_TEMP_WARNING_C; // 80
+export const THERMAL_EPISODE_MIN_DURATION_S = 300; // 5 minutes
+export const THERMAL_EPISODE_END_C = CPU_TEMP_WARNING_C - 5; // 75
+export const THERMAL_EPISODE_END_HOLD_S = 600; // 10 minutes
+
+/**
+ * Duration buckets for 24h package-temperature distribution (°C bounds,
+ * lower-inclusive): "<70", "70–79", "80–89", "90–94", "≥95".
+ */
+export const TEMP_BUCKET_BOUNDS = [70, 80, 90, 95] as const;
+
+/** Tolerance (seconds) when aligning two Prometheus series by timestamp. */
+export const SERIES_ALIGN_TOLERANCE_S = 90;
+
 /* CPU / load ---------------------------------------------------------------- */
 
 /** Instant or 5m-average host CPU% at which a "high CPU" note appears. */

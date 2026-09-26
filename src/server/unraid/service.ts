@@ -333,6 +333,7 @@ export async function getOverview(
     memoryPercent: metrics.data?.memoryPercent ?? null,
     temperatureCriticalCount: metrics.data?.temperature.criticalCount ?? null,
     cpuPackageC: extras?.thermal?.packageC ?? null,
+    cpuPackage5mAvgC: extras?.thermal?.package5mAvgC ?? null,
     sustainedCpuPercent: extras?.sustainedCpuPercent ?? null,
     loadLevel: extras?.load?.level ?? null,
     prometheusStatus: extras

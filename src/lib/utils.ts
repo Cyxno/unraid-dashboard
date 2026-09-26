@@ -22,6 +22,13 @@ export function formatRate(bytesPerSec: number | null | undefined): string {
   return `${formatBytes(bytesPerSec)}/s`;
 }
 
+/** Renders electrical power in W (or kW above 1000 W). Input is watts. */
+export function formatWatts(watts: number | null | undefined): string {
+  if (watts === null || watts === undefined || !Number.isFinite(watts)) return "—";
+  if (Math.abs(watts) >= 1000) return `${(watts / 1000).toFixed(2)} kW`;
+  return `${watts.toFixed(0)} W`;
+}
+
 export function formatUptime(seconds: number | null | undefined): string {
   if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return "—";
   const days = Math.floor(seconds / 86400);
