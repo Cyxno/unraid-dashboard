@@ -193,6 +193,13 @@ bundled:
   iOS-specific guidance where detectable. No first-visit modal.
 - Diagnostics shows service-worker state, standalone/browser mode and
   network state.
+- **Secure-context requirement**: browsers only enable service workers and
+  install prompts on secure origins. Over `https://dashboard.familievalk.com`
+  the full PWA works (offline shell, updates, install). The direct LAN path
+  (`http://<host>:8090`) is plain HTTP and therefore a regular browser page —
+  everything else works there, but no service worker/offline shell. iOS
+  Add-to-Home-Screen still yields a standalone app on both paths via the
+  `apple-mobile-web-app-capable` metadata.
 
 ### Service worker strategy
 
