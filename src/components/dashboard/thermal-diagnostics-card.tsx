@@ -363,7 +363,7 @@ export function ThermalDiagnosticsCard({
           Buckets, episodes and correlations are computed from actual Prometheus range data
           (60s step, 24h). Power uses the RAPL <code>{d.correlation.powerZone ?? "n/a"}</code> zone.
           Episode patterns follow documented rules (avg CPU ≥50% or r≥0.5 → load/power-correlated;
-          both &lt;0.3 → unexplained) and are associative — never causal. "Top containers" come from
+          both &lt;0.3 → unexplained) and are associative — never causal. &quot;Top containers&quot; come from
           name-keyed container CPU history and are omitted entirely when no data exists. This host
           exposes no throttle counters, so throttling is never claimed.
         </p>

@@ -127,3 +127,66 @@ export function resetPolicy(): void {
     inFlight: new Map(),
   };
 }
+
+/* ---- idempotency (v0.7) -----------------------------------------------------
+ * Clients may send an opaque requestId (e.g. per dialog-open). A repeated
+ * requestId within 10 minutes returns the recorded verdict instead of
+ * re-executing — duplicate submits, retries after a flaky connection and
+ * double-fires all converge on one mutation.
+ */
+
+const globalIdempotencyStore = globalThis as unknown as {
+  __dashboardIdempotency?: Map<string, { result: unknown; at: number }>;
+};
+
+function idempotencyStore(): Map<string, { result: unknown; at: number }> {
+  if (!globalIdempotencyStore.__dashboardIdempotency) {
+    globalIdempotencyStore.__dashboardIdempotency = new Map();
+  }
+  return globalIdempotencyStore.__dashboardIdempotency;
+}
+
+export function requestIdKey(requestId: string, kind: string, action: string, id: string): string {
+  return `${requestId}:${kind}:${action}:${id}`;
+}
+
+/** Returns the recorded result for a seen requestId, if any. */
+export function seenRequestId(
+  requestId: string,
+  kind: string,
+  action: string,
+  id: string,
+  now = Date.now(),
+): { result: unknown } | null {
+  const entry = idempotencyStore().get(requestIdKey(requestId, kind, action, id));
+  if (!entry) return null;
+  if (now - entry.at > 600_000) {
+    idempotencyStore().delete(requestIdKey(requestId, kind, action, id));
+    return null;
+  }
+  return { result: entry.result };
+}
+
+/** Records a verdict for an idempotency key. */
+export function recordRequestId(
+  requestId: string,
+  kind: string,
+  action: string,
+  id: string,
+  result: unknown,
+  now = Date.now(),
+): void {
+  const store = idempotencyStore();
+  store.set(requestIdKey(requestId, kind, action, id), { result, at: now });
+  // Bounded: drop entries older than 10 minutes when the map grows.
+  if (store.size > 500) {
+    for (const [key, entry] of store) {
+      if (now - entry.at > 600_000) store.delete(key);
+    }
+  }
+}
+
+/** Test hook. */
+export function resetIdempotency(): void {
+  globalIdempotencyStore.__dashboardIdempotency = undefined;
+}

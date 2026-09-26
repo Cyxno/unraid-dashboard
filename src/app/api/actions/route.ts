@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { guardWrite, parseActionBody } from "@/server/auth/guard";
 import { performAction } from "@/server/actions";
+import { recordRequestId, seenRequestId } from "@/server/actions/policy";
 import { isUpdatePhaseActive, getHelperStatus } from "@/server/update/helper-client";
 import {
   DOCKER_ACTIONS,
@@ -38,7 +39,20 @@ export async function POST(request: NextRequest) {
 
   const parsed = await parseActionBody(request);
   if (!parsed.ok) return parsed.response;
-  const { kind, action, id } = parsed.body;
+  const { kind, action, id, requestId } = parsed.body;
+
+  // Idempotency: a repeated requestId returns the recorded verdict
+  // instead of executing the mutation again.
+  if (requestId) {
+    const seen = seenRequestId(requestId, kind, action, id);
+    if (seen) {
+      const cached = seen.result as { ok?: boolean; status?: string };
+      return NextResponse.json(
+        { ...(cached as object), duplicate: true },
+        { status: cached.ok ? 200 : cached.status === "rejected" ? 429 : 502, headers: { "cache-control": "no-store" } },
+      );
+    }
+  }
 
   // Static allowlist before anything else touches the request.
   const allowedActions: string[] =
@@ -62,6 +76,9 @@ export async function POST(request: NextRequest) {
       action,
       targetId: id,
     });
+    if (requestId) {
+      recordRequestId(requestId, kind, action, id, result);
+    }
     return NextResponse.json(result, {
       status: result.ok ? 200 : result.status === "rejected" ? 429 : 502,
       headers: { "cache-control": "no-store" },

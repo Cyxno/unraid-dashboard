@@ -64,7 +64,7 @@ export function guardWrite(request: NextRequest): GuardResult<undefined> {
 /** Parses and structurally validates an action request body. */
 export async function parseActionBody(
   request: NextRequest,
-): Promise<{ ok: true; body: { kind: "docker" | "vm" | "notification"; action: string; id: string } } | { ok: false; response: NextResponse }> {
+): Promise<{ ok: true; body: { kind: "docker" | "vm" | "notification"; action: string; id: string; requestId: string | null } } | { ok: false; response: NextResponse }> {
   let raw: unknown;
   try {
     raw = await request.json();
@@ -85,5 +85,13 @@ export async function parseActionBody(
   if (typeof id !== "string" || id.length === 0 || id.length > 200) {
     return { ok: false, response: reject("Invalid target id.", 400) };
   }
-  return { ok: true, body: { kind, action, id } };
+  // Optional idempotency key (v0.7): opaque client token, bounded charset.
+  let requestId: string | null = null;
+  if (body.requestId !== undefined && body.requestId !== null) {
+    if (typeof body.requestId !== "string" || !/^[A-Za-z0-9_-]{8,64}$/.test(body.requestId)) {
+      return { ok: false, response: reject("Invalid requestId.", 400) };
+    }
+    requestId = body.requestId;
+  }
+  return { ok: true, body: { kind, action, id, requestId } };
 }
