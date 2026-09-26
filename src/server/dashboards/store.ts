@@ -2,7 +2,18 @@ import { randomBytes } from "node:crypto";
 import { mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { z } from "zod";
 import { getEnv } from "@/server/env";
+import {
+  DEFAULT_WIDGETS,
+  V1_WIDGET_MAP,
+  WIDGET_IDS,
+  type WidgetEntry,
+  type WidgetId,
+  type WidgetSize,
+} from "@/lib/widgets";
 import type { AuthIdentity } from "@/lib/api-types";
+
+const widgetRegistryIdSchema = z.enum(WIDGET_IDS);
+const widgetSizeSchema = z.enum(["sm", "md", "lg"]);
 
 /**
  * Server-side shared dashboard persistence.
@@ -26,7 +37,7 @@ import type { AuthIdentity } from "@/lib/api-types";
  *   anyone on the trusted network. No accounts are invented.
  */
 
-export const DASHBOARD_SCHEMA_VERSION = 1;
+export const DASHBOARD_SCHEMA_VERSION = 2;
 
 /** Bounded resource limits — reject oversized or sprawling payloads. */
 export const DASHBOARD_LIMITS = {
@@ -34,38 +45,11 @@ export const DASHBOARD_LIMITS = {
   maxNameLength: 64,
   maxPayloadBytes: 64 * 1024,
   maxDockerFilterLength: 120,
-  maxOrderLength: 12,
+  maxWidgets: 12,
   maxImportDashboards: 50,
 } as const;
 
-/** Overview widget identifiers (subset enforced; unknown ids rejected). */
-export const OVERVIEW_WIDGET_IDS = [
-  "cpu",
-  "memory",
-  "uptime",
-  "array",
-  "network",
-  "docker",
-] as const;
-
-const widgetIdSchema = z.enum(OVERVIEW_WIDGET_IDS);
-
 /* Field bases (shared between strict storage and stripping input schemas). */
-
-const dashboardLayoutBase = z
-  .object({
-    /** Widget order; every entry must be a known widget id, no duplicates. */
-    order: z.array(widgetIdSchema).max(DASHBOARD_LIMITS.maxOrderLength).default([
-      "cpu",
-      "memory",
-      "uptime",
-      "array",
-      "network",
-      "docker",
-    ]),
-    /** Widget ids hidden from the overview grid. */
-    hidden: z.array(widgetIdSchema).max(DASHBOARD_LIMITS.maxOrderLength).default([]),
-  });
 
 const dashboardPreferencesBase = z.object({
   historyWindow: z.enum(["5m", "15m", "1h", "6h", "24h", "7d"]).default("15m"),
@@ -76,25 +60,30 @@ const dashboardPreferencesBase = z.object({
   showPerCore: z.boolean().default(true),
   /** Free-text substring filter for the Docker list on the shared page. */
   dockerFilter: z.string().max(DASHBOARD_LIMITS.maxDockerFilterLength).default(""),
+  /** Optional selected network interface for the network widget. */
+  networkInterface: z.string().trim().max(32).default(""),
 });
 
-function layoutRefinements<T extends { order: string[]; hidden: string[] }>(schema: z.ZodType<T>) {
-  return schema
-    .refine(
-      (layout) => layout.order.length === new Set(layout.order).size,
-      { message: "order contains duplicate widget ids" },
-    )
-    .refine(
-      (layout) => layout.order.some((id) => !layout.hidden.includes(id)),
-      { message: "all widgets are hidden — at least one must remain visible" },
-    );
+/** Widget list: registry ids only, predefined sizes only (v2 layout). */
+const widgetEntryBase = z.object({
+  id: widgetRegistryIdSchema,
+  size: widgetSizeSchema.default("sm"),
+});
+
+const widgetsBase = z.array(widgetEntryBase).min(1).max(DASHBOARD_LIMITS.maxWidgets);
+
+function widgetsRefinements<T extends Array<{ id: string }>>(schema: z.ZodType<T>) {
+  return schema.refine(
+    (widgets) => widgets.length === new Set(widgets.map((entry) => entry.id)).size,
+    { message: "duplicate widget ids" },
+  );
 }
 
-/** Strict layout schema for stored documents. */
-export const dashboardLayoutSchema = layoutRefinements(dashboardLayoutBase.strict());
+/** Strict widgets schema for stored documents. */
+export const dashboardWidgetsSchema = widgetsRefinements(widgetsBase);
 
 /** Input variant: unknown fields stripped, same value rules. */
-const dashboardLayoutInputSchema = layoutRefinements(dashboardLayoutBase.strip());
+const dashboardWidgetsInputSchema = widgetsRefinements(widgetsBase);
 
 /** Strict preferences schema for stored documents. */
 export const dashboardPreferencesSchema = dashboardPreferencesBase.strict();
@@ -109,7 +98,8 @@ export const dashboardSchema = z
     name: z.string().trim().min(1).max(DASHBOARD_LIMITS.maxNameLength),
     /** Owner identity (proxy mode) or "lan" (trusted-LAN mode). */
     owner: z.string().trim().min(1).max(64),
-    layout: dashboardLayoutSchema,
+    /** Widget layout: registry ids with predefined sizes (v2). */
+    widgets: dashboardWidgetsSchema,
     preferences: dashboardPreferencesSchema,
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
@@ -117,16 +107,13 @@ export const dashboardSchema = z
   .strict();
 
 export type DashboardPreferences = z.infer<typeof dashboardPreferencesSchema>;
-export type DashboardLayout = z.infer<typeof dashboardLayoutSchema>;
 export type SharedDashboard = z.infer<typeof dashboardSchema>;
-
-/** Public shape (identical — no secrets exist in the schema). */
-export type DashboardDto = SharedDashboard;
+export type { WidgetEntry, WidgetId, WidgetSize };
 
 const importEntrySchema = z
   .object({
     name: z.string().trim().min(1).max(DASHBOARD_LIMITS.maxNameLength),
-    layout: dashboardLayoutInputSchema.optional(),
+    widgets: dashboardWidgetsInputSchema.optional(),
     preferences: dashboardPreferencesInputSchema.optional(),
   })
   .strict();
@@ -265,7 +252,7 @@ export async function getDashboard(id: string): Promise<SharedDashboard | null> 
 
 interface DashboardWriteInput {
   name: string;
-  layout?: unknown;
+  widgets?: unknown;
   preferences?: unknown;
 }
 
@@ -275,9 +262,9 @@ function validateInput(input: DashboardWriteInput) {
   if (!name) throw new DashboardError("Dashboard name is required.", 400);
 
   // Input schemas STRIP unknown fields; only value-level violations reject.
-  const layout = dashboardLayoutInputSchema.safeParse(input.layout ?? {});
-  if (!layout.success) {
-    throw new DashboardError(`Invalid layout: ${layout.error.issues.map((i) => i.message).join("; ")}`, 400);
+  const widgets = dashboardWidgetsInputSchema.safeParse(input.widgets ?? DEFAULT_WIDGETS);
+  if (!widgets.success) {
+    throw new DashboardError(`Invalid widgets: ${widgets.error.issues.map((i) => i.message).join("; ")}`, 400);
   }
   const preferences = dashboardPreferencesInputSchema.safeParse(input.preferences ?? {});
   if (!preferences.success) {
@@ -286,7 +273,7 @@ function validateInput(input: DashboardWriteInput) {
       400,
     );
   }
-  return { name, layout: layout.data, preferences: preferences.data };
+  return { name, widgets: widgets.data, preferences: preferences.data };
 }
 
 async function writeAtomic(dashboard: SharedDashboard): Promise<void> {
@@ -306,7 +293,7 @@ export async function createDashboard(
   input: DashboardWriteInput,
   identity: AuthIdentity,
 ): Promise<SharedDashboard> {
-  const { name, layout, preferences } = validateInput(input);
+  const { name, widgets, preferences } = validateInput(input);
 
   const { dashboards } = await listDashboards();
   if (dashboards.length >= DASHBOARD_LIMITS.maxDashboards) {
@@ -322,7 +309,7 @@ export async function createDashboard(
     id: newDashboardId(),
     name,
     owner: ownerFor(identity),
-    layout,
+    widgets,
     preferences,
     createdAt: now,
     updatedAt: now,
@@ -331,7 +318,7 @@ export async function createDashboard(
   return dashboard;
 }
 
-/** Updates an existing dashboard (name/layout/preferences only). */
+/** Updates an existing dashboard (name/widgets/preferences only). */
 export async function updateDashboard(
   id: string,
   input: DashboardWriteInput,
@@ -342,11 +329,11 @@ export async function updateDashboard(
   if (!canMutate(existing, identity)) {
     throw new DashboardError("Only the owner may modify this dashboard.", 403);
   }
-  const { name, layout, preferences } = validateInput(input);
+  const { name, widgets, preferences } = validateInput(input);
   const updated: SharedDashboard = {
     ...existing,
     name,
-    layout,
+    widgets,
     preferences,
     updatedAt: new Date().toISOString(),
   };
@@ -422,7 +409,7 @@ export async function importDashboards(
         id: newDashboardId(),
         name: entryParsed.data.name,
         owner: ownerFor(identity),
-        layout: entryParsed.data.layout ?? dashboardLayoutInputSchema.parse({}),
+        widgets: entryParsed.data.widgets ?? DEFAULT_WIDGETS,
         preferences: entryParsed.data.preferences ?? dashboardPreferencesInputSchema.parse({}),
         createdAt: now,
         updatedAt: now,
@@ -461,16 +448,38 @@ export async function migrateStoredDashboard(id: string): Promise<SharedDashboar
   const version = typeof doc.schemaVersion === "number" ? doc.schemaVersion : 0;
   if (version === DASHBOARD_SCHEMA_VERSION) return parseDashboardJson(raw);
 
-  // v0 (pre-versioning) → v1: fill defaults, stamp version.
   if (version < DASHBOARD_SCHEMA_VERSION) {
+    // v0/v1 → v2: the old overview layout (order + hidden over 6 card ids)
+    // becomes a v2 widget list via the registry mapping; unknown ids are
+    // dropped. Widgets always win defaults when absent.
+    let widgets: Array<{ id: WidgetId; size: WidgetSize }> = [];
+    const layout = (doc.layout ?? {}) as { order?: unknown; hidden?: unknown };
+    if (Array.isArray(layout.order)) {
+      const hidden = new Set(
+        Array.isArray(layout.hidden) ? layout.hidden.filter((entry): entry is string => typeof entry === "string") : [],
+      );
+      for (const entry of layout.order) {
+        if (typeof entry !== "string" || hidden.has(entry)) continue;
+        const mapped = V1_WIDGET_MAP[entry];
+        if (mapped && !widgets.some((widget) => widget.id === mapped.id)) {
+          widgets.push({ ...mapped });
+        }
+      }
+    }
+    if (widgets.length === 0) {
+      widgets = DEFAULT_WIDGETS.map((widget) => ({ ...widget }));
+    }
+
+    // Strip the v1 `layout` key entirely — even an undefined value would
+    // trip the strict schema's unknown-key rejection.
+    const { layout: _legacyLayout, ...docRest } = doc;
+    void _legacyLayout;
     const migrated = dashboardSchema.safeParse({
-      // Prefill sections the legacy document may lack so the strict
-      // storage schema accepts it; zod fills field defaults.
-      ...doc,
+      ...docRest,
       schemaVersion: DASHBOARD_SCHEMA_VERSION,
       id: assertValidId(id),
       owner: typeof doc.owner === "string" && doc.owner.trim() ? doc.owner : "lan",
-      layout: doc.layout ?? {},
+      widgets,
       preferences: doc.preferences ?? {},
     });
     if (!migrated.success) return null;

@@ -34,15 +34,21 @@ export async function GET(
       { status: 404, headers: { "cache-control": "no-store" } },
     );
   }
+  // View for everyone, edit for the owner (or everyone in trusted-LAN mode).
+  const canEdit =
+    guard.identity.mode === "disabled" ||
+    (guard.identity.mode === "proxy" &&
+      Boolean(guard.identity.user) &&
+      dashboard.owner === guard.identity.user);
   return NextResponse.json(
-    { dashboard, identity: guard.identity },
+    { dashboard, identity: guard.identity, canEdit },
     { headers: { "cache-control": "no-store" } },
   );
 }
 
 interface DashboardBody {
   name?: unknown;
-  layout?: unknown;
+  widgets?: unknown;
   preferences?: unknown;
 }
 
@@ -120,7 +126,7 @@ export async function PUT(
   return guardedMutation(request, id, "update", async (body, guard) => {
     const dashboard = await updateDashboard(
       id,
-      { name: String(body.name ?? ""), layout: body.layout, preferences: body.preferences },
+      { name: String(body.name ?? ""), widgets: body.widgets, preferences: body.preferences },
       guard.identity,
     );
     return { dashboardName: dashboard.name, payload: { dashboard } };

@@ -6,6 +6,8 @@ import type {
   SharedDashboardDto,
 } from "@/lib/api-types";
 import type { SavedView } from "@/lib/prefs";
+import { DEFAULT_WIDGETS } from "@/lib/widgets";
+import { widgetsToOverviewOrder } from "@/lib/widget-utils";
 
 /**
  * Client helpers for shared (server-persisted) dashboards.
@@ -15,7 +17,7 @@ import type { SavedView } from "@/lib/prefs";
 
 export interface DashboardWriteInput {
   name: string;
-  layout: SharedDashboardDto["layout"];
+  widgets: SharedDashboardDto["widgets"];
   preferences: SharedDashboardDto["preferences"];
 }
 
@@ -73,18 +75,15 @@ export async function importDashboards(
   });
 }
 
-/** Converts a local saved view into the shared-dashboard schema shape. */
+/** Local view → the shared-dashboard schema's default widget layout (v2). */
 export function savedViewToDashboardInput(
   name: string,
   view: SavedView,
-  options?: { hidden?: SharedDashboardDto["layout"]["hidden"]; dockerFilter?: string },
+  options?: { widgets?: SharedDashboardDto["widgets"]; dockerFilter?: string },
 ): DashboardWriteInput {
   return {
     name,
-    layout: {
-      order: view.overviewOrder as SharedDashboardDto["layout"]["order"],
-      hidden: options?.hidden ?? [],
-    },
+    widgets: options?.widgets ?? DEFAULT_WIDGETS,
     preferences: {
       historyWindow: view.historyWindow,
       density: view.density,
@@ -93,6 +92,7 @@ export function savedViewToDashboardInput(
       dockerMetrics: view.dockerMetrics,
       showPerCore: view.showPerCore,
       dockerFilter: options?.dockerFilter ?? "",
+      networkInterface: "",
     },
   };
 }
@@ -106,7 +106,7 @@ export function dashboardToSavedView(dashboard: SharedDashboardDto): SavedView {
     historyWindow: dashboard.preferences.historyWindow,
     showPerCore: dashboard.preferences.showPerCore,
     dockerMetrics: dashboard.preferences.dockerMetrics,
-    overviewOrder: dashboard.layout.order,
+    overviewOrder: widgetsToOverviewOrder(dashboard.widgets),
   };
 }
 
@@ -114,11 +114,11 @@ export function dashboardToSavedView(dashboard: SharedDashboardDto): SavedView {
 export function buildExportPayload(dashboards: SharedDashboardDto[]): unknown {
   return {
     exporter: "unraid-dashboard",
-    schemaVersion: 1,
+    schemaVersion: 2,
     exportedAt: new Date().toISOString(),
     dashboards: dashboards.map((dashboard) => ({
       name: dashboard.name,
-      layout: dashboard.layout,
+      widgets: dashboard.widgets,
       preferences: dashboard.preferences,
     })),
   };

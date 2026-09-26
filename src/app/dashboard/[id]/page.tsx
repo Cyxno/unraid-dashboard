@@ -2,74 +2,88 @@
 
 import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  Boxes,
-  Clock,
-  Cpu,
-  HardDrive,
-  MemoryStick,
-  Search,
-  Thermometer,
-  TriangleAlert,
-} from "lucide-react";
-import { MetricCard, MetricCardSkeleton } from "@/components/dashboard/metric-card";
-import { SeriesChart } from "@/components/dashboard/series-chart";
-import { DockerOverviewList } from "@/components/dashboard/docker-overview-list";
-import { PageHeader, LoadingPanel } from "@/components/dashboard/page-primitives";
-import { SectionStatus } from "@/components/dashboard/section-status";
-import { Badge } from "@/components/ui/badge";
+import { ArrowLeft, ArrowDown, ArrowUp, Eye, EyeOff, Pencil, Plus, RotateCcw, Save, TriangleAlert, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import { PageHeader, LoadingPanel } from "@/components/dashboard/page-primitives";
+import { WidgetGrid, WIDGET_ICONS } from "@/components/dashboard/widget-registry";
 import { usePoll } from "@/hooks/use-poll";
-import { usePrefs, PAGE_INTERVAL_MS, HISTORY_INTERVAL_MS } from "@/lib/prefs";
-import { dashboardToSavedView, fetchSharedDashboard } from "@/lib/dashboards";
-import { formatBytes, formatPercent, formatRate, formatTemp, formatUptime, humanState } from "@/lib/utils";
-import type { DockerSummary, OverviewPayload, Section, SharedDashboardDto } from "@/lib/api-types";
+import { PAGE_INTERVAL_MS, usePrefs } from "@/lib/prefs";
+import {
+  dashboardToSavedView,
+  fetchSharedDashboard,
+  updateSharedDashboard,
+} from "@/lib/dashboards";
+import { setBusyScope } from "@/lib/busy-guard";
+import { WIDGET_IDS, WIDGET_LABELS, type WidgetEntry, type WidgetId, type WidgetSize } from "@/lib/widgets";
+import { cn } from "@/lib/utils";
+import type { OverviewPayload, SharedDashboardDto } from "@/lib/api-types";
 
 /**
- * Shared dashboard view (/dashboard/<id>): renders a server-stored layout
- * read-only. Layout fields (widget order/visibility) drive the grid; the
- * dashboard's time window and density are applied locally for this page.
- * No lifecycle controls.
+ * Shared dashboard view + deliberate edit mode (v0.7).
+ *
+ * - View: the stored widget layout renders read-only; every widget loads
+ *   only its own data.
+ * - Edit (owner only in proxy mode, everyone in trusted-LAN mode):
+ *   reorder (move up/down — reliable on touch), show/hide, size selector
+ *   over predefined spans only, preview, save, cancel. No freeform
+ *   config; the server re-validates the whole layout on save.
  */
+
+interface DashboardPayload {
+  dashboard: SharedDashboardDto;
+  identity: { mode: string; user: string | null };
+  canEdit: boolean;
+}
 
 export default function SharedDashboardPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const [dashboard, setDashboard] = useState<SharedDashboardDto | null>(null);
+  const [payload, setPayload] = useState<DashboardPayload | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [filter, setFilter] = useState("");
-  const { setPref } = usePrefs();
 
-  const window_ = dashboard?.preferences.historyWindow ?? "15m";
+  const [editMode, setEditMode] = useState(false);
+  const [draft, setDraft] = useState<WidgetEntry[]>([]);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const { setPref } = usePrefs();
 
   useEffect(() => {
     let cancelled = false;
     fetchSharedDashboard(id)
       .then((loaded) => {
-        if (cancelled) return;
-        setDashboard(loaded);
-        setFilter(loaded.preferences.dockerFilter);
+        if (!cancelled) setPayload({ dashboard: loaded, identity: { mode: "disabled", user: null }, canEdit: true });
       })
       .catch((error: unknown) => {
-        if (!cancelled) {
-          setLoadError(error instanceof Error ? error.message : "Failed to load dashboard");
-        }
+        if (!cancelled) setLoadError(error instanceof Error ? error.message : "Failed to load dashboard");
       });
     return () => {
       cancelled = true;
     };
   }, [id]);
 
-  const overview = usePoll<OverviewPayload>(
-    `/api/overview?window=${window_}`,
-    dashboard ? PAGE_INTERVAL_MS.overview : 60_000,
-  );
-  const docker = usePoll<Section<DockerSummary>>("/api/docker", PAGE_INTERVAL_MS.docker);
+  // canEdit arrives with the payload; refetch once to pick it up cheaply.
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/dashboards/${id}`, { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body: DashboardPayload | null) => {
+        if (!cancelled && body?.dashboard) setPayload(body);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
 
-  // Apply the dashboard's preferences to the local session while viewing
-  // (density, unit, docker columns) so embedded widgets render as saved.
+  const dashboard = payload?.dashboard ?? null;
+  const canEdit = payload?.canEdit ?? false;
+  const overview = usePoll<OverviewPayload>(
+    dashboard ? `/api/overview?window=${dashboard.preferences.historyWindow}` : "/api/overview?window=15m",
+    PAGE_INTERVAL_MS.overview,
+  );
+
+  // Apply the dashboard's preferences to the local session while viewing.
   useEffect(() => {
     if (!dashboard) return;
     const view = dashboardToSavedView(dashboard);
@@ -79,26 +93,77 @@ export default function SharedDashboardPage({ params }: { params: Promise<{ id: 
     setPref("showPerCore", view.showPerCore);
   }, [dashboard, setPref]);
 
-  const payload = overview.data;
-  const visibleOrder = useMemo(
-    () => (dashboard ? dashboard.layout.order.filter((widget) => !dashboard.layout.hidden.includes(widget)) : []),
+  // Busy-guard: an open editor blocks deferred refreshes.
+  useEffect(() => {
+    setBusyScope("dashboard-editor", editMode);
+    return () => setBusyScope("dashboard-editor", false);
+  }, [editMode]);
+
+  const preferences = useMemo(
+    () =>
+      dashboard
+        ? {
+            tempUnit: dashboard.preferences.tempUnit,
+            dockerFilter: dashboard.preferences.dockerFilter,
+            networkInterface: dashboard.preferences.networkInterface,
+          }
+        : { tempUnit: "C" as const, dockerFilter: "", networkInterface: "" },
     [dashboard],
   );
 
-  const filteredContainers = useMemo(() => {
-    const data = docker.data?.data;
-    if (!data) return null;
-    const needle = filter.trim().toLowerCase();
-    if (!needle) return data;
-    return {
-      ...data,
-      containers: data.containers.filter(
-        (container) =>
-          container.name.toLowerCase().includes(needle) ||
-          container.image.toLowerCase().includes(needle),
-      ),
-    };
-  }, [docker.data, filter]);
+  const startEdit = () => {
+    if (!dashboard) return;
+    setDraft(dashboard.widgets.map((widget) => ({ ...widget })));
+    setSaveError(null);
+    setEditMode(true);
+  };
+
+  const cancelEdit = () => setEditMode(false);
+
+  const move = (index: number, direction: -1 | 1) => {
+    setDraft((current) => {
+      const next = [...current];
+      const to = index + direction;
+      if (to < 0 || to >= next.length) return current;
+      [next[index], next[to]] = [next[to]!, next[index]!];
+      return next;
+    });
+  };
+
+  const setSize = (index: number, size: WidgetSize) => {
+    setDraft((current) => current.map((widget, i) => (i === index ? { ...widget, size } : widget)));
+  };
+
+  const remove = (index: number) => {
+    setDraft((current) => (current.length <= 1 ? current : current.filter((_, i) => i !== index)));
+  };
+
+  const add = (widgetId: WidgetId) => {
+    setDraft((current) =>
+      current.some((widget) => widget.id === widgetId) || current.length >= 12
+        ? current
+        : [...current, { id: widgetId, size: "sm" as WidgetSize }],
+    );
+  };
+
+  const save = async () => {
+    if (!dashboard) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const updated = await updateSharedDashboard(dashboard.id, {
+        name: dashboard.name,
+        widgets: draft,
+        preferences: dashboard.preferences,
+      });
+      setPayload({ dashboard: updated, identity: payload?.identity ?? { mode: "disabled", user: null }, canEdit });
+      setEditMode(false);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   if (loadError) {
     return (
@@ -111,7 +176,7 @@ export default function SharedDashboardPage({ params }: { params: Promise<{ id: 
           </CardContent>
         </Card>
         <Button asChild variant="outline" size="sm">
-          <Link href="/">Back to overview</Link>
+          <Link href="/"><ArrowLeft aria-hidden="true" /> Back to overview</Link>
         </Button>
       </div>
     );
@@ -121,193 +186,108 @@ export default function SharedDashboardPage({ params }: { params: Promise<{ id: 
     return <LoadingPanel rows={6} />;
   }
 
-  const renderWidget = (widgetId: string) => {
-    if (!payload) return <MetricCardSkeleton key={widgetId} />;
-    const cpu = payload.cpu;
-    const memory = payload.memory;
-    const storage = payload.storage;
-    const network = payload.network;
-    const dockerSection = payload.docker;
-    const identity = payload.identity;
-    const thermal = payload.extras?.thermal ?? null;
-    const load = payload.extras?.load ?? null;
-
-    switch (widgetId) {
-      case "cpu":
-        return (
-          <MetricCard
-            key="cpu"
-            label="CPU"
-            icon={Cpu}
-            section={cpu}
-            value={formatPercent(cpu.data?.percentTotal)}
-            percent={cpu.data?.percentTotal ?? null}
-            detail={
-              thermal?.packageC != null ? (
-                <span className="inline-flex items-center gap-1">
-                  <Thermometer className="size-3" aria-hidden="true" />
-                  {formatTemp(thermal.packageC, dashboard.preferences.tempUnit)}
-                </span>
-              ) : load?.five != null ? (
-                `load ${load.five.toFixed(2)}`
-              ) : undefined
-            }
-          />
-        );
-      case "memory":
-        return (
-          <MetricCard
-            key="memory"
-            label="Memory"
-            icon={MemoryStick}
-            section={memory}
-            value={formatPercent(memory.data?.percentTotal)}
-            percent={memory.data?.percentTotal ?? null}
-            detail={`${formatBytes(memory.data?.usedBytes)} of ${formatBytes(memory.data?.totalBytes)}`}
-          />
-        );
-      case "uptime":
-        return (
-          <MetricCard
-            key="uptime"
-            label="Uptime"
-            icon={Clock}
-            section={identity}
-            value={formatUptime(identity.data?.uptimeSeconds)}
-            detail={identity.data?.osVersion ? `Unraid v${identity.data.osVersion}` : undefined}
-          />
-        );
-      case "array":
-        return (
-          <MetricCard
-            key="array"
-            label="Array usage"
-            icon={HardDrive}
-            section={storage}
-            value={formatBytes(storage.data?.usedBytes)}
-            percent={
-              storage.data && storage.data.totalBytes > 0
-                ? (storage.data.usedBytes / storage.data.totalBytes) * 100
-                : null
-            }
-            detail={
-              storage.data
-                ? `of ${formatBytes(storage.data.totalBytes)} · ${storage.data.disks.length} disks · ${humanState(storage.data.state)}`
-                : undefined
-            }
-          />
-        );
-      case "network":
-        return (
-          <MetricCard
-            key="network"
-            label="Network"
-            icon={ArrowDownToLine}
-            section={network}
-            value={formatRate(payload.extras?.primaryRx ?? network.data?.rxBytesPerSec)}
-            detail={
-              <span className="inline-flex items-center gap-1">
-                <ArrowUpFromLine className="size-3" aria-hidden="true" />
-                TX {formatRate(payload.extras?.primaryTx ?? network.data?.txBytesPerSec)}
-              </span>
-            }
-          />
-        );
-      default:
-        return (
-          <MetricCard
-            key="docker"
-            label="Docker"
-            icon={Boxes}
-            section={dockerSection}
-            value={dockerSection.data ? `${dockerSection.data.running}/${dockerSection.data.total}` : "—"}
-            detail={`${filteredContainers?.containers.length ?? dockerSection.data?.containers.length ?? 0} shown below`}
-          />
-        );
-    }
-  };
+  const hiddenIds = WIDGET_IDS.filter((widgetId) => !draft.some((widget) => widget.id === widgetId));
 
   return (
     <div className="space-y-5">
       <PageHeader
         title={dashboard.name}
-        description={`Shared dashboard · owner ${dashboard.owner} · read-only view`}
+        description={`Shared dashboard · owner ${dashboard.owner} · ${editMode ? "edit mode" : "read-only view"}`}
+        actions={
+          canEdit && !editMode ? (
+            <Button size="sm" variant="outline" onClick={startEdit}>
+              <Pencil aria-hidden="true" /> Edit layout
+            </Button>
+          ) : undefined
+        }
       />
 
-      {overview.error && payload && (
+      {overview.error && overview.data && (
         <p role="alert" className="text-xs text-warning">
           Refresh failed ({overview.error}) — showing last known data.
         </p>
       )}
 
-      <section aria-label="Shared layout" className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {visibleOrder.map((widgetId) => renderWidget(widgetId))}
-      </section>
-
-      {payload && (
-        <section aria-label="History" className="min-w-0">
-          <SeriesChart
-            series={[
-              {
-                name: "CPU %",
-                points: payload.history.samples.map((sample) => ({
-                  t: sample.time,
-                  v: Number.isFinite(sample.cpu) ? sample.cpu : null,
-                })),
-              },
-              {
-                name: "RAM %",
-                points: payload.history.samples.map((sample) => ({
-                  t: sample.time,
-                  v: Number.isFinite(sample.memory) ? sample.memory : null,
-                })),
-              },
-            ]}
-            unit="percent"
-            unavailable={payload.history.status === "unavailable" && payload.history.samples.length === 0}
-          />
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <Badge variant="muted">window {window_}</Badge>
-            <p className="text-[11px] text-muted-foreground">
-              applies the shared dashboard&apos;s default window ({HISTORY_INTERVAL_MS[window_] / 1000}s refresh)
+      {editMode ? (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card/60 p-3">
+            <p className="mr-auto text-xs text-muted-foreground">
+              Reorder with the arrows, pick a size, hide widgets — then save. The server re-validates
+              everything (registry ids, predefined sizes, ≤12 widgets).
             </p>
+            <Button size="sm" variant="outline" onClick={cancelEdit} disabled={saving}>
+              <X aria-hidden="true" /> Cancel
+            </Button>
+            <Button size="sm" onClick={() => void save()} disabled={saving || draft.length === 0}>
+              <Save aria-hidden="true" /> {saving ? "Saving…" : "Save layout"}
+            </Button>
           </div>
-        </section>
+          {saveError && <p role="alert" className="text-xs text-destructive">{saveError}</p>}
+
+          <ol className="space-y-2">
+            {draft.map((widget, index) => {
+              const Icon = WIDGET_ICONS[widget.id];
+              return (
+                <li key={widget.id} className="flex flex-wrap items-center gap-2 rounded-lg border bg-card/60 p-2.5">
+                  <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden={true} />
+                  <span className="min-w-0 flex-1 truncate text-sm">{WIDGET_LABELS[widget.id]}</span>
+                  <div role="group" aria-label={`Size for ${WIDGET_LABELS[widget.id]}`} className="flex items-center gap-1">
+                    {(["sm", "md", "lg"] as const).map((size) => (
+                      <Button
+                        key={size}
+                        size="sm"
+                        variant={widget.size === size ? "secondary" : "ghost"}
+                        aria-pressed={widget.size === size}
+                        onClick={() => setSize(index, size)}
+                        className="h-7 px-2 text-[11px]"
+                      >
+                        {size}
+                      </Button>
+                    ))}
+                  </div>
+                  <Button size="sm" variant="ghost" aria-label={`Move ${WIDGET_LABELS[widget.id]} up`} disabled={index === 0} onClick={() => move(index, -1)} className="h-7 px-2">
+                    <ArrowUp aria-hidden="true" />
+                  </Button>
+                  <Button size="sm" variant="ghost" aria-label={`Move ${WIDGET_LABELS[widget.id]} down`} disabled={index === draft.length - 1} onClick={() => move(index, 1)} className="h-7 px-2">
+                    <ArrowDown aria-hidden="true" />
+                  </Button>
+                  <Button size="sm" variant="ghost" aria-label={`Hide ${WIDGET_LABELS[widget.id]}`} disabled={draft.length === 1} onClick={() => remove(index)} className="h-7 px-2">
+                    <EyeOff aria-hidden="true" />
+                  </Button>
+                </li>
+              );
+            })}
+          </ol>
+
+          {hiddenIds.length > 0 && (
+            <div className="rounded-lg border bg-card/60 p-3">
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                <Plus className="size-3.5" aria-hidden="true" /> Available widgets
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {hiddenIds.map((widgetId) => (
+                  <Button key={widgetId} size="sm" variant="ghost" onClick={() => add(widgetId)} className="h-7 gap-1.5 px-2 text-xs">
+                    <Eye aria-hidden="true" /> {WIDGET_LABELS[widgetId]}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <section aria-label="Preview">
+            <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">Preview</p>
+            <WidgetGrid widgets={draft} overview={overview.data} preferences={preferences} />
+          </section>
+        </div>
+      ) : (
+        <WidgetGrid widgets={dashboard.widgets} overview={overview.data} preferences={preferences} />
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Boxes className="size-4 text-muted-foreground" aria-hidden="true" />
-            Containers
-            {dashboard.preferences.dockerFilter && (
-              <Badge variant="muted">saved filter: {dashboard.preferences.dockerFilter}</Badge>
-            )}
-          </CardTitle>
-          <SectionStatus section={docker.data ?? { status: "unavailable", data: null, fetchedAt: "", ageMs: 0 }} />
-        </CardHeader>
-        <CardContent className="pt-1">
-          <div className="mb-3 flex items-center gap-2">
-            <Search className="size-3.5 text-muted-foreground" aria-hidden="true" />
-            <input
-              value={filter}
-              onChange={(event) => setFilter(event.target.value)}
-              placeholder="Filter by name or image…"
-              aria-label="Filter containers"
-              className="h-8 w-full max-w-xs rounded-md border bg-transparent px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </div>
-          {filteredContainers && docker.data ? (
-            <DockerOverviewList docker={{ ...docker.data, data: filteredContainers }} />
-          ) : (
-            <LoadingPanel rows={3} />
-          )}
-        </CardContent>
-      </Card>
-
       <p className="text-[11px] text-muted-foreground">
-        Shared layouts live on the server and are read-only here. Copy one into your local views
-        from the Views menu (Shared → copy icon).
+        {canEdit
+          ? "You can edit this layout. Changes are validated server-side and audited."
+          : "Read-only for your identity — only the owner can edit."}{" "}
+        <Link href="/" className="underline underline-offset-2">Overview</Link>
       </p>
     </div>
   );

@@ -30,6 +30,7 @@ import { formatBytes, formatPercent, formatRate, formatTemp, formatUptime, human
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { CYCLE_PANELS, CyclePanel, type CyclePanelId } from "./panels";
+import { WidgetGrid } from "@/components/dashboard/widget-registry";
 import type {
   DockerSummary,
   OverviewPayload,
@@ -428,13 +429,27 @@ function NocShell() {
       {/* Shared-dashboard banner */}
       {dashboard && (
         <p className="mb-3 text-xs text-muted-foreground">
-          Applying shared dashboard <strong>{dashboard.name}</strong> (owner {dashboard.owner}) — window{" "}
+          Shared dashboard <strong>{dashboard.name}</strong> (owner {dashboard.owner}) — window{" "}
           {dashboard.preferences.historyWindow}, {dashboard.preferences.density}.
         </p>
       )}
 
-      {/* Main tiles (built-in) or cycled panel */}
-      {activePanel === "overview" || cycleSeconds === 0 ? (
+      {/* Selected shared dashboard: render its widget layout read-only.
+          Auto-cycle applies to the built-in panels only. */}
+      {dashboard ? (
+        <WidgetGrid
+          widgets={dashboard.widgets}
+          overview={payload}
+          preferences={{
+            tempUnit: dashboard.preferences.tempUnit,
+            dockerFilter: dashboard.preferences.dockerFilter,
+            networkInterface: dashboard.preferences.networkInterface,
+          }}
+          compact={dashboard.preferences.density === "compact"}
+        />
+      ) : (
+      /* Main tiles (built-in) or cycled panel */
+      activePanel === "overview" || cycleSeconds === 0 ? (
         <div className={cn("grid gap-3", kiosk ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-2 lg:grid-cols-4 xl:grid-cols-8")}>
           <Tile
             label="CPU"
@@ -504,10 +519,11 @@ function NocShell() {
         </div>
       ) : (
         <CyclePanel panel={activePanel} overview={payload} />
+      )
       )}
 
-      {/* Cycle indicator */}
-      {cycleSeconds > 0 && (
+      {/* Cycle indicator (built-in panels only) */}
+      {!dashboard && cycleSeconds > 0 && (
         <div className="mt-3 flex items-center gap-2">
           {CYCLE_PANELS.map((panel, index) => (
             <span
@@ -524,7 +540,7 @@ function NocShell() {
       )}
 
       {/* Secondary row (built-in overview only) */}
-      {(activePanel === "overview" || cycleSeconds === 0) && (
+      {!dashboard && (activePanel === "overview" || cycleSeconds === 0) && (
         <div className={cn("mt-4 grid gap-3", kiosk ? "lg:grid-cols-1" : "lg:grid-cols-2")}>
           <div className="rounded-lg border bg-card/60 p-4">
             <p className="text-xs uppercase tracking-wider text-muted-foreground">Top CPU consumers</p>

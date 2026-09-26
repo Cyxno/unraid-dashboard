@@ -24,6 +24,7 @@ import {
 import { useToast } from "@/components/layout/toast";
 import { cn } from "@/lib/utils";
 import type { SharedDashboardDto } from "@/lib/api-types";
+import { widgetsToOverviewOrder } from "@/lib/widget-utils";
 
 /**
  * Saved views menu: built-in presets, browser-local views, and
@@ -88,7 +89,7 @@ export function ViewsMenu() {
       historyWindow: dashboard.preferences.historyWindow,
       showPerCore: dashboard.preferences.showPerCore,
       dockerMetrics: dashboard.preferences.dockerMetrics,
-      overviewOrder: dashboard.layout.order,
+      overviewOrder: widgetsToOverviewOrder(dashboard.widgets),
     });
   };
 
@@ -161,7 +162,7 @@ export function ViewsMenu() {
         historyWindow: dashboard.preferences.historyWindow,
         showPerCore: dashboard.preferences.showPerCore,
         dockerMetrics: dashboard.preferences.dockerMetrics,
-        overviewOrder: dashboard.layout.order,
+        overviewOrder: widgetsToOverviewOrder(dashboard.widgets),
       },
     });
     toast("success", `Copied "${dashboard.name}" to local views`);
@@ -172,7 +173,7 @@ export function ViewsMenu() {
     try {
       await updateSharedDashboard(dashboard.id, {
         name: nextName,
-        layout: dashboard.layout,
+        widgets: dashboard.widgets,
         preferences: dashboard.preferences,
       });
       await loadShared(true);

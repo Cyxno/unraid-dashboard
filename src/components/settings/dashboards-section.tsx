@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, FolderDown, Upload } from "lucide-react";
+import { Archive, Download, FolderDown, Upload } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,8 +13,14 @@ import {
   fetchDashboards,
   importDashboards,
 } from "@/lib/dashboards";
-import { formatDateTimeIso } from "@/lib/utils";
+import { formatBytes, formatDateTimeIso } from "@/lib/utils";
 import type { DashboardListPayload } from "@/lib/api-types";
+
+interface ServerBackup {
+  file: string;
+  bytes: number;
+  createdAt: string;
+}
 
 /**
  * Settings → Dashboards: shared-dashboard management surface.
@@ -27,6 +33,7 @@ export function DashboardsSection() {
   const { online } = usePwa();
   const { toast } = useToast();
   const [list, setList] = useState<DashboardListPayload | null>(null);
+  const [backups, setBackups] = useState<ServerBackup[]>([]);
   const [busy, setBusy] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -35,6 +42,15 @@ export function DashboardsSection() {
       setList(await fetchDashboards());
     } catch {
       // List stays null; the card renders a plain unavailable note.
+    }
+    try {
+      const response = await fetch("/api/dashboards/backup", { cache: "no-store" });
+      if (response.ok) {
+        const body = (await response.json()) as { backups: ServerBackup[] };
+        setBackups(body.backups ?? []);
+      }
+    } catch {
+      setBackups([]);
     }
   }, []);
 
@@ -130,6 +146,32 @@ export function DashboardsSection() {
           >
             <Upload aria-hidden="true" /> Import JSON
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy || !online}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                const response = await fetch("/api/dashboards/backup", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({}),
+                });
+                const body = (await response.json().catch(() => ({}))) as { backup?: string; error?: string };
+                if (response.ok) {
+                  toast("success", `Server backup created (${body.backup})`);
+                  await load();
+                } else {
+                  toast("error", body.error ?? "Backup failed");
+                }
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            <Archive aria-hidden="true" /> Server backup
+          </Button>
           <input
             ref={fileInput}
             type="file"
@@ -142,6 +184,29 @@ export function DashboardsSection() {
             }}
           />
         </div>
+
+        {backups.length > 0 && (
+          <div className="rounded-md border p-2 text-xs">
+            <p className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+              Server backups (/app/data/backups, newest 10 kept)
+            </p>
+            <ul className="space-y-0.5">
+              {backups.slice(0, 5).map((backup) => (
+                <li key={backup.file} className="flex items-center justify-between gap-2">
+                  <a
+                    href={`/api/dashboards/backup/${backup.file}`}
+                    className="min-w-0 truncate underline underline-offset-2"
+                  >
+                    {backup.file}
+                  </a>
+                  <span className="shrink-0 text-muted-foreground">
+                    {formatBytes(backup.bytes, 0)} · {formatDateTimeIso(backup.createdAt)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         <p className="text-[11px] leading-snug text-muted-foreground">
           Exports contain layout and preference data only — the schema cannot hold secrets.
           Import validates and strips unknown fields; invalid or oversized files are rejected.

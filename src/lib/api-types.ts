@@ -647,9 +647,10 @@ export interface AuditLogPayload {
   truncated: boolean;
 }
 
-/* ---- Shared dashboards (server-persisted layouts, v0.6) ------------------- */
+/* ---- Shared dashboards (server-persisted layouts, v0.6+) ------------------ */
 
-export type OverviewWidgetId = "cpu" | "memory" | "uptime" | "array" | "network" | "docker";
+export type { WidgetId } from "@/lib/widgets";
+import type { WidgetId } from "@/lib/widgets";
 
 /** Mirrors the server's versioned dashboard schema (validated there too). */
 export interface SharedDashboardDto {
@@ -659,10 +660,8 @@ export interface SharedDashboardDto {
   name: string;
   /** Proxy identity or "lan" in trusted-LAN mode. */
   owner: string;
-  layout: {
-    order: OverviewWidgetId[];
-    hidden: OverviewWidgetId[];
-  };
+  /** Widget layout: registry ids with predefined sizes (v2). */
+  widgets: Array<{ id: WidgetId; size: "sm" | "md" | "lg" }>;
   preferences: {
     historyWindow: "5m" | "15m" | "1h" | "6h" | "24h" | "7d";
     density: "compact" | "comfortable";
@@ -671,6 +670,7 @@ export interface SharedDashboardDto {
     dockerMetrics: boolean;
     showPerCore: boolean;
     dockerFilter: string;
+    networkInterface: string;
   };
   createdAt: string;
   updatedAt: string;

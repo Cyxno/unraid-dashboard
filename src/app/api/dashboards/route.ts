@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
 
 interface DashboardBody {
   name?: unknown;
-  layout?: unknown;
+  widgets?: unknown;
   preferences?: unknown;
 }
 
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
     const dashboard = await createDashboard(
       {
         name: String(body.name ?? ""),
-        layout: body.layout,
+        widgets: body.widgets,
         preferences: body.preferences,
       },
       guard.identity,
