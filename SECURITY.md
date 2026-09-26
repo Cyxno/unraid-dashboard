@@ -92,6 +92,17 @@ Static-only caching by design (`public/sw.js`, asserted by tests):
   reload mid-action; no stale-JS-against-new-API window beyond the
   explicit banner).
 
+## Release train (v0.7.x)
+
+Releases ship incrementally (0.7.1 … 0.7.5), each independently gated
+(lint/typecheck/tests/build/browser validation), deployed through the
+update pipeline, and tagged with the exact deployed commit. Rollback
+targets are restricted to the validated list from the persisted update
+history — never arbitrary tags. Invariants maintained across all
+releases: no Docker socket in the main dashboard, helper stays
+single-purpose, secret-boundary proxy auth, no secrets in audit or
+shared dashboards, static-only service-worker caching.
+
 ## Update management
 
 - The dashboard container is socket-free and cannot self-update or run
