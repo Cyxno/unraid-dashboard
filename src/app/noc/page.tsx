@@ -172,11 +172,9 @@ function NocShell() {
   const [shared, setShared] = useState<SharedDashboardDto[] | null>(null);
   const [cycleIndex, setCycleIndex] = useState(0);
   const [cyclePaused, setCyclePaused] = useState(false);
+  // 0 = no interaction yet → cycling starts immediately from load; any
+  // pointer/key/wheel activity re-arms the 30s resume window.
   const lastInteraction = useRef<number>(0);
-  useEffect(() => {
-    // Post-hydration init — Date.now() must not run during render.
-    lastInteraction.current = Date.now();
-  }, []);
 
   // Applied shared dashboard (layout drives density/window hints in NOC).
   const dashboard = useMemo(
