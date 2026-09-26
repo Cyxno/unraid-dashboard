@@ -28,5 +28,18 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/docker/:path*", "/storage", "/network", "/system", "/vms", "/notifications", "/logs", "/audit", "/settings", "/noc"],
+  matcher: [
+    "/",
+    "/docker/:path*",
+    "/storage",
+    "/network",
+    "/system",
+    "/vms",
+    "/notifications",
+    "/logs",
+    "/audit",
+    "/settings",
+    "/noc",
+    "/dashboard/:path*",
+  ],
 };

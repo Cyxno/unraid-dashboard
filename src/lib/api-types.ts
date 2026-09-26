@@ -615,7 +615,7 @@ export interface AuditEntry {
   actor: string;
   /** Client IP as observed by the dashboard. */
   sourceIp: string;
-  kind: "docker" | "vm" | "notification";
+  kind: "docker" | "vm" | "notification" | "dashboard" | "update";
   action: string;
   /** Target name (display) and id. */
   targetName: string;
@@ -631,6 +631,47 @@ export interface AuditLogPayload {
   total: number;
   truncated: boolean;
 }
+
+/* ---- Shared dashboards (server-persisted layouts, v0.6) ------------------- */
+
+export type OverviewWidgetId = "cpu" | "memory" | "uptime" | "array" | "network" | "docker";
+
+/** Mirrors the server's versioned dashboard schema (validated there too). */
+export interface SharedDashboardDto {
+  schemaVersion: number;
+  /** Opaque id, 12 lowercase alphanumerics. */
+  id: string;
+  name: string;
+  /** Proxy identity or "lan" in trusted-LAN mode. */
+  owner: string;
+  layout: {
+    order: OverviewWidgetId[];
+    hidden: OverviewWidgetId[];
+  };
+  preferences: {
+    historyWindow: "5m" | "15m" | "1h" | "6h" | "24h" | "7d";
+    density: "compact" | "comfortable";
+    tempUnit: "C" | "F";
+    refresh: "fast" | "normal" | "relaxed";
+    dockerMetrics: boolean;
+    showPerCore: boolean;
+    dockerFilter: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DashboardListPayload {
+  dashboards: SharedDashboardDto[];
+  invalid: string[];
+  identity: AuthIdentity;
+}
+
+export interface DashboardImportResult {
+  imported: SharedDashboardDto[];
+  rejected: Array<{ index: number; reason: string }>;
+}
+
 
 export interface ActionsCapabilities {
   enabled: boolean;

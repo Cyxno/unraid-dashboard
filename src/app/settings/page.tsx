@@ -19,6 +19,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDateTimeIso } from "@/lib/utils";
 import { useOverview } from "@/components/layout/overview-provider";
 import { InstallHint } from "@/components/layout/pwa-status-banner";
+import { DashboardsSection } from "@/components/settings/dashboards-section";
 import type {
   BuildInfoDto,
   ConnectionStatus,
@@ -463,6 +464,8 @@ export default function SettingsPage() {
           </Card>
 
           <SecuritySection />
+
+          <DashboardsSection />
 
           <AboutAndDiagnostics />
 

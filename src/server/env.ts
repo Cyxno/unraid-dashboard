@@ -64,6 +64,11 @@ const envSchema = z.object({
     .transform((value) => ["1", "true", "yes"].includes(value.trim().toLowerCase())),
   /** Directory for the append-only action audit log. */
   AUDIT_DIR: z.string().default("/app/data"),
+  /**
+   * Directory for shared dashboard JSON files (v0.6). Lives on the same
+   * narrow app-data volume; never a broad host mount.
+   */
+  DASHBOARDS_DIR: z.string().default("/app/data/dashboards"),
 
   /**
    * External origin (scheme + host[:port]) the dashboard is served on
