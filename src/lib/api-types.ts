@@ -526,6 +526,18 @@ export interface DiagnosticsPayload {
     dashboards: { count: number; writable: boolean; invalidFiles: string[] };
     /** Overall /app/data verdict: audit + dashboards writable. */
     dataVolumeWritable: boolean;
+    /** v0.7 additions. */
+    authMode: "disabled" | "proxy";
+    dashboardSchemaVersion: number;
+    dataVolumeFreeBytes: number | null;
+    helper: {
+      configured: boolean;
+      reachable: boolean | null;
+      phase: string | null;
+      helperVersion: string | null;
+    };
+    runningImageId: string | null;
+    ghcrDigest: string | null;
   };
   generatedAt: string;
 }

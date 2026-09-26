@@ -49,11 +49,14 @@ import {
 } from "./prometheus/containers";
 import { getBuildInfo } from "./version";
 import { getEnv, getEnvSafe } from "./env";
-import { mkdir, open, rm, stat as statFile } from "node:fs/promises";
+import { mkdir, open, rm, stat as statFile, statfs } from "node:fs/promises";
 import os from "node:os";
 import {
   dashboardsStorageHealth,
+  DASHBOARD_SCHEMA_VERSION,
 } from "./dashboards/store";
+import { getHelperStatus } from "./update/helper-client";
+import { checkForUpdate } from "./actions/update-check";
 import {
   samplerRunning,
   subscriberCount,
@@ -620,6 +623,19 @@ export async function getDiagnostics(): Promise<DiagnosticsPayload> {
   const dashboardsHealth = await dashboardsStorageHealth();
   const mem = process.memoryUsage();
 
+  // v0.7: free space on the app-data volume, auth mode, helper state,
+  // image digest surface (no secrets).
+  let dataVolumeFreeBytes: number | null = null;
+  try {
+    const fsStats = await statfs(getEnvSafe().AUDIT_DIR);
+    dataVolumeFreeBytes = Number(fsStats.bavail) * Number(fsStats.bsize);
+  } catch {
+    dataVolumeFreeBytes = null;
+  }
+  const helperStatus = await getHelperStatus().catch(() => null);
+  const env = getEnvSafe();
+  const release = await checkForUpdate().catch(() => null);
+
   const self: DiagnosticsPayload["self"] = {
     cpuPercent: selfCpuPercent(),
     memoryRssBytes: mem.rss,
@@ -633,6 +649,17 @@ export async function getDiagnostics(): Promise<DiagnosticsPayload> {
       invalidFiles: dashboardsHealth.invalidFiles,
     },
     dataVolumeWritable: auditWritable && dashboardsHealth.writable,
+    authMode: env.AUTH_MODE,
+    dashboardSchemaVersion: DASHBOARD_SCHEMA_VERSION,
+    dataVolumeFreeBytes,
+    helper: {
+      configured: helperStatus?.configured ?? false,
+      reachable: helperStatus?.reachable ?? null,
+      phase: helperStatus?.phase ?? null,
+      helperVersion: helperStatus?.helperVersion ?? null,
+    },
+    runningImageId: helperStatus?.currentImageId ?? null,
+    ghcrDigest: release?.latestManifestDigest ?? null,
   };
 
   return {

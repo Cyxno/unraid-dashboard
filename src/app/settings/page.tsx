@@ -254,6 +254,35 @@ function AboutAndDiagnostics() {
                     <Badge variant={diag.self.dataVolumeWritable ? "success" : "destructive"}>
                       {diag.self.dataVolumeWritable ? "persistent + writable" : "NOT writable"}
                     </Badge>
+                    {diag.self.dataVolumeFreeBytes != null && (
+                      <span className="font-mono">{formatBytes(diag.self.dataVolumeFreeBytes, 0)} free</span>
+                    )}
+                  </DiagnosticsRow>
+                  {/* v0.7 additions */}
+                  <DiagnosticsRow label="Auth mode">
+                    <Badge variant={diag.self.authMode === "proxy" ? "success" : "muted"}>
+                      {diag.self.authMode}
+                    </Badge>
+                  </DiagnosticsRow>
+                  <DiagnosticsRow label="Dashboard schema">
+                    <span className="font-mono">v{diag.self.dashboardSchemaVersion}</span>
+                  </DiagnosticsRow>
+                  <DiagnosticsRow label="Update helper">
+                    {!diag.self.helper.configured ? (
+                      <Badge variant="muted">not configured</Badge>
+                    ) : diag.self.helper.reachable ? (
+                      <Badge variant="success">
+                        reachable{diag.self.helper.phase && diag.self.helper.phase !== "idle" ? ` (${diag.self.helper.phase})` : ""}
+                      </Badge>
+                    ) : (
+                      <Badge variant="destructive">unreachable</Badge>
+                    )}
+                  </DiagnosticsRow>
+                  <DiagnosticsRow label="Image digests">
+                    <span className="font-mono text-[10px]">
+                      running {diag.self.runningImageId ? diag.self.runningImageId.slice(7, 19) : "—"}
+                      {" · "}GHCR {diag.self.ghcrDigest ? diag.self.ghcrDigest.slice(7, 19) : "—"}
+                    </span>
                   </DiagnosticsRow>
                   {!diag.self.dataVolumeWritable && (
                     <p className="text-[11px] text-warning">
