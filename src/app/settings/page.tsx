@@ -82,16 +82,28 @@ function Toggle({
 
 /* About + diagnostics ------------------------------------------------------- */
 
-interface UpdateCheckPayload {
+interface UpdateStatusPayload {
   current: string;
   gitSha: string | null;
   buildTime: string | null;
   imageRef: string | null;
-  update: { status: "up-to-date" | "available" | "unknown"; reason?: string; latestTag: string | null };
+  update: {
+    status: "up-to-date" | "available" | "unknown";
+    reason?: string;
+    latestTag: string | null;
+    latestManifestDigest: string | null;
+    latestRevisionSha: string | null;
+    registry: {
+      tokenConfigured: boolean;
+      reachable: boolean | null;
+      authorized: boolean | null;
+      reason: string | null;
+    };
+  };
 }
 
 function AboutAndDiagnostics() {
-  const version = usePoll<UpdateCheckPayload>("/api/update-check", 300_000);
+  const version = usePoll<UpdateStatusPayload>("/api/update-check", 300_000);
   const diagnostics = usePoll<DiagnosticsPayload>(
     "/api/diagnostics",
     PAGE_INTERVAL_MS.connection,
@@ -216,6 +228,39 @@ function AboutAndDiagnostics() {
                   )}
                 </dd>
               </div>
+              {update?.status === "available" && update.latestRevisionSha && (
+                <div className="flex justify-between gap-4">
+                  <dt className="text-muted-foreground">Available build</dt>
+                  <dd className="font-mono text-xs">
+                    {update.latestTag} · {update.latestRevisionSha.slice(0, 7)}
+                  </dd>
+                </div>
+              )}
+              {update?.latestManifestDigest && (
+                <div className="flex justify-between gap-4">
+                  <dt className="text-muted-foreground">Registry digest</dt>
+                  <dd
+                    className="max-w-[220px] truncate font-mono text-xs"
+                    title={update.latestManifestDigest}
+                  >
+                    {update.latestManifestDigest.slice(0, 7 + 7)}…
+                  </dd>
+                </div>
+              )}
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">GHCR check</dt>
+                <dd className="text-xs">
+                  {!update?.registry.tokenConfigured ? (
+                    <span title="Set GHCR_TOKEN (read:packages) on the container to enable registry checks.">
+                      not configured
+                    </span>
+                  ) : update.registry.authorized ? (
+                    <Badge variant="success">registry reachable</Badge>
+                  ) : (
+                    <span title={update.registry.reason ?? undefined}>registry auth failed</span>
+                  )}
+                </dd>
+              </div>
             </dl>
           ) : (
             <p className="text-muted-foreground">Version information unavailable.</p>
@@ -225,6 +270,29 @@ function AboutAndDiagnostics() {
               Install as app
             </p>
             <InstallHint />
+          </div>
+          <div className="mt-3 border-t pt-3">
+            <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              Update management
+            </p>
+            <div className="space-y-1 text-xs text-muted-foreground">
+              <p>
+                Updates are applied host-side with{" "}
+                <code className="rounded bg-secondary px-1">scripts/update-dashboard.sh</code> — it
+                recreates the container with identical configuration, health-checks the new image,
+                and rolls back automatically on failure. The dashboard container itself never
+                touches the Docker socket, so it cannot update itself.
+              </p>
+              {!update?.registry.tokenConfigured && (
+                <p>
+                  Registry status needs a server-side <code className="rounded bg-secondary px-1">GHCR_TOKEN</code>{" "}
+                  (read:packages). Host pulls need a one-time{" "}
+                  <code className="rounded bg-secondary px-1">scripts/login-ghcr.sh</code> login —
+                  without it <code className="rounded bg-secondary px-1">docker pull</code> of new
+                  releases fails with <em>unauthorized</em>.
+                </p>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>
