@@ -97,12 +97,32 @@ export async function maybeRecordFromHelper(
   const toVersion = versionFromRef(last.to);
 
   // Resolve the actor: a pending dashboard-side request that matches the
-  // machine's start time; otherwise the machine ran host-side.
+  // machine's start time; otherwise look it up in the audit trail (the
+  // in-memory handoff dies with the replaced container, but the request
+  // was audited there first); otherwise the machine ran host-side.
   const pending = globalStore.__dashboardUpdatePending ?? null;
-  const actor =
+  let actor =
     pending && pending.tag === toVersion && last.startedAt && new Date(last.startedAt).getTime() >= pending.requestedAt - 1000
       ? pending.actor
-      : "helper-machine";
+      : "";
+  if (!actor) {
+    try {
+      const { readAudit } = await import("@/server/actions/audit");
+      const auditTrail = await readAudit(100);
+      const match = auditTrail.entries.find(
+        (entry) =>
+          entry.kind === "update" &&
+          entry.action === "request" &&
+          entry.targetId === toVersion &&
+          entry.result === "success" &&
+          new Date(entry.timestamp).getTime() <= new Date(last.startedAt).getTime() + 60_000 &&
+          Date.now() - new Date(entry.timestamp).getTime() < 3_600_000,
+      );
+      actor = match?.actor ?? "helper-machine";
+    } catch {
+      actor = "helper-machine";
+    }
+  }
 
   const entry: UpdateHistoryEntry = {
     timestamp: last.finishedAt,
