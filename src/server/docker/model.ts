@@ -56,11 +56,11 @@ export interface ContainerFacts {
   repoDigests: string[];
   created: string | null;
   labels: {
-    composeProject?: string;
-    composeService?: string;
-    composeWorkdir?: string;
-    composeFiles?: string;
-    unraidManaged?: string;
+    "com.docker.compose.project"?: string;
+    "com.docker.compose.service"?: string;
+    "com.docker.compose.project.working_dir"?: string;
+    "com.docker.compose.project.config_files"?: string;
+    "net.unraid.docker.managed"?: string;
   };
 }
 
@@ -144,15 +144,15 @@ export function classifyManagement(
   facts: ContainerFacts,
   customDeployContainers: string[],
 ): { management_type: ManagementType; management_source: string; update_strategy: UpdateStrategy } {
-  if (facts.labels.composeProject && facts.labels.composeService) {
+  if (facts.labels["com.docker.compose.project"] && facts.labels["com.docker.compose.service"]) {
     const localBuilt = facts.repoDigests.length === 0;
     return {
       management_type: "compose",
-      management_source: `compose:${facts.labels.composeProject}/${facts.labels.composeService}`,
+      management_source: `compose:${facts.labels["com.docker.compose.project"]}/${facts.labels["com.docker.compose.service"]}`,
       update_strategy: localBuilt ? "local_build" : "compose_service",
     };
   }
-  if (facts.labels.unraidManaged === "dockerman") {
+  if (facts.labels["net.unraid.docker.managed"] === "dockerman") {
     return { management_type: "unraid", management_source: "dockerman-label", update_strategy: "unraid_template" };
   }
   if (customDeployContainers.includes(facts.name)) {

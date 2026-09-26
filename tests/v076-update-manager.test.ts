@@ -66,7 +66,7 @@ describe("v0.7.6 management classification (metadata-based, never name-based)", 
     const result = classifyManagement(
       facts({
         name: "immich_server",
-        labels: { composeProject: "immich", composeService: "immich-server", composeWorkdir: "/boot/config/plugins/compose.manager/projects/Immich" },
+        labels: { "com.docker.compose.project": "immich", "com.docker.compose.service": "immich-server", "com.docker.compose.project.working_dir": "/boot/config/plugins/compose.manager/projects/Immich" },
       }),
       [],
     );
@@ -80,7 +80,7 @@ describe("v0.7.6 management classification (metadata-based, never name-based)", 
         name: "tornscope-web-1",
         image: "tornscope-web:latest",
         repoDigests: [],
-        labels: { composeProject: "tornscope", composeService: "web" },
+        labels: { "com.docker.compose.project": "tornscope", "com.docker.compose.service": "web" },
       }),
       [],
     );
@@ -90,7 +90,7 @@ describe("v0.7.6 management classification (metadata-based, never name-based)", 
 
   it("unraid dockerman label picks unraid_template", () => {
     const result = classifyManagement(
-      facts({ name: "Kavita", labels: { unraidManaged: "dockerman" } }),
+      facts({ name: "Kavita", labels: { "net.unraid.docker.managed": "dockerman" } }),
       [],
     );
     assert.equal(result.management_type, "unraid");
@@ -119,8 +119,8 @@ describe("v0.7.6 management classification (metadata-based, never name-based)", 
   });
 
   it("never classifies by name alone: same name, different metadata, different result", () => {
-    const compose = classifyManagement(facts({ name: "app", labels: { composeProject: "p", composeService: "app" } }), ["app"]);
-    const unraid = classifyManagement(facts({ name: "app", labels: { unraidManaged: "dockerman" } }), ["app"]);
+    const compose = classifyManagement(facts({ name: "app", labels: { "com.docker.compose.project": "p", "com.docker.compose.service": "app" } }), ["app"]);
+    const unraid = classifyManagement(facts({ name: "app", labels: { "net.unraid.docker.managed": "dockerman" } }), ["app"]);
     assert.equal(compose.management_type, "compose");
     assert.equal(unraid.management_type, "unraid");
   });
