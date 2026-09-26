@@ -229,9 +229,11 @@ import {
   alignSeries,
   buildBuckets,
   buildHourlyTimeline,
+  classifyEpisode,
   describeCorrelation,
   detectThermalEpisodes,
   pearsonCorrelation,
+  topContainersInRange,
   type TempSeriesPoint,
   type ThermalEpisode,
   type TempBuckets,
@@ -379,6 +381,22 @@ export async function getThermalDiagnostics(
     // Episode CPU/power stats via aligned series within bounds.
     const cpuPoints = tempCpuPairs;
     const powerPoints = tempPowerPairs;
+
+    // Per-container CPU history for episode attribution (v0.7). One range
+    // query over all name-keyed container CPU series at 5m step; a series
+    // must have ≥2 in-range samples to count (no fabricated attribution).
+    let containerCpuSeries = new Map<string, Array<{ t: number; v: number | null }>>();
+    try {
+      const matrix = await client.range("docker_stats_cpu_percent", Math.floor(Date.now() / 1000) - windowSeconds, Math.floor(Date.now() / 1000), 300);
+      for (const entry of matrix) {
+        const name = entry.metric.name;
+        if (!name) continue;
+        containerCpuSeries.set(name, entry.points.map((point) => ({ t: point.t, v: point.v })));
+      }
+    } catch {
+      containerCpuSeries = new Map();
+    }
+
     for (const episode of episodes) {
       const endT = episode.endMs ?? Date.now();
       const inEpisodeCpu = cpuPoints.filter(
@@ -397,6 +415,26 @@ export async function getThermalDiagnostics(
           Math.round((inEpisodePower.reduce((sum, pair) => sum + pair.bv, 0) / inEpisodePower.length) * 10) / 10;
         episode.peakPowerWatts = Math.round(Math.max(...inEpisodePower.map((pair) => pair.bv)) * 10) / 10;
       }
+      // Attribution: per-episode correlations + top CPU containers.
+      const episodeTempCpu = pearsonCorrelation(
+        inEpisodeCpu.map((pair) => ({ av: pair.av, bv: pair.bv })),
+      );
+      const episodeTempPower = pearsonCorrelation(
+        inEpisodePower.map((pair) => ({ av: pair.av, bv: pair.bv })),
+      );
+      episode.tempVsCpu = episodeTempCpu;
+      episode.tempVsPower = episodeTempPower;
+      episode.classification = classifyEpisode({
+        avgCpuPercent: episode.avgCpuPercent,
+        tempVsCpu: episodeTempCpu,
+        tempVsPower: episodeTempPower,
+      });
+      episode.topContainers = topContainersInRange(
+        containerCpuSeries,
+        Math.floor(episode.startMs / 1000),
+        Math.floor(endT / 1000),
+        3,
+      );
     }
 
     const peakPowerWatts24h =

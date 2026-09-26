@@ -51,6 +51,10 @@ export interface ThermalDiagnosticsPayload {
       peakCpuPercent: number | null;
       avgPowerWatts: number | null;
       peakPowerWatts: number | null;
+      tempVsCpu?: number | null;
+      tempVsPower?: number | null;
+      classification?: "load-correlated" | "power-correlated" | "weakly-correlated" | "unexplained";
+      topContainers?: Array<{ name: string; avgCpuPercent: number; peakCpuPercent: number }>;
     }>;
     correlation: {
       tempVsCpu: number | null;
@@ -203,28 +207,51 @@ export function ThermalDiagnosticsCard({
                     <th className="py-1 pr-2 font-medium">Start</th>
                     <th className="py-1 pr-2 font-medium">Duration</th>
                     <th className="py-1 pr-2 font-medium">Max</th>
-                    <th className="py-1 pr-2 font-medium">Avg</th>
                     <th className="py-1 pr-2 font-medium">CPU avg/peak</th>
-                    <th className="py-1 font-medium">Power avg</th>
+                    <th className="py-1 pr-2 font-medium">Power avg</th>
+                    <th className="py-1 pr-2 font-medium">Top containers</th>
+                    <th className="py-1 font-medium">Pattern</th>
                   </tr>
                 </thead>
                 <tbody className="font-mono tabular-nums">
                   {episodes.slice(0, 8).map((episode) => (
-                    <tr key={episode.startMs} className="border-t">
+                    <tr key={episode.startMs} className="border-t align-top">
                       <td className="py-1 pr-2">{formatHour(episode.startMs)}</td>
                       <td className="py-1 pr-2">
                         {formatDuration(episode.durationSeconds)}
                         {episode.endMs === null && " (ongoing)"}
                       </td>
                       <td className="py-1 pr-2">{formatTemp(episode.maxC, prefs.tempUnit)}</td>
-                      <td className="py-1 pr-2">{formatTemp(episode.avgC, prefs.tempUnit)}</td>
                       <td className="py-1 pr-2">
                         {episode.avgCpuPercent !== null
                           ? `${formatPercent(episode.avgCpuPercent)} / ${formatPercent(episode.peakCpuPercent)}`
                           : "—"}
                       </td>
-                      <td className="py-1">
+                      <td className="py-1 pr-2">
                         {episode.avgPowerWatts !== null ? formatWatts(episode.avgPowerWatts) : "—"}
+                      </td>
+                      <td className="max-w-[180px] py-1 pr-2 font-sans text-[11px]">
+                        {episode.topContainers && episode.topContainers.length > 0 ? (
+                          <span className="block truncate" title={episode.topContainers.map((c) => `${c.name} (${c.avgCpuPercent}%)`).join(", ")}>
+                            {episode.topContainers.map((c) => c.name).join(", ")}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">no per-container data</span>
+                        )}
+                      </td>
+                      <td className="py-1 font-sans">
+                        <Badge
+                          variant={
+                            episode.classification === "load-correlated"
+                              ? "warning"
+                              : episode.classification === "unexplained"
+                                ? "muted"
+                                : "secondary"
+                          }
+                          className="text-[10px]"
+                        >
+                          {episode.classification ?? "—"}
+                        </Badge>
                       </td>
                     </tr>
                   ))}
@@ -335,7 +362,10 @@ export function ThermalDiagnosticsCard({
         <p className="text-[11px] text-muted-foreground">
           Buckets, episodes and correlations are computed from actual Prometheus range data
           (60s step, 24h). Power uses the RAPL <code>{d.correlation.powerZone ?? "n/a"}</code> zone.
-          Correlation strength never implies causation; this host exposes no throttle counters.
+          Episode patterns follow documented rules (avg CPU ≥50% or r≥0.5 → load/power-correlated;
+          both &lt;0.3 → unexplained) and are associative — never causal. "Top containers" come from
+          name-keyed container CPU history and are omitted entirely when no data exists. This host
+          exposes no throttle counters, so throttling is never claimed.
         </p>
       </CardContent>
     </Card>

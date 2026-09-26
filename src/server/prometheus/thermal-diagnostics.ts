@@ -109,6 +109,13 @@ export interface ThermalEpisode {
   /** Aligned package power (W) over the episode window. */
   avgPowerWatts: number | null;
   peakPowerWatts: number | null;
+  /** Per-episode correlations (v0.7, associative only). */
+  tempVsCpu?: number | null;
+  tempVsPower?: number | null;
+  /** Documented-rule classification (v0.7, never causal). */
+  classification?: "load-correlated" | "power-correlated" | "weakly-correlated" | "unexplained";
+  /** Top CPU containers during the episode (v0.7; [] when data is missing). */
+  topContainers?: Array<{ name: string; avgCpuPercent: number; peakCpuPercent: number }>;
 }
 
 export interface EpisodeOptions {
@@ -308,6 +315,70 @@ export function describeCorrelation(r: number | null): string {
   if (magnitude >= 0.5) return `moderate ${direction}`;
   if (magnitude >= 0.3) return `weak ${direction}`;
   return "negligible";
+}
+
+/* ---- episode attribution (v0.7) --------------------------------------------- */
+
+/**
+ * Classification of WHY an episode may have happened — derived ONLY from
+ * the documented rules below. Associative wording throughout: this host
+ * exposes no thermal-throttle counters, so "throttling" is never claimed.
+ *
+ * Rules (first match wins):
+ * - avg CPU ≥ 50 % during the episode          → "load-correlated"
+ * - r(temp, cpu) ≥ 0.5 across the episode      → "load-correlated"
+ * - r(temp, power) ≥ 0.5 across the episode    → "power-correlated"
+ * - both |r| < 0.3 (or not computable)         → "unexplained"
+ * - otherwise                                   → "weakly-correlated"
+ */
+export type EpisodeClassification =
+  | "load-correlated"
+  | "power-correlated"
+  | "weakly-correlated"
+  | "unexplained";
+
+export function classifyEpisode(input: {
+  avgCpuPercent: number | null;
+  tempVsCpu: number | null;
+  tempVsPower: number | null;
+}): EpisodeClassification {
+  if (input.avgCpuPercent !== null && input.avgCpuPercent >= 50) return "load-correlated";
+  if (input.tempVsCpu !== null && input.tempVsCpu >= 0.5) return "load-correlated";
+  if (input.tempVsPower !== null && input.tempVsPower >= 0.5) return "power-correlated";
+  const cpuR = input.tempVsCpu ?? 0;
+  const powerR = input.tempVsPower ?? 0;
+  if (Math.max(Math.abs(cpuR), Math.abs(powerR)) < 0.3) return "unexplained";
+  return "weakly-correlated";
+}
+
+/**
+ * Top-N CPU containers within a time range from a per-container series
+ * map (name → points). Honest about missing data: returns [] when the
+ * map is empty or has no numeric samples in range — the caller must not
+ * fabricate attribution.
+ */
+export function topContainersInRange(
+  containerSeries: Map<string, Array<{ t: number; v: number | null }>>,
+  startSeconds: number,
+  endSeconds: number,
+  topN = 3,
+): Array<{ name: string; avgCpuPercent: number; peakCpuPercent: number }> {
+  const averages: Array<{ name: string; avgCpuPercent: number; peakCpuPercent: number }> = [];
+  for (const [name, points] of containerSeries) {
+    const inRange = points.filter(
+      (point) => point.t >= startSeconds && point.t <= endSeconds && point.v !== null && Number.isFinite(point.v),
+    );
+    if (inRange.length < 2) continue; // need at least two samples to average
+    const values = inRange.map((point) => point.v as number);
+    const avg = values.reduce((sum, value) => sum + value, 0) / values.length;
+    averages.push({
+      name,
+      avgCpuPercent: Math.round(avg * 10) / 10,
+      peakCpuPercent: Math.round(Math.max(...values) * 10) / 10,
+    });
+  }
+  averages.sort((a, b) => b.avgCpuPercent - a.avgCpuPercent);
+  return averages.slice(0, topN);
 }
 
 /* ---- timeline --------------------------------------------------------------- */
