@@ -65,16 +65,19 @@ function normalizeUser(value: string | null): string | null {
  * Resolve the request's auth state. Pure function of env + headers:
  * no I/O, trivially testable.
  *
- * Trust model (documented in README/SECURITY.md):
- * - "proxy" mode requires the request to carry BOTH:
- *   (a) the proxy-injected identity header (AUTH_HEADER), and
- *   (b) the proxy-injected shared secret (AUTH_PROXY_SECRET_HEADER
- *       matching AUTH_PROXY_SECRET) — injected by the reverse proxy and
- *       impossible to guess from outside. Direct requests, including LAN
- *       clients forging X-Forwarded-For and an identity header, are
- *       rejected: they cannot possess the secret.
- * - A reverse proxy MUST overwrite (not append) identity and forwarded
- *   headers; the NPM config in the README does exactly that.
+ * Trust model (v0.7.6 hybrid, documented in README/SECURITY.md):
+ * - Secret header PRESENT and valid (NPM + Authelia path): the request
+ *   is authenticated; identity comes from the proxy-injected
+ *   AUTH_HEADER. Client-supplied identity headers are overwritten by
+ *   NPM before they reach the app.
+ * - Secret header PRESENT but wrong: DENIED (401) — a broken/misconfigured
+ *   proxy request must never downgrade to the trusted-local fallback.
+ * - Secret header ABSENT: direct trusted-network access. Port 8090 is
+ *   firewall-restricted (DASH8090 chain) to LAN/Tailscale/localhost/
+ *   Docker bridges, so reachability IS the trust boundary (firewall-
+ *   backed, not a spoofable header bypass). Such requests get the FIXED
+ *   identity "trusted-local"; client-supplied identity headers are
+ *   ignored entirely, so LAN users cannot escalate to named identities.
  * - The dashboard never performs password auth and holds no user store.
  */
 export function resolveAuth(
@@ -90,42 +93,62 @@ export function resolveAuth(
     };
   }
 
-  // Proxy mode. The shared secret is the actual trust boundary: headers
-  // are forgeable on any network that can reach the port, the secret is
-  // not. When the secret is not configured the mode fails CLOSED.
+  // Proxy mode. The shared secret distinguishes the Authelia path from
+  // direct trusted-network access; reachability is enforced by firewall.
   const secretHeader = headers.get(env.AUTH_PROXY_SECRET_HEADER);
-  if (!proxySecretProvided(env, secretHeader)) {
+
+  if (secretHeader !== null) {
+    // Secret present: wrong value → deny; valid value → proxy identity.
+    if (!proxySecretProvided(env, secretHeader)) {
+      return {
+        allowed: false,
+        identity: { mode: "proxy", user: null },
+        reason: "Unauthorized — invalid proxy credentials.",
+        status: 401,
+      };
+    }
+
+    const user = normalizeUser(headers.get(env.AUTH_HEADER));
+    if (!user) {
+      return {
+        allowed: false,
+        identity: { mode: "proxy", user: null },
+        reason: `Missing identity header (${env.AUTH_HEADER}).`,
+        status: 401,
+      };
+    }
+
+    const allowedUsers = env.AUTH_ALLOWED_USERS.split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+    if (allowedUsers.length > 0 && !allowedUsers.includes(user)) {
+      return {
+        allowed: false,
+        identity: { mode: "proxy", user },
+        reason: "User is not in the allowed list.",
+        status: 403,
+      };
+    }
+
+    return { allowed: true, identity: { mode: "proxy", user } };
+  }
+
+  // No secret header: direct trusted-network request. Firewall-backed.
+  // Fixed identity — client-supplied identity headers are ignored.
+  // Fail closed when no secret is configured at all: without it the NPM
+  // path cannot exist and the trust model is undefined.
+  if (!env.AUTH_PROXY_SECRET) {
     return {
       allowed: false,
       identity: { mode: "proxy", user: null },
-      reason: "Direct access is not permitted — use the configured reverse proxy.",
+      reason: "Direct access is not permitted — proxy secret is not configured.",
       status: 401,
     };
   }
-
-  const user = normalizeUser(headers.get(env.AUTH_HEADER));
-  if (!user) {
-    return {
-      allowed: false,
-      identity: { mode: "proxy", user: null },
-      reason: `Missing identity header (${env.AUTH_HEADER}).`,
-      status: 401,
-    };
-  }
-
-  const allowedUsers = env.AUTH_ALLOWED_USERS.split(",")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
-  if (allowedUsers.length > 0 && !allowedUsers.includes(user)) {
-    return {
-      allowed: false,
-      identity: { mode: "proxy", user },
-      reason: "User is not in the allowed list.",
-      status: 403,
-    };
-  }
-
-  return { allowed: true, identity: { mode: "proxy", user } };
+  return {
+    allowed: true,
+    identity: { mode: "proxy", user: "trusted-local" },
+  };
 }
 
 /** Constant-time shared-secret comparison; absent config never matches. */

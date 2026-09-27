@@ -42,7 +42,7 @@ describe("auth: disabled mode", () => {
   });
 });
 
-describe("auth: proxy mode", () => {
+describe("auth: proxy mode (v0.7.6 hybrid)", () => {
   beforeEach(() => {
     baseEnv({
       AUTH_MODE: "proxy",
@@ -67,7 +67,7 @@ describe("auth: proxy mode", () => {
     assert.equal(result.identity.user, "remco");
   });
 
-  it("REJECTS a spoofed identity header without the shared secret (LAN attacker)", () => {
+  it("direct LAN access without secret = trusted-local, spoofed identity IGNORED", () => {
     const spoofs: Array<Record<string, string>> = [
       { "x-forwarded-for": "1.2.3.4", "x-forwarded-user": "admin" },
       { "x-forwarded-user": "admin" },
@@ -75,12 +75,12 @@ describe("auth: proxy mode", () => {
     ];
     for (const spoof of spoofs) {
       const result = resolveAuth(headers(spoof), "unknown");
-      assert.equal(result.allowed, false, JSON.stringify(spoof));
-      assert.equal(result.status, 401, JSON.stringify(spoof));
+      assert.equal(result.allowed, true, JSON.stringify(spoof));
+      assert.equal(result.identity.user, "trusted-local", "spoofed identity must not leak");
     }
   });
 
-  it("rejects a WRONG secret (fail closed)", () => {
+  it("rejects a WRONG secret (present but invalid — no fallback)", () => {
     const result = resolveAuth(
       headers({
         "x-forwarded-user": "remco",
@@ -92,22 +92,10 @@ describe("auth: proxy mode", () => {
     assert.equal(result.status, 401);
   });
 
-  it("fails closed when no proxy secret is configured", () => {
+  it("fails closed when no proxy secret is configured (direct request)", () => {
     delete process.env.AUTH_PROXY_SECRET;
     resetEnvCache();
-    const result = resolveAuth(
-      headers({
-        "x-forwarded-user": "remco",
-        "x-dashboard-auth-token": "anything",
-      }),
-      "unknown",
-    );
-    assert.equal(result.allowed, false);
-    assert.equal(result.status, 401);
-  });
-
-  it("rejects direct requests without any proxy evidence", () => {
-    const result = resolveAuth(headers(), null);
+    const result = resolveAuth(headers({ "x-forwarded-user": "remco" }), "unknown");
     assert.equal(result.allowed, false);
     assert.equal(result.status, 401);
   });
