@@ -1,0 +1,25 @@
+import { chromium } from "playwright-core";
+const browser = await chromium.connectOverCDP("http://[::1]:9222");
+const context = browser.contexts()[0] ?? (await browser.newContext());
+const page = await context.newPage();
+await page.setViewportSize({ width: 1440, height: 900 });
+let postSeen = false;
+await page.route("**/api/docker/update", async (route) => {
+  postSeen = true;
+  await route.fulfill({ status: 202, contentType: "application/json", body: '{"accepted":true,"phase":"requested"}' });
+});
+await page.goto("http://192.168.1.2:8090/docker", { waitUntil: "domcontentloaded" });
+await page.waitForTimeout(16000);
+const btn = page.locator('button[aria-label^="Update "]').first();
+console.log("update-knop:", (await btn.count()) > 0, "| label:", await btn.getAttribute("aria-label").catch(() => "?"));
+await btn.click();
+await page.waitForTimeout(700);
+console.log("dialoog:", (await page.locator("[role=alertdialog]").count()) > 0);
+const diagText = (await page.locator("[role=alertdialog]").textContent().catch(() => "")).slice(0, 100);
+console.log("dialog:", diagText);
+await page.getByRole("button", { name: "Start update" }).click();
+await page.waitForTimeout(1500);
+console.log("POST verstuurd:", postSeen, "| fase zichtbaar:", (await page.textContent("body")).includes("requested"));
+await page.screenshot({ path: "/tmp/qol-update-flow.png" });
+await page.close();
+process.exit(0);

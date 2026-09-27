@@ -419,6 +419,49 @@ export function DockerUpdatesPanel() {
           Updates are dispatched through the isolated update helper — never from this page directly.
           Policy defaults: HIGH risk = manual; nothing updates automatically.
         </p>
+        {updateTarget && (
+          <ConfirmDialog
+            open
+            title={`Update ${updateTarget.name}?`}
+            severity={updateTarget.risk === "HIGH" ? "destructive" : "warning"}
+            busy={updating}
+            confirmLabel="Start update"
+            onConfirm={() => {
+              const target = updateTarget;
+              setUpdateTarget(null);
+              void startUpdate(target.name);
+            }}
+            onCancel={() => setUpdateTarget(null)}
+          >
+            <p>
+              The helper snapshots the exact container configuration, pulls{" "}
+              <strong>{updateTarget.image}</strong>, recreates the container identically and
+              verifies health — rolling back automatically on any failure. The container restarts
+              briefly. Audit records this as your identity.
+            </p>
+            <p className="text-[11px]">
+              Management: {MANAGEMENT_LABEL[updateTarget.management_type]} · risk {updateTarget.risk} ·
+              policy {updateTarget.policy}
+            </p>
+          </ConfirmDialog>
+        )}
+        {rollbackTarget && (
+          <ConfirmDialog
+            open
+            title={`Roll back ${rollbackTarget}?`}
+            severity="destructive"
+            busy={updating}
+            confirmLabel="Roll back now"
+            onConfirm={() => void performRollback(rollbackTarget)}
+            onCancel={() => setRollbackTarget(null)}
+          >
+            <p>
+              The container is recreated from the stored pre-update snapshot (previous image +
+              exact configuration) and health-verified. If the rollback itself fails, manual
+              recovery is required.
+            </p>
+          </ConfirmDialog>
+        )}
       </CardContent>
     </Card>
   );

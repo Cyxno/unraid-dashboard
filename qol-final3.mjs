@@ -1,0 +1,24 @@
+import { chromium } from "playwright-core";
+const browser = await chromium.connectOverCDP("http://[::1]:9222");
+const context = browser.contexts()[0] ?? (await browser.newContext());
+const page = await context.newPage();
+await page.setViewportSize({ width: 1440, height: 900 });
+let postSeen = false;
+await page.route("**/api/docker/update", async (route) => {
+  postSeen = true;
+  await route.fulfill({ status: 202, contentType: "application/json", body: '{"accepted":true,"phase":"requested"}' });
+});
+await page.goto("http://192.168.1.2:8090/docker", { waitUntil: "domcontentloaded" });
+await page.waitForTimeout(15000);
+const btn = page.locator('button[aria-label^="Update "]').first();
+console.log("1. update-knop:", (await btn.count()) > 0, "|", await btn.getAttribute("aria-label").catch(() => "?"));
+await btn.click();
+await page.waitForTimeout(700);
+console.log("2. dialoog opent:", (await page.locator("[role=alertdialog]").count()) > 0);
+const txt = (await page.locator("[role=alertdialog]").textContent().catch(() => "")).slice(0, 90);
+console.log("3. dialog:", txt);
+await page.getByRole("button", { name: "Start update" }).click();
+await page.waitForTimeout(1500);
+console.log("4. POST verstuurd:", postSeen, "| fase:", (await page.textContent("body")).includes("requested"));
+await page.close();
+process.exit(0);
