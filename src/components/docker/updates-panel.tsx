@@ -51,6 +51,8 @@ interface ManagedContainerDto {
 }
 
 interface UpdatesPayload {
+  checking?: boolean;
+  pending?: number;
   available: boolean;
   reason?: string;
   containers: ManagedContainerDto[];
@@ -111,8 +113,18 @@ export function DockerUpdatesPanel() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  // §12 filter-chips: updates / blocked / local build / alles
+  type PanelFilter = "updates" | "blocked" | "local" | "all";
+  const [filter, setFilter] = useState<PanelFilter>("updates");
   const updates = usePoll<UpdatesPayload>("/api/docker/updates", 600_000);
   const data = updates.data;
+  // Koude cache: de eerste sweep draait op de achtergrond — poll sneller.
+  const checking = data?.checking === true;
+  useEffect(() => {
+    if (!checking) return;
+    const timer = setInterval(() => updates.refresh(), 3_000);
+    return () => clearInterval(timer);
+  }, [checking, updates]);
   const [updateTarget, setUpdateTarget] = useState<ManagedContainerDto | null>(null);
   const [updating, setUpdating] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -185,18 +197,38 @@ export function DockerUpdatesPanel() {
 
   const interesting = useMemo(() => {
     if (!data) return [];
-    return data.containers
-      .filter(
-        (container) =>
-          container.update_available ||
-          container.update_status === "AUTH_REQUIRED" ||
-          container.update_status === "CHECK_FAILED",
-      )
-      .sort((a, b) => {
-        const rank = { HIGH: 0, MEDIUM: 1, LOW: 2 } as const;
-        return rank[a.risk] - rank[b.risk];
-      });
+    const rows = data.containers.filter(
+      (container) =>
+        container.update_available ||
+        container.update_status === "AUTH_REQUIRED" ||
+        container.update_status === "CHECK_FAILED",
+    );
+    void rows;
+    return data.containers;
   }, [data]);
+
+  const filtered = useMemo(() => {
+    if (!data) return [];
+    const rank = { HIGH: 0, MEDIUM: 1, LOW: 2 } as const;
+    const rows = data.containers.filter((container) => {
+      switch (filter) {
+        case "updates":
+          return container.update_available;
+        case "blocked": {
+          const gate = computeGate(container);
+          return !gate.canUpdate && Boolean(gate.reason);
+        }
+        case "local":
+          return container.update_status === "LOCAL_BUILD";
+        default:
+          return true;
+      }
+    });
+    return rows.sort((a, b) => {
+      if (a.update_available !== b.update_available) return a.update_available ? -1 : 1;
+      return rank[a.risk] - rank[b.risk];
+    });
+  }, [data, filter]);
 
   const refresh = async () => {
     setRefreshing(true);
@@ -221,7 +253,7 @@ export function DockerUpdatesPanel() {
     if (updates.loading) {
       return (
         <Card className="mb-4">
-          <CardContent className="pt-4 text-xs text-muted-foreground">Update detection loading…</CardContent>
+          <CardContent className="pt-4 text-xs text-muted-foreground">Checking container updates…</CardContent>
         </Card>
       );
     }
@@ -261,6 +293,12 @@ export function DockerUpdatesPanel() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 pt-1">
+        {data.checking && (
+          <p role="status" className="flex items-center gap-1.5 text-xs text-warning">
+            <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+            Checking updates across {s.total} containers — results appear as they come in…
+          </p>
+        )}
         <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
           <span>{s.total} containers</span>
           <span>{s.highRisk} high-risk (manual policy)</span>
@@ -276,15 +314,35 @@ export function DockerUpdatesPanel() {
           </p>
         )}
 
-        {interesting.length === 0 ? (
+        {filtered.length === 0 ? (
           <p className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">
-            No registry updates detected. Detection covers all {s.total} containers —
-            local builds and pinned images are excluded by definition.
+            {filter === "updates"
+              ? "No registry updates detected — local builds and pinned images are excluded by definition."
+              : "No containers match this filter."}
           </p>
         ) : (
           <>
+            <div role="group" aria-label="Filter containers" className="mb-2 flex flex-wrap items-center gap-1">
+              {([
+                ["updates", `Updates (${data.containers.filter((c) => c.update_available).length})`],
+                ["blocked", "Blocked"],
+                ["local", "Local builds"],
+                ["all", `All (${data.containers.length})`],
+              ] as const).map(([value, label]) => (
+                <Button
+                  key={value}
+                  size="sm"
+                  variant={filter === value ? "secondary" : "ghost"}
+                  aria-pressed={filter === value}
+                  onClick={() => setFilter(value as PanelFilter)}
+                  className="h-7 px-2 text-[11px]"
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
             <ul className="space-y-1.5">
-              {(showAll ? interesting : interesting.slice(0, 6)).map((container) => (
+              {(showAll ? filtered : filtered.slice(0, 6)).map((container) => (
                 <li
                   key={container.name}
                   className="flex flex-wrap items-center gap-2 rounded-md border px-2.5 py-2 text-xs"

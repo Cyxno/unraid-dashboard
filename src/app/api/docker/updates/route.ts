@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const guard = guardRead(request);
   if (!guard.ok) return guard.response;
-  const overview = await updatesOverview();
+  const overview = await updatesOverview();  // eerste hit: sweep op de achtergrond
   if (!overview.available) {
     return NextResponse.json(overview, { headers: { "cache-control": "no-store" } });
   }
@@ -30,6 +30,8 @@ export async function GET(request: NextRequest) {
       containers: valid,
       storage: overview.storage,
       checkedAt: overview.checkedAt,
+      checking: overview.checking,
+      pending: overview.pending,
       summary: {
         total: valid.length,
         updatesAvailable: valid.filter((container) => container.update_available).length,

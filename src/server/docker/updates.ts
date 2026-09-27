@@ -115,11 +115,11 @@ function rawCheckFor(image: string): RawCheck | null {
  * re-HEADs everything (manual refresh); otherwise only missing/expired
  * entries are fetched. Bounded concurrency, single in-flight run.
  */
-async function ensureChecks(images: Array<{ image: string }>, force: boolean): Promise<void> {
+async function ensureChecks(images: Array<{ image: string }>, force: boolean): Promise<{ pending: number }> {
   const existing = globalStore.__dockerRefreshInFlight;
   if (existing) {
     await existing;
-    return;
+    return { pending: 0 };
   }
   const cache = checkCache();
   const targets = images
@@ -129,7 +129,7 @@ async function ensureChecks(images: Array<{ image: string }>, force: boolean): P
       const cached = cache.get(image);
       return !cached || Date.now() - cached.at >= CHECK_TTL_MS;
     });
-  if (targets.length === 0) return;
+  if (targets.length === 0) return { pending: 0 };
 
   const run = async () => {
     let index = 0;
@@ -147,16 +147,22 @@ async function ensureChecks(images: Array<{ image: string }>, force: boolean): P
   globalStore.__dockerRefreshInFlight = run().finally(() => {
     globalStore.__dockerRefreshInFlight = null;
   });
-  await globalStore.__dockerRefreshInFlight;
+  if (force) {
+    // Handmatige sweep: wacht tot alle HEADs klaar zijn.
+    await globalStore.__dockerRefreshInFlight;
+  }
+  return { pending: targets.length };
 }
 
 /** Full overview: managed model for every container + storage context. */
-export async function updatesOverview(options: { refresh?: boolean } = {}): Promise<{
+export async function updatesOverview(options: { refresh?: boolean; wait?: boolean } = {}): Promise<{
   available: boolean;
   reason?: string;
   containers: ManagedContainer[];
   storage: { mode: string; source: string | null };
   checkedAt: string;
+  checking: boolean;
+  pending: number;
 }> {
   const checkedAt = new Date().toISOString();
   const inventory = await fetchInventory();
@@ -167,13 +173,19 @@ export async function updatesOverview(options: { refresh?: boolean } = {}): Prom
       containers: [],
       storage: { mode: "unknown", source: null },
       checkedAt,
+      checking: false,
+      pending: 0,
     };
   }
 
-  await ensureChecks(
+  // Koude cache: start de sweep en antwoord direct (checking-state in de
+  // UI); handmatige refresh wacht wel tot alle HEADs klaar zijn.
+  const wait = options.wait ?? options.refresh === true;
+  const sweep = await ensureChecks(
     inventory.containers.filter((facts) => facts.repoDigests.length > 0),
     options.refresh === true,
   );
+  const checking = !wait && sweep.pending > 0;
 
   const containers = inventory.containers.map((facts) => {
     const localDigest = localDigestOf(facts);
@@ -202,6 +214,8 @@ export async function updatesOverview(options: { refresh?: boolean } = {}): Prom
     containers,
     storage: inventory.storage,
     checkedAt,
+    checking,
+    pending: sweep.pending,
   };
 }
 

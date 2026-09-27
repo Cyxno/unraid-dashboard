@@ -91,11 +91,8 @@ function Toggle({
 /* About + diagnostics ------------------------------------------------------- */
 
 interface UpdateStatusPayload {
-  current: string;
-  gitSha: string | null;
-  buildTime: string | null;
-  imageRef: string | null;
-  update: {
+  build: { version: string; gitSha: string | null; buildTime: string | null; imageRef: string | null };
+  release: {
     status: "up-to-date" | "available" | "unknown";
     reason?: string;
     latestTag: string | null;
@@ -107,7 +104,7 @@ interface UpdateStatusPayload {
       authorized: boolean | null;
       reason: string | null;
     };
-  };
+  } | null;
 }
 
 function DiagnosticsRow({ label, children }: { label: string; children: React.ReactNode }) {
@@ -120,13 +117,13 @@ function DiagnosticsRow({ label, children }: { label: string; children: React.Re
 }
 
 function AboutAndDiagnostics() {
-  const version = usePoll<UpdateStatusPayload>("/api/update-check", 300_000);
+  const version = usePoll<UpdateStatusPayload>("/api/update/status", 300_000);
   const diagnostics = usePoll<DiagnosticsPayload>(
     "/api/diagnostics",
     PAGE_INTERVAL_MS.connection,
   );
   const diag = diagnostics.data;
-  const update = version.data?.update;
+  const update = version.data?.release;
   const pwa = usePwa();
 
   return (
@@ -310,31 +307,31 @@ function AboutAndDiagnostics() {
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between gap-4">
                 <dt className="text-muted-foreground">Version</dt>
-                <dd className="font-mono text-xs">v{version.data.current}</dd>
+                <dd className="font-mono text-xs">v{version.data.build.version}</dd>
               </div>
               <div className="flex justify-between gap-4">
                 <dt className="text-muted-foreground">Build</dt>
                 <dd className="font-mono text-xs">
-                  {version.data.gitSha
-                    ? version.data.gitSha.slice(0, 7)
+                  {version.data.build.gitSha
+                    ? version.data.build.gitSha.slice(0, 7)
                     : "dev"}
-                  {version.data.buildTime
-                    ? ` · ${formatDateTimeIso(version.data.buildTime)}`
+                  {version.data.build.buildTime
+                    ? ` · ${formatDateTimeIso(version.data.build.buildTime)}`
                     : ""}
                 </dd>
               </div>
-              {version.data.imageRef && (
+              {version.data.build.imageRef && (
                 <div className="flex justify-between gap-4">
                   <dt className="text-muted-foreground">Image</dt>
-                  <dd className="max-w-[220px] truncate font-mono text-xs" title={version.data.imageRef}>
-                    {version.data.imageRef}
+                  <dd className="max-w-[220px] truncate font-mono text-xs" title={version.data.build.imageRef ?? undefined}>
+                    {version.data.build.imageRef}
                   </dd>
                 </div>
               )}
               <div className="flex justify-between gap-4">
                 <dt className="text-muted-foreground">Latest release</dt>
                 <dd className="text-xs">
-                  {update === undefined ? (
+                  {update === null || update === undefined ? (
                     "…"
                   ) : update.status === "available" ? (
                     <Badge variant="warning">update available ({update.latestTag})</Badge>
