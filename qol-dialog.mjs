@@ -9,15 +9,18 @@ await page.route("**/api/docker/update", async (route) => {
   await route.fulfill({ status: 202, contentType: "application/json", body: '{"accepted":true,"phase":"requested"}' });
 });
 await page.goto("http://192.168.1.2:8090/docker", { waitUntil: "domcontentloaded" });
-await page.waitForTimeout(9000); // eerste detection-GET is traag (registry HEADs)
+await page.waitForTimeout(18000);
 const btn = page.locator('button[aria-label^="Update "]').first();
-console.log("update-knop gevonden:", (await btn.count()) > 0, "| label:", await btn.getAttribute("aria-label").catch(() => "?"));
+console.log("knop:", await btn.getAttribute("aria-label").catch(() => "geen"));
+await btn.scrollIntoViewIfNeeded();
 await btn.click();
-await page.waitForTimeout(700);
-console.log("dialoog:", (await page.getByRole("alertdialog").count()) > 0);
-await page.getByRole("button", { name: "Start update" }).click();
-await page.waitForTimeout(1500);
-console.log("POST verstuurd:", postSeen);
-console.log("fase zichtbaar:", (await page.textContent("body")).includes("requested"));
+await page.waitForTimeout(800);
+const dialog = page.locator("[role=alertdialog]");
+console.log("dialoog open:", (await dialog.count()) > 0);
+console.log("dialoog tekst:", (await dialog.textContent().catch(() => "")).replace(/\s+/g, " ").slice(0, 140));
+await page.screenshot({ path: "/tmp/qol-dialog.png" });
+await page.getByRole("button", { name: "Cancel" }).click();
+await page.waitForTimeout(400);
+console.log("geannuleerd (geen POST):", !postSeen);
 await page.close();
 process.exit(0);

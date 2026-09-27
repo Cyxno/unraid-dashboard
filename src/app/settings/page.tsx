@@ -469,7 +469,9 @@ function SecuritySection() {
               <dt className="text-muted-foreground">Authentication</dt>
               <dd>
                 {authData.mode === "proxy" ? (
-                  <Badge variant="success">reverse proxy ({authData.user ?? "unidentified"})</Badge>
+                  <Badge variant="success" className="max-w-[220px] whitespace-normal text-left">
+                    reverse proxy ({authData.user ?? "unidentified"})
+                  </Badge>
                 ) : (
                   <Badge variant="muted" className="max-w-[220px] gap-1 whitespace-normal text-left" title="Requests are not authenticated; the dashboard trusts the LAN. Put it behind a reverse proxy with AUTH_MODE=proxy for identity.">
                     disabled — trusted network mode
