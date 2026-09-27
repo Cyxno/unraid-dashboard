@@ -2,7 +2,12 @@ import { NextResponse, type NextRequest } from "next/server";
 import { guardWrite } from "@/server/auth/guard";
 import { checkWriteRate } from "@/server/dashboards/rate-limit";
 import { recordAudit } from "@/server/actions/audit";
-import { requestContainerUpdate } from "@/server/update/helper-client";
+import {
+  requestContainerUpdate,
+  requestComposeUpdate,
+  isUpdatePhaseActive,
+  getHelperStatus,
+} from "@/server/update/helper-client";
 import { updatesOverview } from "@/server/docker/updates";
 import { updateGate } from "@/server/docker/policy";
 
@@ -11,10 +16,11 @@ export const dynamic = "force-dynamic";
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/;
 
 /**
- * Starts an update for ONE container through the helper's generic machine.
- * The dashboard gates on policy/blocks first; the helper re-validates
- * everything itself (compose labels, AIO/external blocklist, locks).
- * Audited with the real identity.
+ * Starts an update for ONE container through the helper's update machine.
+ * Dispatches to the compose adapter for compose-managed containers and to
+ * the generic machine otherwise. Dashboard gates on policy/blocks first;
+ * the helper re-validates everything itself (compose labels, AIO/external
+ * blocklist, locks). Audited with the real identity.
  */
 export async function POST(request: NextRequest) {
   const guard = guardWrite(request);
@@ -68,10 +74,25 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Helper lock check before dispatch.
+  const helper = await getHelperStatus().catch(() => null);
+  if (helper?.reachable && isUpdatePhaseActive(helper.phase)) {
+    return NextResponse.json(
+      { error: `Update already running (phase ${helper.phase}).` },
+      { status: 409, headers: { "cache-control": "no-store" } },
+    );
+  }
+
   const startedAt = Date.now();
-  const result = await requestContainerUpdate(name);
+  // Dispatch: compose-managed → compose adapter, anders generiek machine.
+  const isCompose = container.management_type === "compose";
+  const result = isCompose
+    ? await requestComposeUpdate(name)
+    : await requestContainerUpdate(name);
+
   await recordAudit({
-    actor, sourceIp: guard.sourceIp, kind: "update", action: "container-update",
+    actor, sourceIp: guard.sourceIp, kind: "update",
+    action: isCompose ? "compose-update" : "container-update",
     targetName: name, targetId: container.current_digest?.slice(0, 30) ?? name,
     result: result.accepted ? "success" : "rejected",
     durationMs: Date.now() - startedAt,

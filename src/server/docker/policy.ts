@@ -36,16 +36,23 @@ export function updateGate(container: ManagedContainer): UpdateGate {
       blockedReason: "Config not generically recreatable: " + unsupportedReasons.join("; "),
     };
   }
-  if (container.management_type === "compose") {
-    return { canUpdate: false, blockedReason: "Compose-managed — update via docker compose" };
-  }
+  // Local-build policy wint van compose-ownership: geen registry-mutatie
+  // zonder betrouwbare updatebron (opt-in alleen voor fixtures).
   if (container.management_type === "local_build" || container.update_status === "LOCAL_BUILD") {
-    // Operator opt-in for local-build updates (e.g. controlled fixtures);
-    // the registry pull is skipped and the local image is used as-is.
     if (process.env["DOCKER_UPDATE_ALLOW_LOCAL_BUILD"] === "true") {
       return { canUpdate: true, blockedReason: null };
     }
     return { canUpdate: false, blockedReason: "Local build — update via its build/deploy pipeline" };
+  }
+  if (container.management_type === "compose") {
+    // v0.7.11: compose adapter actief — service-scoped update via de helper.
+    if (container.risk === "HIGH") {
+      return { canUpdate: false, blockedReason: "HIGH risk compose service — update manually via compose" };
+    }
+    if (!container.update_available) {
+      return { canUpdate: false, blockedReason: null };
+    }
+    return { canUpdate: true, blockedReason: null };
   }
   if (container.update_status === "PINNED") {
     return { canUpdate: false, blockedReason: "Digest pinned — image cannot drift from its pin" };

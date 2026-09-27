@@ -66,14 +66,33 @@ docker rm -f "$NAME" >/dev/null 2>&1 || true
 STATE_DIR="/mnt/user/appdata/unraid-dashboard/helper-state"
 mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR"
 
+# Compose roots: afgeleid uit de labels van draaiende containers. Elk
+# working_dir wordt READ-ONLY op hetzelfde pad gemount, zodat label-paden
+# geldig blijven binnen de helper. Deploy-time only.
+COMPOSE_ROOTS=""
+COMPOSE_MOUNTS=""
+for DIR in $(docker ps --format '{{.Names}}' | while read C; do
+  docker inspect "$C" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null
+done | sort -u); do
+  [ -z "$DIR" ] && continue
+  REAL=$(realpath "$DIR" 2>/dev/null) || continue
+  [ -d "$REAL" ] || continue
+  COMPOSE_ROOTS="$COMPOSE_ROOTS,$REAL"
+  COMPOSE_MOUNTS="$COMPOSE_MOUNTS -v $REAL:$REAL:ro"
+done
+COMPOSE_ROOTS=$(echo "$COMPOSE_ROOTS" | sed "s/^,//")
+echo "==> Compose allowed roots: $COMPOSE_ROOTS"
+
 docker run -d \
   --name "$NAME" \
   --network host \
   --restart unless-stopped \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  $COMPOSE_MOUNTS \
   -v "$STATE_DIR":/helper-state:rw \
   -e UPDATE_HELPER_TOKEN="$UPDATE_HELPER_TOKEN" \
   -e DASHBOARD_AUTH_SECRET="$DASHBOARD_AUTH_SECRET" \
+  -e COMPOSE_ALLOWED_ROOTS="$COMPOSE_ROOTS" \
   -e DOCKER_STORAGE_MODE="$DOCKER_STORAGE_MODE" \
   -e DOCKER_STORAGE_SOURCE="$DOCKER_STORAGE_SOURCE" \
   -e STATE_DIR=/helper-state \

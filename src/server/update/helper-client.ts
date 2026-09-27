@@ -265,6 +265,11 @@ export async function requestContainerUpdate(name: string): Promise<UpdateReques
   return containerOperation(`/container-update`, name);
 }
 
+/** Compose service update via de helper (paden uit labels, allowlist-gated). */
+export async function requestComposeUpdate(name: string): Promise<UpdateRequestResult> {
+  return containerOperation(`/compose-update`, name);
+}
+
 /** Rollback a container to its snapshotted previous image + config. */
 export async function requestContainerRollback(name: string): Promise<UpdateRequestResult> {
   return containerOperation(`/container-rollback`, name);

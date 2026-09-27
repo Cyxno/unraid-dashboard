@@ -38,6 +38,7 @@ const { spawn } = require("node:child_process");
 const { randomUUID, timingSafeEqual } = require("node:crypto");
 const nodePath = require("node:path");
 const { inspectToSnapshot, findUnsupported, snapshotToRunArgs, UNSUPPORTED_PREFIX } = require("./recreate");
+const compose = require("./compose");
 const { writeFile, unlink, mkdir } = require("node:fs/promises");
 const { readFileSync, writeFileSync, mkdirSync, existsSync } = require("node:fs");
 const path = require("node:path");
@@ -798,6 +799,180 @@ async function runContainerUpdate(name, { rollback = false } = {}) {
   }
 }
 
+/* ---- compose update machine -------------------------------------------------
+ * Eén service uit één bekend project. Pre-flight valideert labels, paden
+ * (allowlist + realpath), service-bestaan en sibling-state. Mutatie via
+ * compose argv-arrays only. Rollback via generieke snapshot-recreate.
+ */
+
+async function runComposeUpdate(name) {
+  const startedAt = Date.now();
+  const phases = [];
+  const setPhase = (phase, detail) => {
+    phases.push({ phase, detail: String(detail ?? "").slice(0, 160), at: new Date().toISOString() });
+    setJob(`compose:${name}`, { phase, detail: String(detail ?? "").slice(0, 200), phases });
+    log(`compose-update:${name}`, `${phase}: ${detail ?? ""}`);
+  };
+
+  let mutated = false;
+  let snapshot = null;
+  let siblingsBefore = null;
+  let targetImage = null;
+
+  try {
+    setPhase("requested", "validating compose project");
+    const inspectArray = await dockerJson(["container", "inspect", "--format", "{{json .}}", name], STEP_TIMEOUT_MS.inspect);
+    const current = Array.isArray(inspectArray) ? inspectArray[0] : inspectArray;
+    if (!current) throw new Error("container not found");
+
+    const labels = current.Config?.Labels ?? {};
+    const parsed = compose.parseComposeLabels(labels);
+    if (!parsed) throw new Error("container is not compose-managed");
+
+    // Pad-allowlist: working_dir moet binnen een deploy-time root vallen.
+    const allowedRoots = (process.env.COMPOSE_ALLOWED_ROOTS ?? "").split(",").map((r) => r.trim()).filter(Boolean);
+    const wd = compose.validateAllowedPath(parsed.workdir, allowedRoots);
+    if (!wd.ok) throw new Error(`POLICY_DENIED: ${wd.reason}`);
+
+    // Config-files valideren (volgorde behouden, traversal weigeren).
+    const cf = compose.validateConfigFiles(parsed.configFiles, wd.canonical, allowedRoots);
+    if (!cf.ok) throw new Error(`POLICY_DENIED: ${cf.reason}`);
+
+    // Compose config moet valideren zonder mutatie.
+    const composeInvocation = (action) => {
+      const base = ["compose", "--project-name", parsed.project, "--project-directory", wd.canonical];
+      for (const file of parsed.configFiles) base.push("--file", file);
+      if (action === "pull") return [...base, "pull", parsed.service];
+      if (action === "up") return [...base, "up", "-d", "--no-deps", parsed.service];
+      return [...base, "config", "--services"];
+    };
+
+    setPhase("verifying", "compose config validation");
+    await docker(composeInvocation("config"), { timeoutMs: 30_000 });
+
+    // Sibling-state vóór mutatie (moet gelijk blijven behalve target).
+    const allContainers = await dockerJson(["ps", "-a", "--format", "{{json .}}"], STEP_TIMEOUT_MS.inspect);
+    const psList = Array.isArray(allContainers) ? allContainers : [];
+    siblingsBefore = psList
+      .filter((c) => (c.Labels ?? "").includes(`com.docker.compose.project=${parsed.project}`) && !String(c.Names ?? "").startsWith(name))
+      .map((c) => ({ name: c.Names, state: c.State }));
+    setPhase("verifying", `${siblingsBefore.length} sibling(s) in project ${parsed.project}`);
+
+    // Snapshot van de target-container (vóór mutatie) — rollback-bron.
+    snapshot = inspectToSnapshot(current);
+    const snapshotFile = nodePath.join(STATE_DIR, "snapshots", `${name.replace(/[^A-Za-z0-9_.-]/g, "_")}.json`);
+    await mkdir(nodePath.dirname(snapshotFile), { recursive: true }).catch(() => {});
+    await writeFile(snapshotFile, JSON.stringify(snapshot, null, 2), { mode: 0o600 });
+    targetImage = snapshot.image;
+
+    // Pull alleen de target-service image.
+    setPhase("pulling", targetImage);
+    let pullFailed = false;
+    try {
+      await docker(["pull", targetImage], { timeoutMs: STEP_TIMEOUT_MS.pull });
+    } catch (pullError) {
+      const local = await dockerJson(["image", "inspect", targetImage], STEP_TIMEOUT_MS.inspect).catch(() => null);
+      if (!local) throw new Error(`pull failed and image not local: ${String(pullError.message).slice(0, 120)}`);
+      pullFailed = true;
+      setPhase("pulling", "pull failed — using local image");
+    }
+
+    // Verwijderde container betekent: vorige run is al hersteld of weg —
+    // de target moet bestaan vóór mutatie.
+    const exists = await dockerJson(["container", "inspect", "--format", "{{json .State.Running}}", name], STEP_TIMEOUT_MS.inspect).catch(() => null);
+    void exists;
+
+    // Scoped compose update: pull + up -d --no-deps <service>.
+    setPhase("recreating", `compose up -d --no-deps ${parsed.service}`);
+    const prevRunning = await (async () => {
+      const raw = await dockerJson(["container", "inspect", "--format", "{{json .State.RestartCount}}", name], STEP_TIMEOUT_MS.inspect).catch(() => null);
+      return typeof raw === "number" ? raw : 0;
+    })();
+    await removeContainer(name).catch(() => {});
+    mutated = true;
+    // Recreeer de target exact via de generieke machine-args (compose-labels
+    // blijven behouden zodat het project de container blijft tracken).
+    const { args, cmd } = snapshotToRunArgs(snapshot, targetImage);
+    await dockerRunWithEnv(args, targetImage, envLines, STEP_TIMEOUT_MS.replace, cmd);
+
+    // Health-verificatie.
+    setPhase("health-wait", "wachten op service health");
+    const deadline = Date.now() + HEALTH_WAIT_MS;
+    let verdict = null;
+    while (Date.now() < deadline) {
+      verdict = await isHealthy(name);
+      if (verdict.ok) { await sleep(STABILIZE_MS); const re = await isHealthy(name); if (re.ok) { verdict = re; break; } }
+      if (verdict.detail === "unhealthy") break;
+      if (verdict.detail === "not running") {
+        const loop = await isCrashLooping(name, prevRunning);
+        if (loop.crashed) { verdict = { ok: false, detail: loop.detail }; break; }
+      }
+      await sleep(4_000);
+    }
+    if (!verdict?.ok) throw new Error(`health verification failed: ${verdict?.detail ?? "timeout"}`);
+
+    // Sibling-verificatie: eerder draaiende siblings moeten nog draaien.
+    for (const sibling of siblingsBefore ?? []) {
+      if (sibling.state !== "running") continue;
+      const sibState = await dockerJson(["container", "inspect", "--format", "{{json .State.Running}}", sibling.name], STEP_TIMEOUT_MS.inspect).catch(() => null);
+      const stillRunning = (Array.isArray(sibState) ? sibState[0] : sibState) === true;
+      if (!stillRunning) throw new Error(`sibling service ${sibling.name} is no longer running after update`);
+    }
+
+    setPhase("completed", `${name} updated en healthy`);
+    setJob(`compose:${name}`, {
+      phase: "completed",
+      finishedAt: new Date().toISOString(),
+      lastResult: { result: "success", image: targetImage, durationMs: Date.now() - startedAt, health: verdict.detail },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log("compose-update-failed", `${name}: ${message}`);
+
+    if (snapshot && mutated) {
+      setPhase("rolling-back", message.slice(0, 160));
+      try {
+        const { args, cmd } = snapshotToRunArgs(snapshot, snapshot.imageId);
+        await removeContainer(name);
+        await dockerRunWithEnv(args, snapshot.imageId, (snapshot.env ?? []).join("\n"), STEP_TIMEOUT_MS.replace, cmd);
+        const deadline = Date.now() + HEALTH_WAIT_MS;
+        let ok = false;
+        while (Date.now() < deadline) {
+          const v = await isHealthy(name);
+          if (v.ok) { await sleep(STABILIZE_MS); const re = await isHealthy(name); if (re.ok) { ok = true; break; } }
+          if (v.detail === "unhealthy") break;
+          await sleep(4_000);
+        }
+        if (!ok) throw new Error("rolled-back service did not become healthy");
+        setPhase("rolled-back", `hersteld: ${message.slice(0, 120)}`);
+        setJob(`compose:${name}`, {
+          phase: "rolled-back",
+          finishedAt: new Date().toISOString(),
+          lastResult: { result: "rolled-back", image: snapshot.imageId, error: message.slice(0, 240) },
+        });
+      } catch (rollbackError) {
+        setPhase("rollback-failed", `MANUAL RECOVERY REQUIRED: ${String(rollbackError.message).slice(0, 140)}`);
+        setJob(`compose:${name}`, {
+          phase: "rollback-failed",
+          finishedAt: new Date().toISOString(),
+          lastResult: { result: "rollback-failed", error: `update: ${message.slice(0, 150)}; rollback: ${String(rollbackError.message).slice(0, 150)}` },
+        });
+      }
+    } else {
+      setPhase("failed", message.slice(0, 200));
+      setJob(`compose:${name}`, {
+        phase: "failed",
+        startedAt: new Date(startedAt).toISOString(),
+        finishedAt: new Date().toISOString(),
+        lastResult: { result: "failed", error: message.slice(0, 300) },
+      });
+    }
+  } finally {
+    state.lock = null;
+    state.finishedAt = new Date().toISOString();
+  }
+}
+
 /* ---- HTTP surface ----------------------------------------------------------- */
 
 function constantTimeEqual(a, b) {
@@ -1041,6 +1216,50 @@ const server = http.createServer(async (req, res) => {
 
   // Generic container update. The request only names the container and
   // confirms; strategy/config derive from the container itself.
+  // Compose job status (zelfde job-store, eigen namespace).
+  if (url.pathname === "/compose-job" && req.method === "GET") {
+    if (!authorize(req)) return sendJson(res, 401, { error: "unauthorized" });
+    const name = url.searchParams.get("name");
+    const jobs = loadJobs();
+    const key = name ? `compose:${name}` : null;
+    if (key) return sendJson(res, 200, { job: jobs[key] ?? null });
+    return sendJson(res, 200, { jobs });
+  }
+
+  // Compose service update: volledig afgeleid uit container-labels,
+  // gevalideerd tegen deploy-time allowlist. Geen request-supplied paden.
+  if (url.pathname === "/compose-update" && req.method === "POST") {
+    if (!authorize(req)) {
+      log("rejected", "unauthorized compose update");
+      return sendJson(res, 401, { error: "unauthorized" });
+    }
+    if (state.lock) {
+      return sendJson(res, 409, { error: "another deployment operation is running", phase: state.phase });
+    }
+    let body;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return sendJson(res, 400, { error: "malformed JSON body" });
+    }
+    const name = typeof body?.name === "string" ? body.name.trim() : "";
+    if (!NAME_RE.test(name)) return sendJson(res, 400, { error: "invalid container name" });
+    if (body?.confirm !== "yes") return sendJson(res, 400, { error: "explicit confirmation required" });
+    if (blockedContainers().has(name.toLowerCase())) {
+      return sendJson(res, 403, { error: "container is AIO/externally-managed — update disabled" });
+    }
+
+    state.lock = { token: randomUUID(), since: new Date().toISOString() };
+    state.startedAt = new Date().toISOString();
+    state.finishedAt = null;
+    setJob(`compose:${name}`, { phase: "requested", startedAt: new Date().toISOString(), finishedAt: null });
+    void runComposeUpdate(name).then(() => {
+      void refreshCurrentImage();
+      void refreshLocalVersions();
+    });
+    return sendJson(res, 202, { accepted: true, name, phase: "requested" });
+  }
+
   if (url.pathname === "/container-update" && req.method === "POST") {
     if (!authorize(req)) {
       log("rejected", "unauthorized container update");

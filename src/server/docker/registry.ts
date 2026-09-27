@@ -88,9 +88,12 @@ export async function checkRemoteDigest(image: string, ghcrToken?: string): Prom
     return { kind: "pinned", remoteDigest: digestPin };
   }
 
-  // GHCR token from dashboard env takes precedence for ghcr.io.
+  // GHCR token: only ever sent to ghcr.io — never to other registries.
+  // Bracket access bewust: voorkomt build-time inlining van runtime secrets.
+  const ghcrReadToken =
+    registry === "ghcr.io" ? (process.env["GHCR_READ_TOKEN"] ?? ghcrToken) : undefined;
   let authHeader: string | undefined =
-    registry === "ghcr.io" && ghcrToken ? `Bearer ${ghcrToken}` : undefined;
+    registry === "ghcr.io" && ghcrReadToken ? `Bearer ${ghcrReadToken}` : undefined;
 
   // docker.io is the web frontend; the registry API lives on
   // registry-1.docker.io. All other hosts serve /v2 directly.

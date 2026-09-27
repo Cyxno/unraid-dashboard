@@ -69,15 +69,26 @@ describe("v0.7.7 update gates", () => {
     assert.equal(gate.canUpdate, false);
   });
 
-  it("compose-managed blocked", () => {
+  it("compose-managed via adapter: LOW/MEDIUM updatable (v0.7.11)", () => {
     const gate = updateGate(container({
       name: "immich_server",
       management_type: "compose",
       management_source: "compose:immich/immich-server",
       update_strategy: "compose_service",
     }));
+    assert.equal(gate.canUpdate, true);
+  });
+
+  it("HIGH-risk compose service geblokkeerd (manual via compose)", () => {
+    const gate = updateGate(container({
+      name: "immich_postgres",
+      management_type: "compose",
+      update_strategy: "compose_service",
+      risk: "HIGH",
+      policy: "manual",
+    }));
     assert.equal(gate.canUpdate, false);
-    assert.match(gate.blockedReason ?? "", /[Cc]ompose/);
+    assert.match(gate.blockedReason ?? "", /HIGH/);
   });
 
   it("local build blocked (pure local_build management)", () => {
@@ -92,7 +103,7 @@ describe("v0.7.7 update gates", () => {
     assert.match(gate.blockedReason ?? "", /[Ll]ocal build/);
   });
 
-  it("compose container with a local image: compose reason wins (strongest ownership)", () => {
+  it("compose container with a local image: local-build policy wint (geen registry mutatie)", () => {
     const gate = updateGate(container({
       name: "tornscope-web-1",
       management_type: "compose",
@@ -101,7 +112,7 @@ describe("v0.7.7 update gates", () => {
       update_available: false,
     }));
     assert.equal(gate.canUpdate, false);
-    assert.match(gate.blockedReason ?? "", /[Cc]ompose/);
+    assert.match(gate.blockedReason ?? "", /[Ll]ocal build/);
   });
 
   it("HIGH risk blocked with manual guidance", () => {
