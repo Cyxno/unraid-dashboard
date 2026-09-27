@@ -118,6 +118,24 @@ function containerLocks() {
   return globalThis.__containerLocks;
 }
 
+/**
+ * Single deployment lock with stale recovery: a lock older than 2 hours
+ * (helper restart mid-job, daemon restart, crash) is reclaimed instead of
+ * blocking forever. Job state stays visible as stale-orphan via /container-job.
+ */
+function tryAcquireLock() {
+  if (state.lock) {
+    const age = Date.now() - Date.parse(state.lock.since);
+    if (age < 2 * 3600_000) return null;
+    log("lock", `stale lock (${Math.round(age / 60_000)} min) reclaimed`);
+  }
+  const lock = { token: randomUUID(), since: new Date().toISOString() };
+  state.lock = lock;
+  state.startedAt = lock.since;
+  state.finishedAt = null;
+  return lock;
+}
+
 /* ---- state ---------------------------------------------------------------- */
 
 const state = {
@@ -544,11 +562,25 @@ async function runContainerUpdate(name, { rollback = false } = {}) {
   };
 
   let snapshot = null;
+  let envLines = "";
   let mutated = false;
+  const snapshotFile = nodePath.join(SNAPSHOT_DIR, `${name.replace(/[^A-Za-z0-9_.-]/g, "_")}.json`);
 
   try {
     // --- snapshotting -------------------------------------------------------
-    setPhase(rollback ? "rollback-requested" : "requested", "capturing container configuration");
+    // Rollback REUSES the pre-update snapshot (previous image + exact
+    // config); re-inspecting the current container would make "rollback"
+    // a no-op that keeps the broken version.
+    if (rollback) {
+      try {
+        snapshot = JSON.parse(readFileSync(snapshotFile, "utf8"));
+        envLines = (snapshot.env ?? []).join("\n");
+        setPhase("rollback-requested", `loaded pre-update snapshot (${snapshot.imageId?.slice(0, 25) ?? "?"})`);
+      } catch {
+        throw new Error("no pre-update snapshot available — nothing to roll back to");
+      }
+    } else {
+    setPhase("requested", "capturing container configuration");
     const inspectArray = await dockerJson(["container", "inspect", "--format", "{{json .}}", name], STEP_TIMEOUT_MS.inspect);
     const current = Array.isArray(inspectArray) ? inspectArray[0] : inspectArray;
     if (!current) throw new Error("container not found");
@@ -563,7 +595,6 @@ async function runContainerUpdate(name, { rollback = false } = {}) {
       }
     }
 
-    const envLines = (current.Config?.Env ?? []).join("\n");
     snapshot = {
       name,
       image: current.Config?.Image ?? null,
@@ -578,18 +609,18 @@ async function runContainerUpdate(name, { rollback = false } = {}) {
       capDrop: current.HostConfig?.CapDrop ?? [],
       extraHosts: current.HostConfig?.ExtraHosts ?? [],
       hostname: current.Config?.Hostname ?? null,
+      env: current.Config?.Env ?? [],
       hasHealthcheck: Boolean(current.State?.Health) || Boolean(current.Config?.Healthcheck),
       snapshotAt: new Date().toISOString(),
     };
     if (!snapshot.image) throw new Error("container has no image reference");
-    // Persist the snapshot (contains Env secrets — never served via API).
+    envLines = (snapshot.env ?? []).join("\n");
+    // Persist the pre-update snapshot (contains Env secrets — never
+    // served via API; it is the rollback source).
     await mkdir(SNAPSHOT_DIR, { recursive: true }).catch(() => {});
-    await writeFile(
-      nodePath.join(SNAPSHOT_DIR, `${name.replace(/[^A-Za-z0-9_.-]/g, "_")}.json`),
-      JSON.stringify(snapshot, null, 2),
-      { mode: 0o600 },
-    );
+    await writeFile(snapshotFile, JSON.stringify(snapshot, null, 2), { mode: 0o600 });
     setPhase("snapshotting", `config captured (image ${snapshot.image})`);
+    }
 
     // --- pulling (skipped for rollback: use the pinned old image ID) --------
     let targetImage;
@@ -661,7 +692,21 @@ async function runContainerUpdate(name, { rollback = false } = {}) {
     if (!verdict?.ok) {
       throw new Error(`health verification failed: ${verdict?.detail ?? "timeout"}`);
     }
-    setPhase("completed", rollback ? `rollback to ${targetImage.slice(0, 25)} healthy` : `${name} updated and healthy`);
+    if (rollback) {
+      setPhase("rolled-back", `restored ${targetImage.slice(0, 25)} and healthy`);
+      setJob(name, {
+        phase: "rolled-back",
+        finishedAt: new Date().toISOString(),
+        lastResult: {
+          result: "rollback-success",
+          image: targetImage,
+          durationMs: Date.now() - Date.parse(startedAt),
+          health: verdict.detail,
+        },
+      });
+      return;
+    }
+    setPhase("completed", `${name} updated and healthy`);
     setJob(name, {
       phase: "completed",
       finishedAt: new Date().toISOString(),
@@ -724,6 +769,10 @@ async function runContainerUpdate(name, { rollback = false } = {}) {
         lastResult: { result: "failed", error: message.slice(0, 300) },
       });
     }
+  } finally {
+    // Always release: a stuck lock would 409 every future operation.
+    state.lock = null;
+    state.finishedAt = new Date().toISOString();
   }
 }
 
@@ -968,6 +1017,7 @@ const server = http.createServer(async (req, res) => {
     if (state.lock) {
       return sendJson(res, 409, { error: "another deployment operation is running", phase: state.phase });
     }
+    // NOTE: lock is acquired after validation (below) via tryAcquireLock.
     let body;
     try {
       body = JSON.parse(await readBody(req));
@@ -995,9 +1045,9 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 404, { error: "container not found" });
     }
 
-    state.lock = { token: randomUUID(), since: new Date().toISOString() };
-    state.startedAt = new Date().toISOString();
-    state.finishedAt = null;
+    if (!tryAcquireLock()) {
+      return sendJson(res, 409, { error: "another deployment operation is running", phase: state.phase });
+    }
     setJob(name, { phase: "requested", startedAt: new Date().toISOString(), finishedAt: null });
     void runContainerUpdate(name).then(() => {
       void refreshCurrentImage();
@@ -1030,9 +1080,9 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 404, { error: "container not found" });
     }
 
-    state.lock = { token: randomUUID(), since: new Date().toISOString() };
-    state.startedAt = new Date().toISOString();
-    state.finishedAt = null;
+    if (!tryAcquireLock()) {
+      return sendJson(res, 409, { error: "another deployment operation is running", phase: state.phase });
+    }
     setJob(name, { phase: "requested", startedAt: new Date().toISOString(), finishedAt: null });
     void runContainerUpdate(name, { rollback: true }).then(() => {
       void refreshCurrentImage();

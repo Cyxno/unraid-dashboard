@@ -37,7 +37,7 @@ function checkCache(): Map<string, { at: number; outcome: RawCheck }> {
 
 /** Custom-deploy containers from operator env (comma-separated names). */
 function customDeployContainers(): string[] {
-  const raw = process.env.CUSTOM_DEPLOY_CONTAINERS ?? "";
+  const raw = process.env["CUSTOM_DEPLOY_CONTAINERS"] ?? "";
   return raw
     .split(",")
     .map((entry) => entry.trim())
@@ -47,7 +47,7 @@ function customDeployContainers(): string[] {
 
 /** Extra operator-declared high-risk container name fragments. */
 function extraHighRisk(): string[] {
-  const raw = process.env.HIGH_RISK_CONTAINERS ?? "";
+  const raw = process.env["HIGH_RISK_CONTAINERS"] ?? "";
   return raw
     .split(",")
     .map((entry) => entry.trim())
