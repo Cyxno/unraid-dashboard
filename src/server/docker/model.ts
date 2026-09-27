@@ -56,12 +56,15 @@ export interface ContainerFacts {
   repoDigests: string[];
   created: string | null;
   labels: {
+    "com.cyxno.update-manager"?: string;
     "com.docker.compose.project"?: string;
     "com.docker.compose.service"?: string;
     "com.docker.compose.project.working_dir"?: string;
     "com.docker.compose.project.config_files"?: string;
     "net.unraid.docker.managed"?: string;
   };
+  unsupported?: string[];
+  externallyManaged?: boolean;
 }
 
 /** Operator configuration (env) — which containers have canonical deploy scripts. */
@@ -88,6 +91,7 @@ export interface ManagedContainer {
   risk: Risk;
   policy: Policy;
   rollback_available: boolean;
+  externallyManaged: boolean;
   health: string | null;
   last_checked: string | null;
   last_updated: string | null;
@@ -144,6 +148,9 @@ export function classifyManagement(
   facts: ContainerFacts,
   customDeployContainers: string[],
 ): { management_type: ManagementType; management_source: string; update_strategy: UpdateStrategy } {
+  if (facts.labels["com.cyxno.update-manager"] === "external") {
+    return { management_type: "custom_deploy", management_source: "update-manager label", update_strategy: "manual" };
+  }
   if (facts.labels["com.docker.compose.project"] && facts.labels["com.docker.compose.service"]) {
     const localBuilt = facts.repoDigests.length === 0;
     return {
@@ -252,6 +259,9 @@ export function buildManagedContainer(input: {
     update_available = input.check.status === "UPDATE_AVAILABLE";
   }
 
+  const externallyManaged =
+    facts.labels["com.cyxno.update-manager"] === "external" ||
+    facts.externallyManaged === true;
   return {
     id: facts.id,
     name: facts.name,
@@ -269,6 +279,7 @@ export function buildManagedContainer(input: {
     risk,
     policy,
     rollback_available: false, // filled by the rollback layer once history exists
+    externallyManaged,
     health: facts.health,
     last_checked: input.check ? input.checkedAt : null,
     last_updated: input.lastUpdated ?? null,
@@ -293,6 +304,7 @@ export const managedContainerSchema = z.object({
   risk: z.enum(["LOW", "MEDIUM", "HIGH"]),
   policy: z.enum(["manual", "notify", "auto"]),
   rollback_available: z.boolean(),
+  externallyManaged: z.boolean(),
   health: z.string().nullable(),
   last_checked: z.string().nullable(),
   last_updated: z.string().nullable(),

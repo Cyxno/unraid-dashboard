@@ -61,15 +61,22 @@ docker pull "$IMAGE" 2>/dev/null || docker image inspect "$IMAGE" >/dev/null 2>&
 
 echo "==> Recreating $NAME..."
 docker rm -f "$NAME" >/dev/null 2>&1 || true
+# Persistent update state (snapshots/jobs): must survive helper
+# recreation so auto-rollback is never dependent on volatile /tmp.
+STATE_DIR="/mnt/user/appdata/unraid-dashboard/helper-state"
+mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR"
+
 docker run -d \
   --name "$NAME" \
   --network host \
   --restart unless-stopped \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$STATE_DIR":/helper-state:rw \
   -e UPDATE_HELPER_TOKEN="$UPDATE_HELPER_TOKEN" \
   -e DASHBOARD_AUTH_SECRET="$DASHBOARD_AUTH_SECRET" \
   -e DOCKER_STORAGE_MODE="$DOCKER_STORAGE_MODE" \
   -e DOCKER_STORAGE_SOURCE="$DOCKER_STORAGE_SOURCE" \
+  -e STATE_DIR=/helper-state \
   -e HELPER_PORT=8790 \
   -e DASHBOARD_PORT="${DASHBOARD_PORT:-8090}" \
   "$IMAGE" >/dev/null

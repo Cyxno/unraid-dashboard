@@ -26,6 +26,16 @@ export function updateGate(container: ManagedContainer): UpdateGate {
         : "Managed externally — dashboard update disabled (own CI/CD or updater)",
     };
   }
+  if (container.externallyManaged === true) {
+    return { canUpdate: false, blockedReason: "Managed externally (label) — dashboard update disabled" };
+  }
+  const unsupportedReasons = (container as { unsupported?: string[] }).unsupported ?? [];
+  if (unsupportedReasons.length > 0) {
+    return {
+      canUpdate: false,
+      blockedReason: "Config not generically recreatable: " + unsupportedReasons.join("; "),
+    };
+  }
   if (container.management_type === "compose") {
     return { canUpdate: false, blockedReason: "Compose-managed — update via docker compose" };
   }

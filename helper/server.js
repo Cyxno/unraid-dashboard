@@ -74,8 +74,9 @@ const HELPER_VERSION = "0.7.7";
  */
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/;
-const SNAPSHOT_DIR = "/tmp/update-snapshots";
-const JOBS_FILE = "/tmp/update-jobs.json";
+const STATE_DIR = process.env.STATE_DIR || "/tmp/update-state";
+const SNAPSHOT_DIR = `${STATE_DIR}/snapshots`;
+const JOBS_FILE = `${STATE_DIR}/jobs.json`;
 const HEALTH_WAIT_MS = 120_000;
 const STABILIZE_MS = 5_000;
 
@@ -209,11 +210,14 @@ async function dockerJson(args, timeoutMs) {
  * docker run with env supplied via a 0600 temp file (--env-file requires
  * a real path; there is no stdin form). The file is removed afterwards.
  */
-async function dockerRunWithEnv(baseArgs, image, envLines, timeoutMs) {
-  const envFile = path.join("/tmp", `dashenv-${randomUUID()}`);
+async function dockerRunWithEnv(baseArgs, image, envLines, timeoutMs, postImageCmd = null) {
+  const envFile = nodePath.join("/tmp", `dashenv-${randomUUID()}`);
   await writeFile(envFile, envLines + "\n", { mode: 0o600 });
   try {
-    await docker([...baseArgs, "--env-file", envFile, image], { timeoutMs });
+    const full = postImageCmd && postImageCmd.length > 0
+      ? [...baseArgs, "--env-file", envFile, image, ...postImageCmd]
+      : [...baseArgs, "--env-file", envFile, image];
+    await docker(full, { timeoutMs });
   } finally {
     await unlink(envFile).catch(() => {});
   }
@@ -507,30 +511,20 @@ function machineStateFor(name) {
   return all[name] ?? null;
 }
 
-/** Exact recreate args from a snapshot (used by update AND rollback). */
-function runArgsFromSnapshot(snap, image) {
-  const args = ["run", "-d", "--name", snap.name, "--network", snap.networkMode];
-  if (snap.restartPolicy && snap.restartPolicy !== "no") args.push("--restart", snap.restartPolicy);
-  for (const [port, bindings] of Object.entries(snap.portBindings ?? {})) {
-    for (const binding of bindings ?? []) {
-      args.push("-p", `${binding.HostIp ?? ""}:${binding.HostPort}:${port}`);
-    }
-  }
-  for (const bind of snap.binds ?? []) args.push("-v", bind);
-  if (snap.privileged) args.push("--privileged");
-  for (const cap of snap.capAdd ?? []) args.push("--cap-add", cap);
-  for (const cap of snap.capDrop ?? []) args.push("--cap-drop", cap);
-  for (const host of snap.extraHosts ?? []) args.push("--add-host", host);
-  if (snap.hostname) args.push("--hostname", snap.hostname);
-  return args;
-}
+
 
 /** Stops and removes a container, tolerating absence. */
 async function removeContainer(name) {
   await docker(["rm", "-f", name], { timeoutMs: 30_000 }).catch(() => {});
 }
 
-/** True when the container is running and (if it has a healthcheck) healthy. */
+/**
+ * Health verdict for the machine:
+ * - with Docker healthcheck: waits for healthy; unhealthy fails fast
+ * - without healthcheck: running is necessary but NOT sufficient —
+ *   RestartCount must not grow across the stabilization window
+ *   (a container that crashes right after start is caught).
+ */
 async function isHealthy(name) {
   const raw = await dockerJson(
     ["container", "inspect", "--format", "{{json .State}}", name],
@@ -544,7 +538,22 @@ async function isHealthy(name) {
     if (st.Health.Status === "unhealthy") return { ok: false, detail: "unhealthy" };
     return { ok: false, detail: "health starting" };
   }
-  return { ok: true, detail: "running (no healthcheck)" };
+  return { ok: true, detail: "running (no healthcheck)", restartCount: st.RestartCount ?? 0, exitCode: st.ExitCode ?? 0 };
+}
+
+/** Crash-loop / instant-exit detection for containers without healthcheck. */
+async function isCrashLooping(name, baselineRestartCount) {
+  const raw = await dockerJson(
+    ["container", "inspect", "--format", "{{json .State}}", name],
+    STEP_TIMEOUT_MS.inspect,
+  ).catch(() => null);
+  const st = Array.isArray(raw) ? raw[0] : raw;
+  if (!st) return { crashed: true, detail: "container gone" };
+  if (st.Running !== true) return { crashed: true, detail: `exited (code ${st.ExitCode})` };
+  if ((st.RestartCount ?? 0) > baselineRestartCount + 1) {
+    return { crashed: true, detail: `restart count grew (${st.RestartCount} > ${baselineRestartCount}) — crash loop` };
+  }
+  return { crashed: false };
 }
 
 /**
@@ -585,36 +594,29 @@ async function runContainerUpdate(name, { rollback = false } = {}) {
     const current = Array.isArray(inspectArray) ? inspectArray[0] : inspectArray;
     if (!current) throw new Error("container not found");
 
-    if (!rollback) {
-      // Non-negotiable blocks (derived from the container itself).
-      if (current.Config?.Labels?.["com.docker.compose.project"]) {
-        throw new Error("Compose-managed — update via docker compose, not the dashboard");
-      }
-      if (blockedContainers().has(name.toLowerCase())) {
-        throw new Error("Managed externally / AIO — dashboard update disabled");
-      }
+    // Non-negotiable blocks (derived from the container itself).
+    if (current.Config?.Labels?.["com.docker.compose.project"]) {
+      throw new Error("Compose-managed — update via docker compose, not the dashboard");
+    }
+    if (blockedContainers().has(name.toLowerCase())) {
+      throw new Error("Managed externally / AIO — dashboard update disabled");
     }
 
-    snapshot = {
-      name,
-      image: current.Config?.Image ?? null,
-      imageId: current.Image ?? null,
-      repoDigests: current.RepoDigests ?? [],
-      networkMode: current.HostConfig?.NetworkMode ?? "default",
-      restartPolicy: current.HostConfig?.RestartPolicy?.Name ?? "no",
-      portBindings: current.HostConfig?.PortBindings ?? {},
-      binds: current.HostConfig?.Binds ?? [],
-      privileged: current.HostConfig?.Privileged === true,
-      capAdd: current.HostConfig?.CapAdd ?? [],
-      capDrop: current.HostConfig?.CapDrop ?? [],
-      extraHosts: current.HostConfig?.ExtraHosts ?? [],
-      hostname: current.Config?.Hostname ?? null,
-      env: current.Config?.Env ?? [],
-      hasHealthcheck: Boolean(current.State?.Health) || Boolean(current.Config?.Healthcheck),
-      snapshotAt: new Date().toISOString(),
-    };
-    if (!snapshot.image) throw new Error("container has no image reference");
+    // Full-fidelity snapshot via the recreate engine (pure, unit-tested).
+    snapshot = inspectToSnapshot(current);
     envLines = (snapshot.env ?? []).join("\n");
+    // Detect anything generic recreate cannot faithfully re-apply — block
+    // BEFORE mutation with concrete reasons (fail closed, never degrade).
+    let imageExposed = [];
+    try {
+      const imgInspect = await dockerJson(["image", "inspect", "--format", "{{json .Config.ExposedPorts}}", current.Image], STEP_TIMEOUT_MS.inspect);
+      const parsedImg = Array.isArray(imgInspect) ? imgInspect[0] : imgInspect;
+      imageExposed = Object.keys(typeof parsedImg === "string" ? JSON.parse(parsedImg) : (parsedImg ?? {}));
+    } catch { imageExposed = []; }
+    const unsupported = findUnsupported(snapshot, imageExposed);
+    if (unsupported.length > 0) {
+      throw new Error(`${UNSUPPORTED_PREFIX} ${unsupported.join("; ")}`);
+    }
     // Persist the pre-update snapshot (contains Env secrets — never
     // served via API; it is the rollback source).
     await mkdir(SNAPSHOT_DIR, { recursive: true }).catch(() => {});
@@ -668,14 +670,19 @@ async function runContainerUpdate(name, { rollback = false } = {}) {
 
     // --- recreating ---------------------------------------------------------
     setPhase(rollback ? "rolling-back" : "recreating", `stopping ${name}`);
-    const runArgs = runArgsFromSnapshot(snapshot, targetImage);
+    const { args, cmd } = snapshotToRunArgs(snapshot, targetImage);
     await removeContainer(name);
     mutated = true;
-    await dockerRunWithEnv(runArgs, targetImage, envLines, STEP_TIMEOUT_MS.replace);
+    await dockerRunWithEnv(args, targetImage, envLines, STEP_TIMEOUT_MS.replace, cmd);
     setPhase("starting", "container started");
 
     // --- health-wait ---------------------------------------------------------
     setPhase("health-wait", snapshot.hasHealthcheck ? "waiting for healthcheck" : "verifying stable running state");
+    const restartBaseline = await (async () => {
+      const raw = await dockerJson(["container", "inspect", "--format", "{{json .State.RestartCount}}", name], STEP_TIMEOUT_MS.inspect).catch(() => null);
+      const value = Array.isArray(raw) ? raw[0] : raw;
+      return typeof value === "number" ? value : 0;
+    })();
     const deadline = Date.now() + HEALTH_WAIT_MS;
     let verdict = null;
     while (Date.now() < deadline) {
@@ -684,10 +691,15 @@ async function runContainerUpdate(name, { rollback = false } = {}) {
       if (verdict.detail === "unhealthy") break;
       await sleep(4_000);
     }
-    // Stabilization period: must still be healthy/running afterwards.
+    // Stabilization period: must still be healthy/running afterwards; for
+    // containers without a healthcheck, detect crash loops via RestartCount.
     if (verdict?.ok) {
       await sleep(STABILIZE_MS);
       verdict = await isHealthy(name);
+      if (verdict.ok && !snapshot.hasHealthcheck) {
+        const loop = await isCrashLooping(name, restartBaseline);
+        if (loop.crashed) verdict = { ok: false, detail: loop.detail };
+      }
     }
     if (!verdict?.ok) {
       throw new Error(`health verification failed: ${verdict?.detail ?? "timeout"}`);
@@ -726,18 +738,27 @@ async function runContainerUpdate(name, { rollback = false } = {}) {
       // Automatic rollback to the snapshotted image + config.
       setPhase("rolling-back", message.slice(0, 160));
       try {
-        const runArgs = runArgsFromSnapshot(snapshot, snapshot.imageId);
+        const { args, cmd } = snapshotToRunArgs(snapshot, snapshot.imageId);
         await removeContainer(name);
-        await dockerRunWithEnv(runArgs, snapshot.imageId, envLines, STEP_TIMEOUT_MS.replace);
+        await dockerRunWithEnv(args, snapshot.imageId, envLines, STEP_TIMEOUT_MS.replace, cmd);
         const deadline = Date.now() + HEALTH_WAIT_MS;
         let ok = false;
+        let lastDetail = "timeout";
         while (Date.now() < deadline) {
           const verdict = await isHealthy(name);
-          if (verdict.ok) { ok = true; break; }
-          if (verdict.detail === "unhealthy") break;
+          if (verdict.ok) {
+            await sleep(STABILIZE_MS);
+            const recheck = await isHealthy(name);
+            const loop = recheck.ok && !snapshot.hasHealthcheck ? await isCrashLooping(name, 0) : { crashed: false };
+            if (recheck.ok && !loop.crashed) { ok = true; break; }
+            lastDetail = recheck.ok ? loop.detail : recheck.detail;
+          } else {
+            lastDetail = verdict.detail;
+            if (verdict.detail === "unhealthy") break;
+          }
           await sleep(4_000);
         }
-        if (!ok) throw new Error("rolled-back container did not become healthy");
+        if (!ok) throw new Error(`rolled-back container did not become healthy: ${lastDetail}`);
         setPhase("rolled-back", `restored ${snapshot.imageId.slice(0, 25)}: ${message.slice(0, 120)}`);
         setJob(name, {
           phase: "rolled-back",
@@ -853,6 +874,7 @@ const server = http.createServer(async (req, res) => {
             const rawLabels = current?.Config?.Labels ?? {};
             const labels = {};
             for (const key of [
+              "com.cyxno.update-manager",
               "com.docker.compose.project",
               "com.docker.compose.service",
               "com.docker.compose.project.working_dir",
@@ -1129,8 +1151,66 @@ const server = http.createServer(async (req, res) => {
 });
 
 /* Only localhost. Never bind a published interface. */
+/**
+ * Startup recovery (helper restart mid-update): scans persisted jobs for
+ * non-terminal phases and settles them against reality:
+ * - pre-mutation phases → container untouched → failed (helper restart)
+ * - post-mutation phases → restore from snapshot → recovery-rollback
+ */
+async function recoverInterruptedJobs() {
+  const jobs = loadJobs();
+  const ACTIVE = ["requested", "snapshotting", "pulling", "verifying", "recreating", "starting", "health-wait"];
+  for (const [name, job] of Object.entries(jobs)) {
+    if (!job.startedAt || job.finishedAt || !ACTIVE.includes(job.phase)) continue;
+    log("recovery", `interrupted job for ${name} found (phase ${job.phase})`);
+    const running = await dockerJson(
+      ["container", "inspect", "--format", "{{json .State.Running}}", name],
+      STEP_TIMEOUT_MS.inspect,
+    ).catch(() => null);
+    const isRunning = Array.isArray(running) ? running[0] === true : running === true;
+    if (isRunning) {
+      // Mutation either completed or never touched this container: the
+      // dashboard's status poll will classify it; mark for manual review.
+      job.phase = job.phase === "health-wait" || job.phase === "starting" ? "completed" : "failed";
+      job.staleOrphan = true;
+      job.lastResult = { ...(job.lastResult ?? {}), result: job.phase === "completed" ? "success" : "failed", error: "helper restarted during update" };
+      saveJobs(jobs);
+      continue;
+    }
+    // Container missing → restore from snapshot if we have one.
+    const snapFile = nodePath.join(SNAPSHOT_DIR, `${name.replace(/[^A-Za-z0-9_.-]/g, "_")}.json`);
+    try {
+      const snapshot = JSON.parse(readFileSync(snapFile, "utf8"));
+      if (!snapshot.imageId) throw new Error("snapshot has no imageId");
+      const { args, cmd } = snapshotToRunArgs(snapshot, snapshot.imageId);
+      await removeContainer(name);
+      await dockerRunWithEnv(args, snapshot.imageId, (snapshot.env ?? []).join("\n"), STEP_TIMEOUT_MS.replace, cmd);
+      const deadline = Date.now() + HEALTH_WAIT_MS;
+      let ok = false;
+      while (Date.now() < deadline) {
+        const verdict = await isHealthy(name);
+        if (verdict.ok) { await sleep(STABILIZE_MS); const re = await isHealthy(name); if (re.ok) { ok = true; break; } }
+        if (verdict.detail === "unhealthy") break;
+        await sleep(4_000);
+      }
+      if (!ok) throw new Error("recovered container did not become healthy");
+      job.phase = "recovered";
+      job.finishedAt = new Date().toISOString();
+      job.lastResult = { ...(job.lastResult ?? {}), result: "recovery-rollback-success" };
+      log("recovery", `${name} restored from snapshot`);
+    } catch (error) {
+      job.phase = "recovery-failed";
+      job.finishedAt = new Date().toISOString();
+      job.lastResult = { ...(job.lastResult ?? {}), result: "recovery-rollback-failed", error: String(error.message ?? error).slice(0, 300) };
+      log("recovery", `${name} FAILED: ${String(error.message ?? error).slice(0, 160)}`);
+    }
+    saveJobs(jobs);
+  }
+}
+
 server.listen(PORT, LISTEN_HOST, () => {
   console.log(`update helper ${HELPER_VERSION} listening on http://${LISTEN_HOST}:${PORT} (localhost only)`);
+  void recoverInterruptedJobs().catch((error) => log("recovery", `scan failed: ${error.message}`));
   console.log(`target container: ${CONTAINER_NAME}; image repo: ${IMAGE_REPO} (deployment constants)`);
   void refreshCurrentImage().then(() => {
     const probePull = async () => {

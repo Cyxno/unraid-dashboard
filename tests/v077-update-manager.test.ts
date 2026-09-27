@@ -24,6 +24,7 @@ function container(overrides: Partial<ManagedContainer> = {}): ManagedContainer 
     risk: "LOW",
     policy: "notify",
     rollback_available: false,
+    externallyManaged: false,
     health: "healthy",
     last_checked: "2026-09-27T20:00:00Z",
     last_updated: null,
