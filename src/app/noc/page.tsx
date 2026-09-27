@@ -62,18 +62,32 @@ const CYCLE_RESUME_AFTER_IDLE_S = 30;
 
 function useFullscreen() {
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // iOS Safari (iPhone/iPad) exposeert geen Fullscreen API voor pagina's:
+  // de knop zou niets doen. Beschikbaarheid wordt expliciet gedetecteerd.
+  const supported =
+    typeof document !== "undefined" &&
+    (Boolean(document.documentElement.requestFullscreen) ||
+      Boolean((document.documentElement as unknown as { webkitRequestFullscreen?: unknown }).webkitRequestFullscreen));
   useEffect(() => {
-    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement || (document as unknown as { webkitFullscreenElement?: Element }).webkitFullscreenElement));
     document.addEventListener("fullscreenchange", onChange);
-    return () => document.removeEventListener("fullscreenchange", onChange);
+    document.addEventListener("webkitfullscreenchange", onChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", onChange);
+      document.removeEventListener("webkitfullscreenchange", onChange);
+    };
   }, []);
   const enter = () => {
-    void document.documentElement.requestFullscreen?.().catch(() => {});
+    const el = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> };
+    if (el.requestFullscreen) void el.requestFullscreen().catch(() => {});
+    else if (el.webkitRequestFullscreen) void el.webkitRequestFullscreen().catch(() => {});
   };
   const exit = () => {
-    void document.exitFullscreen?.().catch(() => {});
+    const doc = document as Document & { webkitExitFullscreen?: () => Promise<void> };
+    if (document.exitFullscreen) void document.exitFullscreen().catch(() => {});
+    else if (doc.webkitExitFullscreen) void doc.webkitExitFullscreen().catch(() => {});
   };
-  return { isFullscreen, enter, exit };
+  return { isFullscreen, supported, enter, exit };
 }
 
 /** Wake lock with re-acquisition on visibility change. */
@@ -166,7 +180,7 @@ function NocShell() {
     PAGE_INTERVAL_MS.systemMetrics,
   );
   const docker = usePoll<Section<DockerSummary>>("/api/docker", PAGE_INTERVAL_MS.docker);
-  const { isFullscreen, enter, exit } = useFullscreen();
+  const { isFullscreen, supported: fullscreenSupported, enter, exit } = useFullscreen();
   const wakeLock = useWakeLock();
 
   const [panelsOpen, setPanelsOpen] = useState(false);
@@ -359,16 +373,18 @@ function NocShell() {
             <Settings2 className="size-3.5" aria-hidden={true} />
             <ChevronDown className={cn("size-3 transition", panelsOpen && "rotate-180")} aria-hidden={true} />
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="gap-1 text-xs"
-            onClick={isFullscreen ? exit : enter}
-            aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-          >
-            {isFullscreen ? <Minimize className="size-3.5" aria-hidden={true} /> : <Maximize className="size-3.5" aria-hidden={true} />}
-            {!kiosk && (isFullscreen ? "Exit" : "Fullscreen")}
-          </Button>
+          {(fullscreenSupported || isFullscreen) && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1 text-xs"
+              onClick={isFullscreen ? exit : enter}
+              aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+            >
+              {isFullscreen ? <Minimize className="size-3.5" aria-hidden={true} /> : <Maximize className="size-3.5" aria-hidden={true} />}
+              {!kiosk && (isFullscreen ? "Exit" : "Fullscreen")}
+            </Button>
+          )}
           <Button variant="ghost" size="sm" asChild className="shrink-0" aria-label="Exit NOC mode">
             <Link href="/">
               <X className="size-4" aria-hidden={true} /> {!kiosk && "Exit"}

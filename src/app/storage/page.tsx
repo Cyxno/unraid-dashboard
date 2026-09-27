@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn, formatBytes, formatPercent, formatRate, formatTemp, humanState } from "@/lib/utils";
 import type {
   DiskIoSnapshot,
+  MetricMeta,
   Section,
   StorageHistoryPayload,
   StorageUsage,
@@ -80,17 +81,19 @@ export default function StoragePage() {
   /* Runtime disk I/O (Prometheus) + performance history. Capacity views
      above stay purely Unraid; performance views are clearly separate. */
   const [window, setWindow] = usePersistedWindow();
-  const diskIo = usePoll<DiskIoSnapshot>(
+  // De API wikkelt de snapshot in { meta, data } — data is null bij degrade.
+  const diskIo = usePoll<{ meta: MetricMeta; data: DiskIoSnapshot | null }>(
     "/api/storage/io",
     PAGE_INTERVAL_MS.docker,
   );
+  const diskIoData = diskIo.data?.data ?? null;
   const history = usePoll<StorageHistoryPayload>(
     `/api/storage/history?window=${window}`,
     HISTORY_INTERVAL_MS[window],
   );
 
   const ioByDevice = new Map(
-    (diskIo.data?.devices ?? []).map((device) => [device.device, device]),
+    (diskIoData?.devices ?? []).map((device) => [device.device, device]),
   );
 
   // Aggregate data-disks only for "usable" capacity — parity disks hold no
@@ -168,9 +171,9 @@ export default function StoragePage() {
               <MetricStatus meta={diskIo.data?.meta ?? null} />
             </CardHeader>
             <CardContent>
-              {diskIo.loading && !diskIo.data ? (
+              {diskIo.loading && !diskIoData ? (
                 <Skeleton className="h-24 w-full" />
-              ) : diskIo.data === null ? (
+              ) : diskIoData === null ? (
                 <p className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
                   Disk I/O unavailable — Prometheus is unreachable. Capacity
                   and health data remain live from Unraid.
@@ -220,10 +223,10 @@ export default function StoragePage() {
                           Total (all physical devices)
                         </td>
                         <td className="px-3 py-2.5 text-right font-mono tabular-nums">
-                          {formatRate(diskIo.data.totals.readBytesPerSec)}
+                          {formatRate(diskIoData?.totals.readBytesPerSec ?? null)}
                         </td>
                         <td className="px-3 py-2.5 text-right font-mono tabular-nums">
-                          {formatRate(diskIo.data.totals.writeBytesPerSec)}
+                          {formatRate(diskIoData?.totals.writeBytesPerSec ?? null)}
                         </td>
                         <td className="px-3 py-2.5" colSpan={2} />
                       </tr>

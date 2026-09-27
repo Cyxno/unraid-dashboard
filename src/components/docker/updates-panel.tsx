@@ -270,6 +270,11 @@ export function DockerUpdatesPanel() {
         </div>
 
         {refreshError && <p role="alert" className="text-xs text-destructive">{refreshError}</p>}
+        {actionError && (
+          <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
+            {actionError}
+          </p>
+        )}
 
         {interesting.length === 0 ? (
           <p className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">

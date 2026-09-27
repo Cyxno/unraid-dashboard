@@ -1,0 +1,17 @@
+import { chromium } from "playwright-core";
+const browser = await chromium.connectOverCDP("http://[::1]:9222");
+const context = browser.contexts()[0] ?? (await browser.newContext());
+const page = await context.newPage();
+const errs = [];
+page.on("pageerror", (e) => errs.push("PAGEERROR: " + (e.stack ?? e.message).slice(0, 400)));
+page.on("console", (m) => { if (["error","warning"].includes(m.type())) errs.push(`[${m.type()}] ` + m.text().slice(0, 250)); });
+await page.setViewportSize({ width: 1440, height: 900 });
+await page.goto("http://192.168.1.2:8090/docker", { waitUntil: "domcontentloaded" });
+await page.waitForTimeout(9000);
+const btn = page.locator('button[aria-label^="Update "]').first();
+await btn.click();
+await page.waitForTimeout(600);
+console.log("alertdialog:", await page.locator("[role=alertdialog]").count());
+for (const e of errs.slice(0, 6)) console.log(e);
+await page.close();
+process.exit(0);

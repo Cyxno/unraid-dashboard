@@ -1,0 +1,18 @@
+import { chromium } from "playwright-core";
+const browser = await chromium.connectOverCDP("http://[::1]:9222");
+const context = browser.contexts()[0] ?? (await browser.newContext());
+const page = await context.newPage();
+const errs = [];
+page.on("pageerror", (e) => errs.push(e.message.slice(0, 200)));
+await page.setViewportSize({ width: 1440, height: 900 });
+await page.goto("http://192.168.1.2:8090/docker", { waitUntil: "domcontentloaded" });
+await page.waitForTimeout(6000);
+const search = page.getByPlaceholder("Search name, image, project…");
+await search.click();
+await search.fill("kavita");
+await page.waitForTimeout(800);
+const rows = await page.locator("table tbody tr").count().catch(() => -1);
+console.log("React alive (rijen na 'kavita'):", rows);
+console.log("pageerrors:", errs.length ? errs.join(" | ") : "geen");
+await page.close();
+process.exit(0);
