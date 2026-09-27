@@ -256,6 +256,81 @@ export async function requestRollback(tag: string): Promise<UpdateRequestResult>
   }
 }
 
+/**
+ * Generic container update: the request only names the container; the
+ * helper derives strategy/config from the container itself and enforces
+ * its own blocklist (AIO, compose-managed, externally-managed).
+ */
+export async function requestContainerUpdate(name: string): Promise<UpdateRequestResult> {
+  return containerOperation(`/container-update`, name);
+}
+
+/** Rollback a container to its snapshotted previous image + config. */
+export async function requestContainerRollback(name: string): Promise<UpdateRequestResult> {
+  return containerOperation(`/container-rollback`, name);
+}
+
+interface ContainerJob {
+  name: string;
+  phase: string;
+  detail?: string | null;
+  startedAt?: string;
+  finishedAt?: string | null;
+  phases?: Array<{ phase: string; detail: string; at: string }>;
+  staleOrphan?: boolean;
+  lastResult?: {
+    result: string;
+    image?: string;
+    imageId?: string | null;
+    durationMs?: number;
+    health?: string;
+    error?: string;
+  };
+}
+
+async function containerOperation(path: string, name: string): Promise<UpdateRequestResult> {
+  const config = helperConfig();
+  if (!config) return { accepted: false, status: 503, reason: "Update helper not configured." };
+  if (!config.token) return { accepted: false, status: 503, reason: "UPDATE_HELPER_TOKEN not configured." };
+  try {
+    const response = await fetch(`${config.url}${path}`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${config.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ name, confirm: "yes" }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const body = (await response.json().catch(() => ({}))) as { error?: string; accepted?: boolean; phase?: string };
+    if (response.status === 202 && body.accepted) return { accepted: true, status: 202 };
+    return {
+      accepted: false,
+      status: response.status,
+      reason: body.error ?? `Helper responded with HTTP ${response.status}.`,
+    };
+  } catch (error) {
+    return { accepted: false, status: 502, reason: error instanceof Error ? error.message : "Helper request failed." };
+  }
+}
+
+/** Fetches the job state for one container from the helper. */
+export async function getContainerJob(name: string): Promise<ContainerJob | null> {
+  const config = helperConfig();
+  if (!config) return null;
+  try {
+    const response = await fetch(
+      `${config.url}/container-job?name=${encodeURIComponent(name)}`,
+      { headers: config.token ? { authorization: `Bearer ${config.token}` } : {}, signal: AbortSignal.timeout(5_000), cache: "no-store" },
+    );
+    if (!response.ok) return null;
+    const body = (await response.json()) as { job?: ContainerJob | null };
+    return body.job ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** Explicit same-version validation transition (helper-level smoke test). */
 export function compareSemver(a: string, b: string): number {
   const pa = a.replace(/^v/, "").split(".").map(Number);

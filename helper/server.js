@@ -36,8 +36,9 @@
 const http = require("node:http");
 const { spawn } = require("node:child_process");
 const { randomUUID, timingSafeEqual } = require("node:crypto");
-const { writeFile, unlink } = require("node:fs/promises");
-const { readFileSync } = require("node:fs");
+const nodePath = require("node:path");
+const { writeFile, unlink, mkdir } = require("node:fs/promises");
+const { readFileSync, writeFileSync, mkdirSync, existsSync } = require("node:fs");
 const path = require("node:path");
 
 /* ---- deployment constants (env-overridable ONLY for isolated testing) ----- */
@@ -57,7 +58,65 @@ const HEALTH_TIMEOUT_MS = 150_000;
 const VERIFY_TIMEOUT_MS = 30_000;
 const STEP_TIMEOUT_MS = { inspect: 15_000, pull: 300_000, replace: 30_000 };
 
-const HELPER_VERSION = "0.7.6";
+const HELPER_VERSION = "0.7.7";
+
+/* ---- generic container update machine (v0.7.7) ----------------------------
+ * Extends the dashboard's own update flow to arbitrary containers.
+ * Invariants:
+ * - the helper remains the ONLY Docker-socket component
+ * - never runs a shell: every docker call is spawn(argv array)
+ * - the request names a container; EVERYTHING else (strategy, config,
+ *   image) is derived by the helper from the container itself
+ * - env values from snapshots are written to 0600 temp files and never
+ *   served through any endpoint
+ * - old image is NEVER removed; no prune during updates
+ * - compose-managed, AIO and externally-managed containers are refused
+ */
+
+const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/;
+const SNAPSHOT_DIR = "/tmp/update-snapshots";
+const JOBS_FILE = "/tmp/update-jobs.json";
+const HEALTH_WAIT_MS = 120_000;
+const STABILIZE_MS = 5_000;
+
+/** Containers the update machine refuses, by name (case-insensitive). */
+function blockedContainers() {
+  const builtIn = ["dumb", "dumbscope", "unraid-dashboard", "unraid-dashboard-helper"];
+  const extra = (process.env.BLOCKED_EXTRA_CONTAINERS ?? "")
+    .split(",").map((entry) => entry.trim().toLowerCase()).filter(Boolean);
+  return new Set([...builtIn, ...extra]);
+}
+
+/** Job store: persisted so a helper restart leaves visible state. */
+function loadJobs() {
+  try {
+    return JSON.parse(readFileSync(JOBS_FILE, "utf8"));
+  } catch {
+    return {};
+  }
+}
+function saveJobs(jobs) {
+  try {
+    writeFileSync(JOBS_FILE, JSON.stringify(jobs, null, 2), { mode: 0o600 });
+  } catch (error) {
+    log("jobs", `persist failed: ${error.message}`);
+  }
+}
+function jobStore() {
+  if (!globalThis.__containerJobs) globalThis.__containerJobs = loadJobs();
+  return globalThis.__containerJobs;
+}
+function setJob(name, patch) {
+  const jobs = jobStore();
+  jobs[name] = { ...(jobs[name] ?? {}), name, ...patch };
+  saveJobs(jobs);
+  return jobs[name];
+}
+
+function containerLocks() {
+  if (!globalThis.__containerLocks) globalThis.__containerLocks = new Map();
+  return globalThis.__containerLocks;
+}
 
 /* ---- state ---------------------------------------------------------------- */
 
@@ -422,6 +481,252 @@ async function refreshLocalVersions() {
   }
 }
 
+/* ---- generic container update machine --------------------------------------- */
+
+/** Namespaced global machine state (separate from the dashboard self-update). */
+function machineStateFor(name) {
+  const all = jobStore();
+  return all[name] ?? null;
+}
+
+/** Exact recreate args from a snapshot (used by update AND rollback). */
+function runArgsFromSnapshot(snap, image) {
+  const args = ["run", "-d", "--name", snap.name, "--network", snap.networkMode];
+  if (snap.restartPolicy && snap.restartPolicy !== "no") args.push("--restart", snap.restartPolicy);
+  for (const [port, bindings] of Object.entries(snap.portBindings ?? {})) {
+    for (const binding of bindings ?? []) {
+      args.push("-p", `${binding.HostIp ?? ""}:${binding.HostPort}:${port}`);
+    }
+  }
+  for (const bind of snap.binds ?? []) args.push("-v", bind);
+  if (snap.privileged) args.push("--privileged");
+  for (const cap of snap.capAdd ?? []) args.push("--cap-add", cap);
+  for (const cap of snap.capDrop ?? []) args.push("--cap-drop", cap);
+  for (const host of snap.extraHosts ?? []) args.push("--add-host", host);
+  if (snap.hostname) args.push("--hostname", snap.hostname);
+  return args;
+}
+
+/** Stops and removes a container, tolerating absence. */
+async function removeContainer(name) {
+  await docker(["rm", "-f", name], { timeoutMs: 30_000 }).catch(() => {});
+}
+
+/** True when the container is running and (if it has a healthcheck) healthy. */
+async function isHealthy(name) {
+  const raw = await dockerJson(
+    ["container", "inspect", "--format", "{{json .State}}", name],
+    STEP_TIMEOUT_MS.inspect,
+  ).catch(() => null);
+  const st = Array.isArray(raw) ? raw[0] : raw;
+  if (!st || st.Running !== true) return { ok: false, detail: "not running" };
+  if (st.Restarting === true) return { ok: false, detail: "restarting" };
+  if (st.Health) {
+    if (st.Health.Status === "healthy") return { ok: true, detail: "healthy" };
+    if (st.Health.Status === "unhealthy") return { ok: false, detail: "unhealthy" };
+    return { ok: false, detail: "health starting" };
+  }
+  return { ok: true, detail: "running (no healthcheck)" };
+}
+
+/**
+ * The generic update machine. Phases:
+ * requested → snapshotting → pulling → verifying → recreating → starting
+ * → health-wait → completed | failed | rolled-back | rollback-failed
+ */
+async function runContainerUpdate(name, { rollback = false } = {}) {
+  const startedAt = new Date().toISOString();
+  const phases = [];
+  const setPhase = (phase, detail) => {
+    phases.push({ phase, detail: String(detail ?? "").slice(0, 160), at: new Date().toISOString() });
+    setJob(name, { phase, detail: String(detail ?? "").slice(0, 200), phases });
+    log(`container-update:${name}`, `${phase}: ${detail ?? ""}`);
+  };
+
+  let snapshot = null;
+  let mutated = false;
+
+  try {
+    // --- snapshotting -------------------------------------------------------
+    setPhase(rollback ? "rollback-requested" : "requested", "capturing container configuration");
+    const inspectArray = await dockerJson(["container", "inspect", "--format", "{{json .}}", name], STEP_TIMEOUT_MS.inspect);
+    const current = Array.isArray(inspectArray) ? inspectArray[0] : inspectArray;
+    if (!current) throw new Error("container not found");
+
+    if (!rollback) {
+      // Non-negotiable blocks (derived from the container itself).
+      if (current.Config?.Labels?.["com.docker.compose.project"]) {
+        throw new Error("Compose-managed — update via docker compose, not the dashboard");
+      }
+      if (blockedContainers().has(name.toLowerCase())) {
+        throw new Error("Managed externally / AIO — dashboard update disabled");
+      }
+    }
+
+    const envLines = (current.Config?.Env ?? []).join("\n");
+    snapshot = {
+      name,
+      image: current.Config?.Image ?? null,
+      imageId: current.Image ?? null,
+      repoDigests: current.RepoDigests ?? [],
+      networkMode: current.HostConfig?.NetworkMode ?? "default",
+      restartPolicy: current.HostConfig?.RestartPolicy?.Name ?? "no",
+      portBindings: current.HostConfig?.PortBindings ?? {},
+      binds: current.HostConfig?.Binds ?? [],
+      privileged: current.HostConfig?.Privileged === true,
+      capAdd: current.HostConfig?.CapAdd ?? [],
+      capDrop: current.HostConfig?.CapDrop ?? [],
+      extraHosts: current.HostConfig?.ExtraHosts ?? [],
+      hostname: current.Config?.Hostname ?? null,
+      hasHealthcheck: Boolean(current.State?.Health) || Boolean(current.Config?.Healthcheck),
+      snapshotAt: new Date().toISOString(),
+    };
+    if (!snapshot.image) throw new Error("container has no image reference");
+    // Persist the snapshot (contains Env secrets — never served via API).
+    await mkdir(SNAPSHOT_DIR, { recursive: true }).catch(() => {});
+    await writeFile(
+      nodePath.join(SNAPSHOT_DIR, `${name.replace(/[^A-Za-z0-9_.-]/g, "_")}.json`),
+      JSON.stringify(snapshot, null, 2),
+      { mode: 0o600 },
+    );
+    setPhase("snapshotting", `config captured (image ${snapshot.image})`);
+
+    // --- pulling (skipped for rollback: use the pinned old image ID) --------
+    let targetImage;
+    if (rollback) {
+      targetImage = snapshot.imageId;
+      if (!targetImage) throw new Error("snapshot has no image ID for rollback");
+      setPhase("pulling", `rollback uses pinned image ${targetImage.slice(0, 25)}`);
+    } else {
+      targetImage = snapshot.image;
+      setPhase("pulling", targetImage);
+      let pullFailed = false;
+      try {
+        await docker(["pull", targetImage], {
+          timeoutMs: STEP_TIMEOUT_MS.pull,
+          onStdout: (text) => {
+            const line = text.split("\n").find((entry) =>
+              entry.includes("Pull complete") || entry.includes("Downloaded newer") || entry.includes("Image is up to date"));
+            if (line) setPhase("pulling", line.trim().slice(0, 120));
+          },
+        });
+      } catch (pullError) {
+        const local = await dockerJson(["image", "inspect", targetImage], STEP_TIMEOUT_MS.inspect).catch(() => null);
+        if (!local) throw new Error(`pull failed and image is not local: ${String(pullError.message).slice(0, 140)}`);
+        pullFailed = true;
+        setPhase("pulling", "registry pull failed — continuing with local image");
+      }
+
+      // --- verifying --------------------------------------------------------
+      setPhase("verifying", targetImage);
+      const imageInspect = await dockerJson(["image", "inspect", targetImage], STEP_TIMEOUT_MS.inspect);
+      const newImageId = (Array.isArray(imageInspect) ? imageInspect[0] : imageInspect)?.Id ?? null;
+      if (!newImageId) throw new Error("cannot resolve new image ID");
+      if (newImageId === snapshot.imageId && !pullFailed) {
+        // Same image ID: the tag did not move (version-pinned or unchanged).
+        setPhase("completed", "image unchanged — already up to date, container untouched");
+        setJob(name, {
+          phase: "completed",
+          finishedAt: new Date().toISOString(),
+          lastResult: { result: "no-change", image: targetImage, imageId: newImageId, durationMs: Date.now() - Date.parse(startedAt) },
+        });
+        return;
+      }
+      setPhase("verifying", `new image ${newImageId.slice(0, 25)}`);
+    }
+
+    // --- recreating ---------------------------------------------------------
+    setPhase(rollback ? "rolling-back" : "recreating", `stopping ${name}`);
+    const runArgs = runArgsFromSnapshot(snapshot, targetImage);
+    await removeContainer(name);
+    mutated = true;
+    await dockerRunWithEnv(runArgs, targetImage, envLines, STEP_TIMEOUT_MS.replace);
+    setPhase("starting", "container started");
+
+    // --- health-wait ---------------------------------------------------------
+    setPhase("health-wait", snapshot.hasHealthcheck ? "waiting for healthcheck" : "verifying stable running state");
+    const deadline = Date.now() + HEALTH_WAIT_MS;
+    let verdict = null;
+    while (Date.now() < deadline) {
+      verdict = await isHealthy(name);
+      if (verdict.ok) break;
+      if (verdict.detail === "unhealthy") break;
+      await sleep(4_000);
+    }
+    // Stabilization period: must still be healthy/running afterwards.
+    if (verdict?.ok) {
+      await sleep(STABILIZE_MS);
+      verdict = await isHealthy(name);
+    }
+    if (!verdict?.ok) {
+      throw new Error(`health verification failed: ${verdict?.detail ?? "timeout"}`);
+    }
+    setPhase("completed", rollback ? `rollback to ${targetImage.slice(0, 25)} healthy` : `${name} updated and healthy`);
+    setJob(name, {
+      phase: "completed",
+      finishedAt: new Date().toISOString(),
+      lastResult: {
+        result: rollback ? "rollback-success" : "success",
+        image: targetImage,
+        imageId: rollback ? targetImage : null,
+        durationMs: Date.now() - Date.parse(startedAt),
+        health: verdict.detail,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log("container-update-failed", `${name}: ${message}`);
+
+    if (snapshot && mutated) {
+      // Automatic rollback to the snapshotted image + config.
+      setPhase("rolling-back", message.slice(0, 160));
+      try {
+        const runArgs = runArgsFromSnapshot(snapshot, snapshot.imageId);
+        await removeContainer(name);
+        await dockerRunWithEnv(runArgs, snapshot.imageId, envLines, STEP_TIMEOUT_MS.replace);
+        const deadline = Date.now() + HEALTH_WAIT_MS;
+        let ok = false;
+        while (Date.now() < deadline) {
+          const verdict = await isHealthy(name);
+          if (verdict.ok) { ok = true; break; }
+          if (verdict.detail === "unhealthy") break;
+          await sleep(4_000);
+        }
+        if (!ok) throw new Error("rolled-back container did not become healthy");
+        setPhase("rolled-back", `restored ${snapshot.imageId.slice(0, 25)}: ${message.slice(0, 120)}`);
+        setJob(name, {
+          phase: "rolled-back",
+          finishedAt: new Date().toISOString(),
+          lastResult: {
+            result: "rolled-back",
+            image: snapshot.imageId,
+            durationMs: Date.now() - Date.parse(startedAt),
+            error: message.slice(0, 300),
+          },
+        });
+      } catch (rollbackError) {
+        setPhase("rollback-failed", `MANUAL RECOVERY REQUIRED: ${String(rollbackError.message).slice(0, 120)}`);
+        setJob(name, {
+          phase: "rollback-failed",
+          finishedAt: new Date().toISOString(),
+          lastResult: {
+            result: "rollback-failed",
+            error: `update: ${message.slice(0, 160)}; rollback: ${String(rollbackError.message).slice(0, 160)}`,
+          },
+        });
+      }
+    } else {
+      // Nothing mutated — clean failure.
+      setPhase("failed", message.slice(0, 200));
+      setJob(name, {
+        phase: "failed",
+        finishedAt: new Date().toISOString(),
+        lastResult: { result: "failed", error: message.slice(0, 300) },
+      });
+    }
+  }
+}
+
 /* ---- HTTP surface ----------------------------------------------------------- */
 
 function constantTimeEqual(a, b) {
@@ -631,6 +936,108 @@ const server = http.createServer(async (req, res) => {
       void refreshLocalVersions();
     });
     return sendJson(res, 202, { accepted: true, tag, phase: state.phase });
+  }
+
+  // Job status for a container (or all). Read-only, no config content.
+  if (url.pathname === "/container-job" && req.method === "GET") {
+    if (!authorize(req)) return sendJson(res, 401, { error: "unauthorized" });
+    const name = url.searchParams.get("name");
+    const jobs = jobStore();
+    // Stale detection: a job started >2h ago without completion is marked.
+    for (const job of Object.values(jobs)) {
+      if (job.startedAt && !job.finishedAt) {
+        if (Date.now() - Date.parse(job.startedAt) > 2 * 3600_000) {
+          job.phase = job.phase.startsWith("rollback") ? "rollback-failed" : "failed";
+          job.staleOrphan = true;
+          job.lastResult = { ...(job.lastResult ?? {}), result: "stale-orphan", error: "job exceeded 2h without completion (helper restart?)" };
+          saveJobs(jobs);
+        }
+      }
+    }
+    if (name) return sendJson(res, 200, { job: jobs[name] ?? null });
+    return sendJson(res, 200, { jobs });
+  }
+
+  // Generic container update. The request only names the container and
+  // confirms; strategy/config derive from the container itself.
+  if (url.pathname === "/container-update" && req.method === "POST") {
+    if (!authorize(req)) {
+      log("rejected", "unauthorized container update");
+      return sendJson(res, 401, { error: "unauthorized" });
+    }
+    if (state.lock) {
+      return sendJson(res, 409, { error: "another deployment operation is running", phase: state.phase });
+    }
+    let body;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return sendJson(res, 400, { error: "malformed JSON body" });
+    }
+    const name = typeof body?.name === "string" ? body.name.trim() : "";
+    if (!NAME_RE.test(name)) {
+      return sendJson(res, 400, { error: "invalid container name" });
+    }
+    if (body?.confirm !== "yes") {
+      return sendJson(res, 400, { error: "explicit confirmation required" });
+    }
+    if (blockedContainers().has(name.toLowerCase())) {
+      return sendJson(res, 403, { error: "container is AIO/externally-managed — dashboard update disabled" });
+    }
+    // Pre-read the container: compose-managed is refused here as well.
+    try {
+      const inspect = await dockerJson(["container", "inspect", "--format", "{{json .}}", name], STEP_TIMEOUT_MS.inspect);
+      const current = Array.isArray(inspect) ? inspect[0] : inspect;
+      if (current?.Config?.Labels?.["com.docker.compose.project"]) {
+        return sendJson(res, 403, { error: "Compose-managed — update via docker compose" });
+      }
+    } catch {
+      return sendJson(res, 404, { error: "container not found" });
+    }
+
+    state.lock = { token: randomUUID(), since: new Date().toISOString() };
+    state.startedAt = new Date().toISOString();
+    state.finishedAt = null;
+    setJob(name, { phase: "requested", startedAt: new Date().toISOString(), finishedAt: null });
+    void runContainerUpdate(name).then(() => {
+      void refreshCurrentImage();
+      void refreshLocalVersions();
+    });
+    return sendJson(res, 202, { accepted: true, name, phase: "requested" });
+  }
+
+  // Rollback: rebuild from the stored snapshot (old image ID + exact config).
+  if (url.pathname === "/container-rollback" && req.method === "POST") {
+    if (!authorize(req)) return sendJson(res, 401, { error: "unauthorized" });
+    if (state.lock) {
+      return sendJson(res, 409, { error: "another deployment operation is running", phase: state.phase });
+    }
+    let body;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return sendJson(res, 400, { error: "malformed JSON body" });
+    }
+    const name = typeof body?.name === "string" ? body.name.trim() : "";
+    if (!NAME_RE.test(name)) return sendJson(res, 400, { error: "invalid container name" });
+    if (body?.confirm !== "yes") return sendJson(res, 400, { error: "explicit confirmation required" });
+    try {
+      const inspect = await dockerJson(["container", "inspect", "--format", "{{json .}}", name], STEP_TIMEOUT_MS.inspect);
+      if ((Array.isArray(inspect) ? inspect[0] : inspect)?.Config?.Labels?.["com.docker.compose.project"]) {
+        return sendJson(res, 403, { error: "Compose-managed — rollback via docker compose" });
+      }
+    } catch {
+      return sendJson(res, 404, { error: "container not found" });
+    }
+
+    state.lock = { token: randomUUID(), since: new Date().toISOString() };
+    state.startedAt = new Date().toISOString();
+    state.finishedAt = null;
+    setJob(name, { phase: "requested", startedAt: new Date().toISOString(), finishedAt: null });
+    void runContainerUpdate(name, { rollback: true }).then(() => {
+      void refreshCurrentImage();
+    });
+    return sendJson(res, 202, { accepted: true, name, phase: "requested" });
   }
 
   if (url.pathname === "/update" && req.method === "POST") {

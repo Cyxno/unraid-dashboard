@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { ArrowUpCircle, RefreshCw, ShieldAlert } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowUpCircle, Loader2, RefreshCw, ShieldAlert } from "lucide-react";
+import { ConfirmDialog } from "@/components/actions/confirm-dialog";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,17 @@ import { cn, formatDateTimeIso } from "@/lib/utils";
  * strategy applies. Mutating actions arrive after the management report
  * is approved — this surface is deliberately read-only.
  */
+
+interface ContainerJob {
+  name: string;
+  phase: string;
+  detail?: string | null;
+  startedAt?: string;
+  finishedAt?: string | null;
+  phases?: Array<{ phase: string; detail: string; at: string }>;
+  staleOrphan?: boolean;
+  lastResult?: { result: string; image?: string; imageId?: string | null; durationMs?: number; health?: string; error?: string };
+}
 
 interface ManagedContainerDto {
   name: string;
@@ -73,6 +85,27 @@ const MANAGEMENT_LABEL: Record<ManagedContainerDto["management_type"], string> =
   unknown: "Unknown",
 };
 
+/** Server-side gate mirrored in the UI (the API re-validates anyway). */
+function computeGate(container: ManagedContainerDto): { canUpdate: boolean; reason: string | null } {
+  const lower = container.name.toLowerCase();
+  if (["dumb", "dumbscope", "unraid-dashboard", "unraid-dashboard-helper", "watchtower"].includes(lower)) {
+    return {
+      canUpdate: false,
+      reason: lower === "dumb"
+        ? "Part of DUMB AIO — individual update disabled (multiple services run inside)"
+        : "Managed externally — dashboard update disabled (own CI/CD or updater)",
+    };
+  }
+  if (container.management_type === "compose") return { canUpdate: false, reason: "Compose-managed — update via docker compose" };
+  if (container.management_type === "local_build" || container.update_status === "LOCAL_BUILD") return { canUpdate: false, reason: "Local build — update via its build/deploy pipeline" };
+  if (container.update_status === "PINNED") return { canUpdate: false, reason: "Digest pinned — image cannot drift from its pin" };
+  if (container.risk === "HIGH") return { canUpdate: false, reason: "HIGH risk (database/auth/proxy/DNS) — update manually via Unraid" };
+  if (container.update_status === "AUTH_REQUIRED") return { canUpdate: false, reason: "Registry requires credentials — digest unknown" };
+  if (container.update_status === "CHECK_FAILED") return { canUpdate: false, reason: "Registry check failed — no verified update source" };
+  if (!container.update_available) return { canUpdate: false, reason: null };
+  return { canUpdate: true, reason: null };
+}
+
 export function DockerUpdatesPanel() {
   const { online } = usePwa();
   const [refreshing, setRefreshing] = useState(false);
@@ -80,6 +113,75 @@ export function DockerUpdatesPanel() {
   const [showAll, setShowAll] = useState(false);
   const updates = usePoll<UpdatesPayload>("/api/docker/updates", 600_000);
   const data = updates.data;
+  const [updateTarget, setUpdateTarget] = useState<ManagedContainerDto | null>(null);
+  const [updating, setUpdating] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [rollbackTarget, setRollbackTarget] = useState<string | null>(null);
+  // Active job: polled every 2s while a machine runs.
+  const [activeJob, setActiveJob] = useState<ContainerJob | null>(null);
+  const jobRunning = Boolean(
+    activeJob && !["completed", "failed", "rolled-back", "rollback-failed"].includes(activeJob.phase),
+  );
+
+  const pollJob = useCallback(
+    async (name: string) => {
+      const response = await fetch(`/api/docker/update-status?name=${encodeURIComponent(name)}`, { cache: "no-store" });
+      if (!response.ok) return null;
+      const body = (await response.json()) as { job: ContainerJob | null };
+      if (body.job) setActiveJob(body.job);
+      return body.job;
+    },
+    [],
+  );
+
+  const performRollback = useCallback(async (name: string) => {
+    setActionError(null);
+    setRollbackTarget(null);
+    setActiveJob({ name, phase: "requested" });
+    try {
+      const response = await fetch("/api/docker/rollback", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, confirm: "yes" }),
+      });
+      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) {
+        setActionError(body.error ?? "Rollback failed to start.");
+        setActiveJob(null);
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Rollback request failed.");
+      setActiveJob(null);
+    }
+  }, []);
+
+  const startUpdate = useCallback(async (name: string) => {
+    setActionError(null);
+    const response = await fetch("/api/docker/update", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name, confirm: "yes" }),
+    });
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    if (!response.ok) {
+      setActionError(body.error ?? "Update failed to start.");
+      return;
+    }
+    setActiveJob({ name, phase: "requested" });
+  }, []);
+
+  // While a job runs, poll its status; refresh the overview on completion.
+  useEffect(() => {
+    if (!activeJob || !jobRunning) return;
+    const timer = setInterval(() => {
+      void pollJob(activeJob.name).then((job) => {
+        if (job && !["requested", "snapshotting", "pulling", "verifying", "recreating", "starting", "health-wait"].includes(job.phase)) {
+          updates.refresh();
+        }
+      });
+    }, 2_000);
+    return () => clearInterval(timer);
+  }, [activeJob, jobRunning, pollJob, updates]);
 
   const interesting = useMemo(() => {
     if (!data) return [];
@@ -209,13 +311,99 @@ export function DockerUpdatesPanel() {
                       {container.current_digest?.slice(7, 15)} → {container.remote_digest?.slice(7, 15)}
                     </span>
                   )}
+                  {(() => {
+                    const gate = computeGate(container);
+                    const isActiveJob = activeJob?.name === container.name && jobRunning;
+                    if (isActiveJob) {
+                      return (
+                        <span className="ml-auto flex shrink-0 items-center gap-1 text-[10px] text-warning">
+                          <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+                          {activeJob?.phase}
+                        </span>
+                      );
+                    }
+                    if (gate.canUpdate) {
+                      return (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="ml-auto h-6 shrink-0 gap-1 px-1.5 text-[10px]"
+                          disabled={!online || updating || jobRunning}
+                          aria-label={`Update ${container.name}`}
+                          onClick={() => setUpdateTarget(container)}
+                        >
+                          <ArrowUpCircle className="size-3" aria-hidden="true" /> Update
+                        </Button>
+                      );
+                    }
+                    if (gate.reason) {
+                      return (
+                        <span
+                          className="ml-auto max-w-[220px] shrink-0 truncate text-right text-[10px] text-muted-foreground"
+                          title={gate.reason}
+                        >
+                          {gate.reason}
+                        </span>
+                      );
+                    }
+                    return null;
+                  })()}
                 </li>
               ))}
             </ul>
-            {interesting.length > 6 && (
-              <Button size="sm" variant="ghost" className="h-6 text-[11px]" onClick={() => setShowAll((value) => !value)}>
-                {showAll ? "Show less" : `Show all ${interesting.length}`}
-              </Button>
+            {activeJob && (
+              <div
+                role="status"
+                className={cn(
+                  "rounded-md border p-2.5 text-xs",
+                  ["failed", "rollback-failed"].includes(activeJob.phase)
+                    ? "border-destructive/40 text-destructive"
+                    : ["completed", "rolled-back"].includes(activeJob.phase)
+                      ? "border-success/40 text-success"
+                      : "border-warning/40 text-warning",
+                )}
+              >
+                <p className="flex items-center gap-1.5 font-medium">
+                  {jobRunning && <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />}
+                  {activeJob.name} — {activeJob.phase}
+                </p>
+                {activeJob.detail && <p className="mt-0.5 text-[11px] text-muted-foreground">{activeJob.detail}</p>}
+                {activeJob.lastResult?.error && (
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-[11px] text-muted-foreground">Error details</summary>
+                    <p className="mt-0.5 break-words font-mono text-[11px] text-muted-foreground">{activeJob.lastResult.error}</p>
+                  </details>
+                )}
+                {!jobRunning && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {["completed"].includes(activeJob.phase) && activeJob.lastResult?.image && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 px-1.5 text-[10px]"
+                        disabled={updating}
+                        onClick={() => setRollbackTarget(activeJob.name)}
+                      >
+                        Roll back {activeJob.lastResult.image.split(":").pop()?.slice(0, 20)}
+                      </Button>
+                    )}
+                    {["failed", "rolled-back"].includes(activeJob.phase) && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 px-1.5 text-[10px]"
+                        disabled={updating}
+                        onClick={() => {
+                          setActiveJob(null);
+                          updates.refresh();
+                        }}
+                      >
+                        Dismiss
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
           </>
         )}
