@@ -816,8 +816,12 @@ async function runComposeUpdate(name) {
 
   let mutated = false;
   let snapshot = null;
+  let envLines = "";
   let siblingsBefore = null;
   let targetImage = null;
+  // Hoisted naar functie-scope zodat de catch/rollback ze kan gebruiken.
+  let parsed = null;
+  let composeUp = null;
 
   try {
     setPhase("requested", "validating compose project");
@@ -826,7 +830,7 @@ async function runComposeUpdate(name) {
     if (!current) throw new Error("container not found");
 
     const labels = current.Config?.Labels ?? {};
-    const parsed = compose.parseComposeLabels(labels);
+    parsed = compose.parseComposeLabels(labels);
     if (!parsed) throw new Error("container is not compose-managed");
 
     // Pad-allowlist: working_dir moet binnen een deploy-time root vallen.
@@ -851,8 +855,14 @@ async function runComposeUpdate(name) {
     await docker(composeInvocation("config"), { timeoutMs: 30_000 });
 
     // Sibling-state vóór mutatie (moet gelijk blijven behalve target).
-    const allContainers = await dockerJson(["ps", "-a", "--format", "{{json .}}"], STEP_TIMEOUT_MS.inspect);
-    const psList = Array.isArray(allContainers) ? allContainers : [];
+    const psRaw = await docker(["ps", "-a", "--format", "{{json .}}"], STEP_TIMEOUT_MS.inspect);
+    const psList = psRaw.stdout
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+      .map((line) => {
+        try { return JSON.parse(line); } catch { return null; }
+      })
+      .filter(Boolean);
     siblingsBefore = psList
       .filter((c) => (c.Labels ?? "").includes(`com.docker.compose.project=${parsed.project}`) && !String(c.Names ?? "").startsWith(name))
       .map((c) => ({ name: c.Names, state: c.State }));
@@ -860,6 +870,7 @@ async function runComposeUpdate(name) {
 
     // Snapshot van de target-container (vóór mutatie) — rollback-bron.
     snapshot = inspectToSnapshot(current);
+    envLines = (snapshot.env ?? []).join("\n");
     const snapshotFile = nodePath.join(STATE_DIR, "snapshots", `${name.replace(/[^A-Za-z0-9_.-]/g, "_")}.json`);
     await mkdir(nodePath.dirname(snapshotFile), { recursive: true }).catch(() => {});
     await writeFile(snapshotFile, JSON.stringify(snapshot, null, 2), { mode: 0o600 });
@@ -882,18 +893,16 @@ async function runComposeUpdate(name) {
     const exists = await dockerJson(["container", "inspect", "--format", "{{json .State.Running}}", name], STEP_TIMEOUT_MS.inspect).catch(() => null);
     void exists;
 
-    // Scoped compose update: pull + up -d --no-deps <service>.
+    // Scoped compose update via compose CLI: pull + up -d --no-deps.
     setPhase("recreating", `compose up -d --no-deps ${parsed.service}`);
     const prevRunning = await (async () => {
       const raw = await dockerJson(["container", "inspect", "--format", "{{json .State.RestartCount}}", name], STEP_TIMEOUT_MS.inspect).catch(() => null);
       return typeof raw === "number" ? raw : 0;
     })();
-    await removeContainer(name).catch(() => {});
     mutated = true;
-    // Recreeer de target exact via de generieke machine-args (compose-labels
-    // blijven behouden zodat het project de container blijft tracken).
-    const { args, cmd } = snapshotToRunArgs(snapshot, targetImage);
-    await dockerRunWithEnv(args, targetImage, envLines, STEP_TIMEOUT_MS.replace, cmd);
+    await removeContainer(name).catch(() => {});
+    await docker(composeInvocation("pull"), { timeoutMs: STEP_TIMEOUT_MS.pull });
+    await docker(composeInvocation("up"), { timeoutMs: STEP_TIMEOUT_MS.replace });
 
     // Health-verificatie.
     setPhase("health-wait", "wachten op service health");
