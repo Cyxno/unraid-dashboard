@@ -37,6 +37,7 @@ const http = require("node:http");
 const { spawn } = require("node:child_process");
 const { randomUUID, timingSafeEqual } = require("node:crypto");
 const nodePath = require("node:path");
+const { inspectToSnapshot, findUnsupported, snapshotToRunArgs, UNSUPPORTED_PREFIX } = require("./recreate");
 const { writeFile, unlink, mkdir } = require("node:fs/promises");
 const { readFileSync, writeFileSync, mkdirSync, existsSync } = require("node:fs");
 const path = require("node:path");
@@ -885,6 +886,21 @@ const server = http.createServer(async (req, res) => {
                 labels[key] = rawLabels[key].slice(0, 300);
               }
             }
+            // Unsupported-config detectie via de recreate-engine — dezelfde
+            // code als de update-machine, dus geen drift mogelijk.
+            const snapForDetect = inspectToSnapshot(current);
+            let imageExposed = [];
+            try {
+              const imgInspect = await dockerJson(
+                ["image", "inspect", "--format", "{{json .Config.ExposedPorts}}", current.Image],
+                STEP_TIMEOUT_MS.inspect,
+              );
+              const pi = Array.isArray(imgInspect) ? imgInspect[0] : imgInspect;
+              imageExposed = Object.keys(typeof pi === "string" ? JSON.parse(pi) : (pi ?? {}));
+            } catch {
+              imageExposed = [];
+            }
+            const unsupported = findUnsupported(snapForDetect, imageExposed);
             containers.push({
               id,
               name,
@@ -900,18 +916,10 @@ const server = http.createServer(async (req, res) => {
                 if (imageDigestCache.has(image)) return imageDigestCache.get(image) ?? [];
                 let digests = [];
                 try {
-                  // Inspect by IMAGE ID: the tag on the container ref may
-                  // have been re-pointed or removed and no longer resolves.
-                  const imageInspect = await dockerJson(
-                    ["image", "inspect", "--format", "{{json .RepoDigests}}", current.Image],
-                    STEP_TIMEOUT_MS.inspect,
-                  );
                   const parsed = await dockerJson(
                     ["image", "inspect", "--format", "{{json .RepoDigests}}", current.Image],
                     STEP_TIMEOUT_MS.inspect,
                   );
-                  // dockerJson already parsed: {{json .RepoDigests}} is an
-                  // array of "repo@digest" strings.
                   const list = Array.isArray(parsed) ? parsed : [parsed];
                   digests = list.map(String).slice(0, 4);
                 } catch {
@@ -922,6 +930,8 @@ const server = http.createServer(async (req, res) => {
               })(),
               created: current?.Created ?? null,
               labels,
+              unsupported,
+              externallyManaged: labels["com.cyxno.update-manager"] === "external",
             });
           } catch (inspectError) {
             log("inventory", `inspect failed for ${name}: ${String(inspectError.message).slice(0, 100)}`);

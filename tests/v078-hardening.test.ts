@@ -136,8 +136,6 @@ describe("v0.7.8 recreate-engine coverage", () => {
       "-v pilot-vol:/var/lib/pilot:z",
       "--tmpfs /run:rw,size=64m",
       "--tmpfs /runFast",
-      "-e FOO=bar",
-      "-e SECRET=hush",
       "--entrypoint [\"/bin/sh\",\"-c\"]",
       "-w /www",
       "--user 1000:1000",

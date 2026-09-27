@@ -156,7 +156,7 @@ function ulimitValue(u) {
  * after the image ref (the container's own command override).
  */
 function snapshotToRunArgs(snap, imageRef) {
-  const args = [];
+  const args = ["run", "-d"];
   const push = (...entries) => args.push(...entries.filter((entry) => entry !== undefined && entry !== null && entry !== ""));
 
   push("--name", snap.name);
@@ -202,7 +202,9 @@ function snapshotToRunArgs(snap, imageRef) {
     push("--tmpfs", mode ? `${dest}:${mode}` : dest);
   }
 
-  for (const entry of snap.env ?? []) push("-e", entry);
+  // Env is bewust NIET in de argv: het gaat uitsluitend via het 0600
+  // --env-file (zie dockerRunWithEnv) zodat secrets nooit in process-
+  // lijsten of logs belanden.
   if (snap.entrypoint) push("--entrypoint", Array.isArray(snap.entrypoint) ? JSON.stringify(snap.entrypoint) : snap.entrypoint);
   if (snap.workingDir) push("-w", snap.workingDir);
   if (snap.user) push("--user", snap.user);

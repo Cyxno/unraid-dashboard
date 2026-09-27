@@ -5,6 +5,7 @@
 FROM node:22-alpine
 WORKDIR /helper
 COPY helper/server.js ./server.js
+COPY helper/recreate.js ./recreate.js
 RUN apk add --no-cache docker-cli
 ENV HELPER_PORT=8790
 # Runs as root: the mounted Docker socket requires it; the container has no
