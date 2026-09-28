@@ -112,7 +112,8 @@ export async function getHelperStatus(): Promise<UpdateHelperStatus> {
       configured: true,
       reachable: true,
       reason: null,
-      helperVersion: body.helperVersion ?? null,
+      // The helper's /status names it "version"; accept both spellings.
+      helperVersion: body.helperVersion ?? (body as { version?: string }).version ?? null,
       phase: body.phase ?? null,
       detail: body.detail ?? null,
       startedAt: body.startedAt ?? null,
