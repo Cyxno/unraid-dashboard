@@ -1,5 +1,7 @@
 import { getEnvSafe } from "@/server/env";
-import { getHelperStatus } from "@/server/update/helper-client";
+import { getHelperStatus, getHelperSnapshots } from "@/server/update/helper-client";
+import { containerStatsBatch } from "@/server/update/history";
+import { computeAutoEligibility, pilotAllowlist } from "@/server/update/eligibility";
 import { checkRemoteDigest } from "./registry";
 import {
   buildManagedContainer,
@@ -200,13 +202,31 @@ export async function updatesOverview(options: { refresh?: boolean; wait?: boole
             ? { status: "AUTH_REQUIRED", remoteDigest: null, localDigest, reason: raw.reason }
             : { status: "CHECK_FAILED", remoteDigest: null, localDigest, reason: raw.reason }
       : undefined;
-    return buildManagedContainer({
+    const built = buildManagedContainer({
       facts,
       customDeployContainers: customDeployContainers(),
       extraHighRisk: extraHighRisk(),
       check,
       checkedAt,
     });
+    // Attach the read-only fact extensions (networks/volumes/compose paths)
+    // the project model and UI need; not part of the validated schema.
+    const extended = built as ManagedContainer & {
+      state: string;
+      networks: string[];
+      volumeSources: string[];
+      composeWorkingDir: string | null;
+      composeConfigFiles: string[];
+      unsupported: string[];
+    };
+    extended.state = facts.state;
+    extended.networks = facts.networks ?? [];
+    extended.volumeSources = facts.volumeSources ?? [];
+    extended.composeWorkingDir = facts.labels["com.docker.compose.project.working_dir"] ?? null;
+    extended.composeConfigFiles = (facts.labels["com.docker.compose.project.config_files"] ?? "")
+      .split(",").map((f) => f.trim()).filter(Boolean);
+    extended.unsupported = facts.unsupported ?? [];
+    return built;
   });
 
   return {
@@ -217,6 +237,56 @@ export async function updatesOverview(options: { refresh?: boolean; wait?: boole
     checking,
     pending: sweep.pending,
   };
+}
+
+/**
+ * Enriches the overview with per-container history stats and the auto-
+ * eligibility verdict (v0.7.13). Separated from updatesOverview so the
+ * hot path stays cheap — history reads hit disk only here.
+ */
+export async function enrichedOverview(options: { refresh?: boolean; wait?: boolean } = {}): Promise<{
+  available: boolean;
+  reason?: string;
+  containers: ManagedContainer[];
+  storage: { mode: string; source: string | null };
+  checkedAt: string;
+  checking: boolean;
+  pending: number;
+}> {
+  const overview = await updatesOverview(options);
+  if (!overview.available) return overview;
+  const allowlist = pilotAllowlist();
+  const statsBatch = await containerStatsBatch();
+  const containers = overview.containers.map((container) => {
+    const stats = statsBatch.get(container.name) ?? { manualSuccesses: 0, rollbackCount: 0, lastSuccess: null, lastAttempt: null };
+    const lastKnownGood = stats.lastSuccess;
+    const withRollback = {
+      ...container,
+      rollback: {
+        ...container.rollback,
+        last_known_good: lastKnownGood?.image ?? container.rollback.last_known_good,
+        validated_at: lastKnownGood?.at ?? container.rollback.validated_at,
+      },
+    };
+    const eligibility = computeAutoEligibility({
+      container: withRollback,
+      manualSuccesses: stats.manualSuccesses,
+      rollbackCount: stats.rollbackCount,
+      pilotAllowlist: allowlist,
+    });
+    return { ...withRollback, autoEligible: eligibility.eligible, autoEligibilityReasons: eligibility.reasons };
+  });
+  return { ...overview, containers };
+}
+
+/** Snapshot presence list from the helper (rollback evidence, bounded). */
+export async function fetchSnapshotPresence(): Promise<Record<string, boolean>> {
+  const snapshots = await getHelperSnapshots();
+  const map: Record<string, boolean> = {};
+  for (const snapshot of snapshots ?? []) {
+    if (snapshot.container) map[snapshot.container] = !snapshot.unreadable;
+  }
+  return map;
 }
 
 /** Test hooks. */

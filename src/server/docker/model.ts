@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * Central container model for the Docker Update Manager (v0.7.6).
+ * Central container model for the Docker Update Manager (v0.7.13).
  *
  * One shape for EVERY container regardless of origin. Classification and
  * update strategies are pure functions here — unit-tested, no docker
@@ -15,6 +15,7 @@ export const MANAGEMENT_TYPES = [
   "custom_deploy",
   "standalone",
   "local_build",
+  "pipeline_owned",
   "unknown",
 ] as const;
 
@@ -44,6 +45,114 @@ export type UpdateStatus = (typeof UPDATE_STATUSES)[number];
 export type Risk = "LOW" | "MEDIUM" | "HIGH";
 export type Policy = "manual" | "notify" | "auto";
 
+/* ---- ownership labels (v0.7.13) ---------------------------------------------
+ * Declarative metadata ONLY: `com.cyxno.*` labels never override server
+ * policy. A risk label can only RAISE the computed risk, a policy label can
+ * only TIGHTEN it (toward manual) — the server classification always wins.
+ */
+export type OwnershipManagement = "unraid" | "compose" | "pipeline" | "custom" | "local";
+
+export interface OwnershipLabels {
+  management: OwnershipManagement | null;
+  policy: Policy | null;
+  risk: Risk | null;
+  pipeline: { repo: string | null; deployer: string | null; sha: string | null; ref: string | null };
+}
+
+const OWNERSHIP_MANAGEMENT: OwnershipManagement[] = ["unraid", "compose", "pipeline", "custom", "local"];
+const OWNERSHIP_POLICY: Policy[] = ["manual", "notify", "auto"];
+const OWNERSHIP_RISK: Risk[] = ["LOW", "MEDIUM", "HIGH"];
+
+/** Parses the declarative ownership labels; unknown values are ignored. */
+export function parseOwnershipLabels(facts: ContainerFacts): OwnershipLabels {
+  const managementRaw = facts.labels["com.cyxno.management"];
+  const policyRaw = facts.labels["com.cyxno.update.policy"]?.toLowerCase();
+  const riskRaw = facts.labels["com.cyxno.update.risk"]?.toUpperCase();
+  return {
+    management: OWNERSHIP_MANAGEMENT.includes(managementRaw as OwnershipManagement)
+      ? (managementRaw as OwnershipManagement)
+      : null,
+    policy: OWNERSHIP_POLICY.includes(policyRaw as Policy) ? (policyRaw as Policy) : null,
+    risk: OWNERSHIP_RISK.includes(riskRaw as Risk) ? (riskRaw as Risk) : null,
+    pipeline: {
+      repo: facts.labels["com.cyxno.pipeline.repo"] ?? null,
+      deployer: facts.labels["com.cyxno.pipeline.deployer"] ?? null,
+      sha: facts.labels["com.cyxno.pipeline.sha"] ?? null,
+      ref: facts.labels["com.cyxno.pipeline.ref"] ?? null,
+    },
+  };
+}
+
+/* ---- registry/image provenance (v0.7.13) ------------------------------------
+ * Answers "does what runs match what the registry serves, and why not?"
+ * A mismatch is operational drift (a newer release exists, or the image was
+ * built locally) — it is NEVER by itself labeled a compromise signal.
+ */
+export type ProvenanceState =
+  | "synced"
+  | "registry_ahead"
+  | "local_build"
+  | "auth_required"
+  | "check_failed"
+  | "unknown";
+
+export interface Provenance {
+  state: ProvenanceState;
+  /** Image ID of the running container. */
+  image_id: string | null;
+  /** Index (Repo) digest of the running image, as pulled. */
+  local_digest: string | null;
+  /** Remote tag manifest digest from the registry check. */
+  registry_digest: string | null;
+  /** True when the image carries no registry digest (built on this host). */
+  locally_built: boolean;
+  /** Neutral human explanation — never a compromise claim. */
+  note: string | null;
+}
+
+export function deriveProvenance(facts: ContainerFacts, check: CheckOutcome | undefined): Provenance {
+  const locallyBuilt = facts.repoDigests.length === 0;
+  const base = {
+    image_id: facts.imageId,
+    local_digest: localDigestOf(facts),
+    registry_digest: check && "remoteDigest" in check ? check.remoteDigest : null,
+    locally_built: locallyBuilt,
+  } as const;
+  if (locallyBuilt) {
+    return { ...base, state: "local_build", note: "Image was built on this host (no registry digest) — updates come from its build pipeline." };
+  }
+  switch (check?.status) {
+    case "UP_TO_DATE":
+    case "PINNED":
+      return { ...base, state: "synced", note: check.status === "PINNED" ? "Digest-pinned image — cannot drift from its pin." : "Running image matches the registry digest for its tag." };
+    case "UPDATE_AVAILABLE":
+      return { ...base, state: "registry_ahead", note: "Registry tag points to a newer build than the one running — a release was published since this image was pulled." };
+    case "AUTH_REQUIRED":
+      return { ...base, state: "auth_required", note: check.reason ?? "Registry requires credentials — provenance unverified." };
+    case "CHECK_FAILED":
+      return { ...base, state: "check_failed", note: check.reason ?? "Registry check failed — provenance unknown." };
+    default:
+      return { ...base, state: "unknown", note: "No registry check has run yet." };
+  }
+}
+
+/* ---- rollback readiness (v0.7.13) --------------------------------------------
+ * Mutation policy: the machine snapshots the container pre-mutation, so a
+ * first-ever update only needs the running image to be resolvable. A stored
+ * snapshot makes rollback *proven*, not just possible.
+ */
+export interface RollbackReadiness {
+  /** Server gate: mutation may proceed. */
+  ready: boolean;
+  level: "ready" | "unproven" | "not_ready";
+  snapshot_present: boolean;
+  image_present: boolean;
+  /** Image ref of the last successful update, from persisted history. */
+  last_known_good: string | null;
+  /** Timestamp of the last successful update/rollback for this container. */
+  validated_at: string | null;
+}
+
 /** Container facts exactly as the helper's /inventory reports them. */
 export interface ContainerFacts {
   id: string;
@@ -55,8 +164,17 @@ export interface ContainerFacts {
   imageId: string | null;
   repoDigests: string[];
   created: string | null;
+  networks: string[];
+  volumeSources: string[];
   labels: {
     "com.cyxno.update-manager"?: string;
+    "com.cyxno.management"?: string;
+    "com.cyxno.update.policy"?: string;
+    "com.cyxno.update.risk"?: string;
+    "com.cyxno.pipeline.repo"?: string;
+    "com.cyxno.pipeline.deployer"?: string;
+    "com.cyxno.pipeline.sha"?: string;
+    "com.cyxno.pipeline.ref"?: string;
     "com.docker.compose.project"?: string;
     "com.docker.compose.service"?: string;
     "com.docker.compose.project.working_dir"?: string;
@@ -65,6 +183,7 @@ export interface ContainerFacts {
   };
   unsupported?: string[];
   externallyManaged?: boolean;
+  snapshotPresent?: boolean;
 }
 
 /** Operator configuration (env) — which containers have canonical deploy scripts. */
@@ -73,7 +192,7 @@ export interface CustomDeployConfig {
   containers: string[];
 }
 
-/** The central model (Phase B). */
+/** The central model (v0.7.13). */
 export interface ManagedContainer {
   id: string;
   name: string;
@@ -92,6 +211,11 @@ export interface ManagedContainer {
   policy: Policy;
   rollback_available: boolean;
   externallyManaged: boolean;
+  ownership: OwnershipLabels;
+  provenance: Provenance;
+  rollback: RollbackReadiness;
+  autoEligible: boolean;
+  autoEligibilityReasons: string[];
   health: string | null;
   last_checked: string | null;
   last_updated: string | null;
@@ -138,11 +262,27 @@ export function localDigestOf(facts: ContainerFacts): string | null {
 }
 
 /**
- * Management classification (Phase C) — label/metadata based, never name
- * based alone. Order matters: compose labels are the strongest ownership
- * evidence; the Unraid dockerman label next; operator-configured custom
- * deploys next; locally built images (no registry digests) after that;
- * everything with registry digests but no owner is standalone.
+ * Compose projects the operator has declared as owned by an external
+ * deployment pipeline (env: comma-separated project names). These are
+ * detected, displayed and NEVER mutated by the dashboard.
+ */
+export function pipelineOwnedProjects(): string[] {
+  const raw = process.env["PIPELINE_OWNED_PROJECTS"] ?? "tornscope";
+  return raw
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean)
+    .slice(0, 50);
+}
+
+/**
+ * Management classification (v0.7.13) — label/metadata based, never name
+ * based alone. Order matters: explicit operator labels are the strongest
+ * ownership evidence; compose labels next (with pipeline-owned projects
+ * taking precedence over plain compose); the Unraid dockerman label after
+ * that; operator-configured custom deploys next; locally built images (no
+ * registry digests) then; everything with registry digests but no owner is
+ * standalone.
  */
 export function classifyManagement(
   facts: ContainerFacts,
@@ -151,11 +291,23 @@ export function classifyManagement(
   if (facts.labels["com.cyxno.update-manager"] === "external") {
     return { management_type: "custom_deploy", management_source: "update-manager label", update_strategy: "manual" };
   }
-  if (facts.labels["com.docker.compose.project"] && facts.labels["com.docker.compose.service"]) {
+  if (facts.labels["com.cyxno.management"] === "pipeline") {
+    return { management_type: "pipeline_owned", management_source: "cyxno-management label", update_strategy: "manual" };
+  }
+  const composeProject = facts.labels["com.docker.compose.project"];
+  if (composeProject && pipelineOwnedProjects().includes(composeProject.toLowerCase())) {
+    const service = facts.labels["com.docker.compose.service"] ?? facts.name;
+    return {
+      management_type: "pipeline_owned",
+      management_source: `pipeline project list:${composeProject}/${service}`,
+      update_strategy: "manual",
+    };
+  }
+  if (composeProject && facts.labels["com.docker.compose.service"]) {
     const localBuilt = facts.repoDigests.length === 0;
     return {
       management_type: "compose",
-      management_source: `compose:${facts.labels["com.docker.compose.project"]}/${facts.labels["com.docker.compose.service"]}`,
+      management_source: `compose:${composeProject}/${facts.labels["com.docker.compose.service"]}`,
       update_strategy: localBuilt ? "local_build" : "compose_service",
     };
   }
@@ -226,6 +378,10 @@ export function buildManagedContainer(input: {
   policyOverride?: Policy;
   checkedAt: string;
   lastUpdated?: string | null;
+  /** Last successful update record for this container (rollback context). */
+  lastKnownGood?: { image: string; at: string } | null;
+  /** Auto-update eligibility verdict computed by the eligibility module. */
+  autoEligibility?: { eligible: boolean; reasons: string[] };
 }): ManagedContainer {
   const { facts } = input;
   const { registry, repo, tag, digestPin } = parseImageRef(facts.image);
@@ -233,8 +389,15 @@ export function buildManagedContainer(input: {
     facts,
     input.customDeployContainers,
   );
-  const risk = classifyRisk(facts.name, facts.image, input.extraHighRisk);
-  const policy = input.policyOverride ?? defaultPolicyFor(risk);
+  const computedRisk = classifyRisk(facts.name, facts.image, input.extraHighRisk);
+  // Ownership risk labels may only RAISE risk (declarative metadata; the
+  // server classification always wins when it is already higher).
+  const ownership = parseOwnershipLabels(facts);
+  const riskOrder: Record<Risk, number> = { LOW: 0, MEDIUM: 1, HIGH: 2 };
+  const risk = ownership.risk && riskOrder[ownership.risk] > riskOrder[computedRisk] ? ownership.risk : computedRisk;
+  // Policy labels may only tighten toward manual.
+  const basePolicy = input.policyOverride ?? defaultPolicyFor(risk);
+  const policy = basePolicy === "manual" ? "manual" : ownership.policy === "manual" ? "manual" : basePolicy;
 
   let update_status: UpdateStatus;
   let update_available = false;
@@ -245,7 +408,9 @@ export function buildManagedContainer(input: {
     update_status = "PINNED";
   } else if (management_type === "compose" && update_strategy === "local_build") {
     update_status = "LOCAL_BUILD";
-  } else if (management_type === "local_build") {
+  } else if (management_type === "local_build" || management_type === "pipeline_owned") {
+    // Pipeline-owned projects update through their own pipeline; the
+    // dashboard only observes their state.
     update_status = "LOCAL_BUILD";
   } else if (!input.check) {
     update_status = "UNKNOWN";
@@ -261,7 +426,20 @@ export function buildManagedContainer(input: {
 
   const externallyManaged =
     facts.labels["com.cyxno.update-manager"] === "external" ||
-    facts.externallyManaged === true;
+    facts.externallyManaged === true ||
+    management_type === "pipeline_owned";
+
+  const imagePresent = Boolean(facts.imageId);
+  const snapshotPresent = facts.snapshotPresent === true;
+  const rollback: RollbackReadiness = {
+    ready: imagePresent,
+    level: !imagePresent ? "not_ready" : snapshotPresent ? "ready" : "unproven",
+    snapshot_present: snapshotPresent,
+    image_present: imagePresent,
+    last_known_good: input.lastKnownGood?.image ?? null,
+    validated_at: input.lastKnownGood?.at ?? null,
+  };
+
   return {
     id: facts.id,
     name: facts.name,
@@ -272,14 +450,21 @@ export function buildManagedContainer(input: {
     remote_digest,
     registry,
     management_type,
-    management_source: management_source.startsWith("compose:") ? management_source : `${management_source}:${repo}`.slice(0, 120),
+    management_source: management_source.startsWith("compose:") || management_source.startsWith("pipeline ")
+      ? management_source
+      : `${management_source}:${repo}`.slice(0, 120),
     update_strategy,
-    update_available,
+    update_available: management_type === "pipeline_owned" ? false : update_available,
     update_status,
     risk,
     policy,
-    rollback_available: false, // filled by the rollback layer once history exists
+    rollback_available: rollback.ready,
     externallyManaged,
+    ownership,
+    provenance: deriveProvenance(facts, input.check),
+    rollback,
+    autoEligible: input.autoEligibility?.eligible ?? false,
+    autoEligibilityReasons: input.autoEligibility?.reasons ?? [],
     health: facts.health,
     last_checked: input.check ? input.checkedAt : null,
     last_updated: input.lastUpdated ?? null,
@@ -305,6 +490,35 @@ export const managedContainerSchema = z.object({
   policy: z.enum(["manual", "notify", "auto"]),
   rollback_available: z.boolean(),
   externallyManaged: z.boolean(),
+  ownership: z.object({
+    management: z.enum(["unraid", "compose", "pipeline", "custom", "local"]).nullable(),
+    policy: z.enum(["manual", "notify", "auto"]).nullable(),
+    risk: z.enum(["LOW", "MEDIUM", "HIGH"]).nullable(),
+    pipeline: z.object({
+      repo: z.string().nullable(),
+      deployer: z.string().nullable(),
+      sha: z.string().nullable(),
+      ref: z.string().nullable(),
+    }),
+  }),
+  provenance: z.object({
+    state: z.enum(["synced", "registry_ahead", "local_build", "auth_required", "check_failed", "unknown"]),
+    image_id: z.string().nullable(),
+    local_digest: z.string().nullable(),
+    registry_digest: z.string().nullable(),
+    locally_built: z.boolean(),
+    note: z.string().nullable(),
+  }),
+  rollback: z.object({
+    ready: z.boolean(),
+    level: z.enum(["ready", "unproven", "not_ready"]),
+    snapshot_present: z.boolean(),
+    image_present: z.boolean(),
+    last_known_good: z.string().nullable(),
+    validated_at: z.string().nullable(),
+  }),
+  autoEligible: z.boolean(),
+  autoEligibilityReasons: z.array(z.string()),
   health: z.string().nullable(),
   last_checked: z.string().nullable(),
   last_updated: z.string().nullable(),

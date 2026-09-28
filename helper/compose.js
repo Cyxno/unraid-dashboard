@@ -68,7 +68,7 @@ function validateConfigFiles(configFiles, workdir, allowedRoots) {
 
 /**
  * Bouwt de compose argv voor een gescopede service-actie.
- * action: "pull" | "up" | "config"
+ * action: "pull" | "up" | "config" | "config-json"
  * Alle onderdelen komen uit gevalideerde inventory — nooit uit requests.
  */
 function composeArgs({ project, workdir, configFiles, service }, action) {
@@ -80,6 +80,8 @@ function composeArgs({ project, workdir, configFiles, service }, action) {
     args.push("up", "-d", "--no-deps", service);
   } else if (action === "config") {
     args.push("config", "--services");
+  } else if (action === "config-json") {
+    args.push("config", "--format", "json");
   }
   return args;
 }
@@ -95,6 +97,73 @@ function siblingServices(containers, project, excludeService) {
     .map((c) => ({ name: c.name, service: c.labels["com.docker.compose.service"] ?? null, state: c.state }));
 }
 
+/**
+ * Parseert de uitvoer van `docker compose config --format json` tot een
+ * compacte dependency-grafiek. Puur — unit-getest. depends_on komt alleen
+ * uit de compose-configuratie; service-namen worden nooit geraden.
+ * Short syntax (lijst) én long syntax (object met condition) worden
+ * ondersteund. Onbekende vormen worden genegeerd (no inventing).
+ */
+function parseComposeConfig(configJson) {
+  const servicesRaw = configJson && typeof configJson === "object" ? configJson.services : null;
+  if (!servicesRaw || typeof servicesRaw !== "object") {
+    return { ok: false, reason: "compose config has no services object" };
+  }
+  const services = [];
+  const dependsOn = {};
+  for (const [service, def] of Object.entries(servicesRaw)) {
+    if (!def || typeof def !== "object") continue;
+    services.push(service);
+    const raw = def.depends_on;
+    const deps = [];
+    if (Array.isArray(raw)) {
+      for (const dep of raw) if (typeof dep === "string") deps.push(dep);
+    } else if (raw && typeof raw === "object") {
+      for (const dep of Object.keys(raw)) if (typeof dep === "string") deps.push(dep);
+    }
+    dependsOn[service] = deps;
+  }
+  if (services.length === 0) {
+    return { ok: false, reason: "compose config defines no services" };
+  }
+  return { ok: true, services, dependsOn };
+}
+
+/**
+ * Topologische volgorde over depends_on (dependencies eerst). Deterministiek
+ * (alfabetisch binnen gelijke niveaus). Returned null + reden bij cyclus of
+ * een edge naar een service zonder draaiende container — dan is de graaf
+ * ambigu en weigeren we project-updates.
+ */
+function topologicalOrder(services, dependsOn) {
+  const known = new Set(services);
+  for (const [service, deps] of Object.entries(dependsOn)) {
+    if (!known.has(service)) continue;
+    for (const dep of deps) {
+      if (!known.has(dep)) {
+        return { ok: false, reason: `service "${service}" depends on "${dep}", which is not a running service of this project` };
+      }
+    }
+  }
+  const remaining = new Set(services);
+  const placed = new Set();
+  const order = [];
+  while (remaining.size > 0) {
+    const ready = [...remaining]
+      .filter((service) => (dependsOn[service] ?? []).every((dep) => !known.has(dep) || placed.has(dep)))
+      .sort();
+    if (ready.length === 0) {
+      return { ok: false, reason: `dependency cycle between: ${[...remaining].sort().join(", ")}` };
+    }
+    for (const service of ready) {
+      order.push(service);
+      placed.add(service);
+      remaining.delete(service);
+    }
+  }
+  return { ok: true, order };
+}
+
 module.exports = {
   parseComposeLabels,
   isInsideRoot,
@@ -102,4 +171,6 @@ module.exports = {
   validateConfigFiles,
   composeArgs,
   siblingServices,
+  parseComposeConfig,
+  topologicalOrder,
 };

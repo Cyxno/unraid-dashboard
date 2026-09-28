@@ -26,6 +26,9 @@ export function updateGate(container: ManagedContainer): UpdateGate {
         : "Managed externally — dashboard update disabled (own CI/CD or updater)",
     };
   }
+  if (container.management_type === "pipeline_owned") {
+    return { canUpdate: false, blockedReason: "Managed by external deployment pipeline — dashboard never mutates this project" };
+  }
   if (container.externallyManaged === true) {
     return { canUpdate: false, blockedReason: "Managed externally (label) — dashboard update disabled" };
   }
@@ -35,6 +38,13 @@ export function updateGate(container: ManagedContainer): UpdateGate {
       canUpdate: false,
       blockedReason: "Config not generically recreatable: " + unsupportedReasons.join("; "),
     };
+  }
+  // Rollback readiness (v0.7.13): no mutation without a resolvable image to
+  // go back to. A first-ever update is "unproven" — the machine snapshots
+  // pre-mutation — but a container without a resolvable image never updates.
+  const rollback = container.rollback;
+  if (rollback && !rollback.ready) {
+    return { canUpdate: false, blockedReason: "Rollback not ready: running image not resolvable — refusing mutation" };
   }
   // Local-build policy wint van compose-ownership: geen registry-mutatie
   // zonder betrouwbare updatebron (opt-in alleen voor fixtures).

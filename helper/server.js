@@ -40,7 +40,7 @@ const nodePath = require("node:path");
 const { inspectToSnapshot, findUnsupported, snapshotToRunArgs, UNSUPPORTED_PREFIX } = require("./recreate");
 const compose = require("./compose");
 const { writeFile, unlink, mkdir } = require("node:fs/promises");
-const { readFileSync, writeFileSync, mkdirSync, existsSync } = require("node:fs");
+const { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } = require("node:fs");
 const path = require("node:path");
 
 /* ---- deployment constants (env-overridable ONLY for isolated testing) ----- */
@@ -60,7 +60,28 @@ const HEALTH_TIMEOUT_MS = 150_000;
 const VERIFY_TIMEOUT_MS = 30_000;
 const STEP_TIMEOUT_MS = { inspect: 15_000, pull: 300_000, replace: 30_000 };
 
-const HELPER_VERSION = "0.7.7";
+const HELPER_VERSION = "0.7.13";
+
+/** Containers whose update is refused inside a PROJECT update too (v0.7.13):
+ * high-risk patterns mirror the dashboard's risk model (databases, auth,
+ * proxy/DNS) — a project update must never bypass per-service risk policy.
+ * Pipeline-owned projects are refused entirely. */
+const HIGH_RISK_PATTERNS = [
+  /postgres|mysql|mariadb|mongo|redis|valkey|influx|clickhouse/i,
+  /authelia|authentik|keycloak|sso/i,
+  /nginx-proxy-manager|^npm$|traefik|caddy|haproxy|adguard|pihole|unbound|cloudflared/i,
+];
+function isHighRisk(name, image) {
+  const haystack = `${name} ${image}`;
+  return HIGH_RISK_PATTERNS.some((pattern) => pattern.test(haystack));
+}
+function pipelineOwnedProjects() {
+  const raw = process.env.PIPELINE_OWNED_PROJECTS ?? "tornscope";
+  return raw.split(",").map((entry) => entry.trim().toLowerCase()).filter(Boolean);
+}
+/** Job phases in which NOTHING has been removed/recreated yet. */
+const PRE_MUTATION_PHASES = new Set(["requested", "snapshotting", "pulling", "verifying", "checking"]);
+const STALE_OP_MS = 30 * 60_000;
 
 /* ---- generic container update machine (v0.7.7) ----------------------------
  * Extends the dashboard's own update flow to arbitrary containers.
@@ -982,7 +1003,267 @@ async function runComposeUpdate(name) {
   }
 }
 
-/* ---- HTTP surface ----------------------------------------------------------- */
+/* ---- compose PROJECT update machine (v0.7.13) --------------------------------
+ * Sequential, project-scoped, stop-on-first-failure. Policy (re-derived
+ * HERE, never trusted from the request):
+ *  - pipeline-owned projects: always refused
+ *  - any HIGH-risk member (database/auth/proxy/DNS): refused
+ *  - any AIO/externally-managed or non-recreatable member: refused
+ *  - dependency graph from `compose config` only; ambiguous graph: refused
+ *  - one service at a time, dependencies first; health-validated each step
+ *  - first failure rolls the failed service back and STOPS the project
+ * The request supplies ONLY the project name; paths/services/order derive
+ * from live container labels and the compose config. No parallel updates.
+ */
+
+/** Live members of a compose project (labels from container inspect). */
+async function composeProjectMembers(project) {
+  const psRaw = await docker(["ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.State}}"], 20_000);
+  const entries = psRaw.stdout
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => line.split("\t"))
+    .filter((parts) => parts.length >= 4);
+  const members = [];
+  for (const [id, name, image, memberState] of entries) {
+    try {
+      const inspectArray = await dockerJson(["container", "inspect", "--format", "{{json .}}", id], STEP_TIMEOUT_MS.inspect);
+      const current = Array.isArray(inspectArray) ? inspectArray[0] : inspectArray;
+      const parsed = compose.parseComposeLabels(current?.Config?.Labels ?? {});
+      if (!parsed || parsed.project !== project) continue;
+      members.push({ id, name, image, state: memberState, ...parsed, labels: current?.Config?.Labels ?? {}, fullInspect: current });
+    } catch {
+      // inspect failure on one container must not hide the project
+    }
+  }
+  return members;
+}
+
+async function runComposeProjectUpdate(project) {
+  const startedAt = Date.now();
+  const jobKey = `project:${project}`;
+  const phases = [];
+  const setPhase = (phase, detail) => {
+    phases.push({ phase, detail: String(detail ?? "").slice(0, 160), at: new Date().toISOString() });
+    setJob(jobKey, { phase, detail: String(detail ?? "").slice(0, 200), phases });
+    log(`project-update:${project}`, `${phase}: ${detail ?? ""}`);
+  };
+
+  /** Service-level bookkeeping so /compose-job keeps working per service. */
+  const recordService = (service, patch) => {
+    const member = memberByService.get(service);
+    if (member) setJob(`compose:${member.name}`, { startedAt: new Date(startedAt).toISOString(), ...patch });
+  };
+
+  let mutatedServices = [];
+  try {
+    setPhase("requested", "deriving project members from live labels");
+    const members = await composeProjectMembers(project);
+    if (members.length === 0) throw new Error(`no containers found for project ${project}`);
+    const memberByService = new Map(members.map((member) => [member.service, member]));
+
+    // --- project-level policy re-derivation (defense in depth) ------------
+    if (pipelineOwnedProjects().includes(project.toLowerCase()) || members.some((m) => m.labels["com.cyxno.management"] === "pipeline")) {
+      throw new Error("POLICY_DENIED: pipeline-owned project — dashboard never executes updates here");
+    }
+    const allowedRoots = (process.env.COMPOSE_ALLOWED_ROOTS ?? "").split(",").map((r) => r.trim()).filter(Boolean);
+    const first = members[0];
+    const wd = compose.validateAllowedPath(first.workdir, allowedRoots);
+    if (!wd.ok) throw new Error(`POLICY_DENIED: ${wd.reason}`);
+    const cf = compose.validateConfigFiles(first.configFiles, wd.canonical, allowedRoots);
+    if (!cf.ok) throw new Error(`POLICY_DENIED: ${cf.reason}`);
+
+    const refusal = [];
+    for (const member of members) {
+      if (blockedContainers().has(member.name.toLowerCase())) refusal.push(`${member.name}: AIO/externally managed`);
+      if (isHighRisk(member.name, member.image)) refusal.push(`${member.name}: HIGH risk (database/auth/proxy/DNS)`);
+      if (member.labels["com.cyxno.management"] === "pipeline") refusal.push(`${member.name}: pipeline-owned`);
+    }
+    if (refusal.length > 0) {
+      throw new Error(`POLICY_DENIED: project contains non-updateable members — ${refusal.join("; ")}`);
+    }
+
+    // --- dependency graph (compose config only, never name guessing) ------
+    setPhase("verifying", "reading dependency graph from compose config");
+    const configArgs = ["compose", "--project-name", project, "--project-directory", wd.canonical];
+    for (const file of first.configFiles) configArgs.push("--file", file);
+    configArgs.push("config", "--format", "json");
+    const configOut = await docker(configArgs, { timeoutMs: 30_000 });
+    const graph = compose.parseComposeConfig(JSON.parse(configOut.stdout));
+    if (!graph.ok) throw new Error(`dependency graph unavailable: ${graph.reason}`);
+    const orderResult = compose.topologicalOrder(graph.services, graph.dependsOn);
+    if (!orderResult.ok) throw new Error(`dependency graph ambiguous: ${orderResult.reason}`);
+    // Configured services without a running member make the graph ambiguous.
+    const knownServices = new Set(members.map((m) => m.service));
+    const missing = orderResult.order.filter((service) => !knownServices.has(service));
+    if (missing.length > 0) {
+      throw new Error(`dependency graph ambiguous: configured services without containers: ${missing.join(", ")}`);
+    }
+
+    // --- snapshot every member BEFORE the first mutation -------------------
+    const snapshots = new Map();
+    for (const member of members) {
+      const snapshot = inspectToSnapshot(member.fullInspect);
+      const unsupported = findUnsupported(snapshot, []);
+      // imageExposed omitted: compose services recreate via compose up, not
+      // docker run; unsupported detection still guards exotic configs.
+      if (unsupported.length > 0) {
+        throw new Error(`POLICY_DENIED: ${member.name} not recreatable: ${unsupported.join("; ")}`);
+      }
+      const snapshotFile = nodePath.join(SNAPSHOT_DIR, `${member.name.replace(/[^A-Za-z0-9_.-]/g, "_")}.json`);
+      await mkdir(SNAPSHOT_DIR, { recursive: true }).catch(() => {});
+      await writeFile(snapshotFile, JSON.stringify({ ...snapshot, capturedAt: new Date().toISOString() }, null, 2), { mode: 0o600 });
+      snapshots.set(member.service, { snapshot, envLines: (snapshot.env ?? []).join("\n") });
+    }
+
+    const runningBefore = members.filter((m) => m.state === "running").map((m) => ({ name: m.name, service: m.service }));
+
+    // --- sequential service updates (dependencies first) -------------------
+    for (const service of orderResult.order) {
+      const member = memberByService.get(service);
+      if (!member) continue;
+      recordService(service, { phase: "requested", finishedAt: null });
+      const { snapshot, envLines } = snapshots.get(service);
+      const composeInvocation = (action) => {
+        const base = ["compose", "--project-name", project, "--project-directory", wd.canonical];
+        for (const file of first.configFiles) base.push("--file", file);
+        if (action === "pull") return [...base, "pull", service];
+        if (action === "up") return [...base, "up", "-d", "--no-deps", service];
+        return [...base, "config", "--services"];
+      };
+      try {
+        setPhase(`updating:${service}`, "pulling scoped image");
+        await docker(composeInvocation("pull"), { timeoutMs: STEP_TIMEOUT_MS.pull });
+        // No-op guard: image unchanged after pull → leave the service alone.
+        const newImage = await dockerJson(["image", "inspect", member.image], STEP_TIMEOUT_MS.inspect).catch(() => null);
+        const newImageId = (Array.isArray(newImage) ? newImage[0] : newImage)?.Id ?? null;
+        if (newImageId && newImageId === snapshot.imageId) {
+          setPhase(`skipped:${service}`, "image unchanged — already up to date, service untouched");
+          recordService(service, {
+            phase: "completed",
+            finishedAt: new Date().toISOString(),
+            lastResult: { result: "no-change", image: member.image },
+          });
+          continue;
+        }
+
+        setPhase(`updating:${service}`, "recreating service");
+        const restartBaseline = await (async () => {
+          const raw = await dockerJson(["container", "inspect", "--format", "{{json .State.RestartCount}}", member.name], STEP_TIMEOUT_MS.inspect).catch(() => null);
+          return typeof (Array.isArray(raw) ? raw[0] : raw) === "number" ? (Array.isArray(raw) ? raw[0] : raw) : 0;
+        })();
+        await removeContainer(member.name);
+        mutatedServices.push(service);
+        await docker(composeInvocation("up"), { timeoutMs: STEP_TIMEOUT_MS.replace });
+
+        setPhase(`health-wait:${service}`, snapshot.hasHealthcheck ? "waiting for healthcheck" : "verifying stable running state");
+        const deadline = Date.now() + HEALTH_WAIT_MS;
+        let verdict = null;
+        while (Date.now() < deadline) {
+          verdict = await isHealthy(member.name);
+          if (verdict.ok) {
+            await sleep(STABILIZE_MS);
+            const recheck = await isHealthy(member.name);
+            if (recheck.ok) {
+              if (!snapshot.hasHealthcheck) {
+                const loop = await isCrashLooping(member.name, restartBaseline);
+                if (loop.crashed) { verdict = { ok: false, detail: loop.detail }; break; }
+              }
+              verdict = recheck;
+              break;
+            }
+          }
+          if (verdict.detail === "unhealthy") break;
+          await sleep(4_000);
+        }
+        if (!verdict?.ok) throw new Error(`health verification failed: ${verdict?.detail ?? "timeout"}`);
+
+        // Siblings that ran before the project job must still run.
+        for (const sibling of runningBefore) {
+          if (sibling.name === member.name) continue;
+          const sibState = await dockerJson(
+            ["container", "inspect", "--format", "{{json .State.Running}}", sibling.name],
+            STEP_TIMEOUT_MS.inspect,
+          ).catch(() => null);
+          if ((Array.isArray(sibState) ? sibState[0] : sibState) !== true) {
+            throw new Error(`sibling service ${sibling.name} is no longer running after updating ${service}`);
+          }
+        }
+        setPhase(`updated:${service}`, `${member.name} healthy`);
+        recordService(service, {
+          phase: "completed",
+          finishedAt: new Date().toISOString(),
+          lastResult: { result: "success", image: member.image, health: verdict.detail },
+        });
+      } catch (serviceError) {
+        const message = serviceError instanceof Error ? serviceError.message : String(serviceError);
+        // Stop on first failure: roll THIS service back, then abort the
+        // project — never continue blindly into the next dependency.
+        if (mutatedServices.includes(service)) {
+          setPhase(`rolling-back:${service}`, message.slice(0, 140));
+          try {
+            const { args, cmd } = snapshotToRunArgs(snapshot, snapshot.imageId);
+            await removeContainer(member.name);
+            await dockerRunWithEnv(args, snapshot.imageId, envLines, STEP_TIMEOUT_MS.replace, cmd);
+            const deadline = Date.now() + HEALTH_WAIT_MS;
+            let ok = false;
+            while (Date.now() < deadline) {
+              const v = await isHealthy(member.name);
+              if (v.ok) { await sleep(STABILIZE_MS); const re = await isHealthy(member.name); if (re.ok) { ok = true; break; } }
+              if (v.detail === "unhealthy") break;
+              await sleep(4_000);
+            }
+            if (!ok) throw new Error("rolled-back service did not become healthy");
+            recordService(service, {
+              phase: "rolled-back",
+              finishedAt: new Date().toISOString(),
+              lastResult: { result: "rolled-back", error: message.slice(0, 240) },
+            });
+            throw new Error(`service ${service} failed and was rolled back — project update stopped: ${message.slice(0, 140)}`);
+          } catch (rollbackError) {
+            const rbMessage = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+            if (String(rbMessage).startsWith("service ")) throw rollbackError;
+            recordService(service, {
+              phase: "rollback-failed",
+              finishedAt: new Date().toISOString(),
+              lastResult: { result: "rollback-failed", error: `update: ${message.slice(0, 150)}; rollback: ${rbMessage.slice(0, 150)}` },
+            });
+            throw new Error(`MANUAL RECOVERY REQUIRED — service ${service}: update: ${message.slice(0, 120)}; rollback: ${rbMessage.slice(0, 120)}`);
+          }
+        }
+        // Pre-mutation failure of this service: nothing to roll back here.
+        recordService(service, {
+          phase: "failed",
+          finishedAt: new Date().toISOString(),
+          lastResult: { result: "failed", error: message.slice(0, 300) },
+        });
+        throw new Error(`service ${service} failed pre-mutation — project update stopped: ${message.slice(0, 160)}`);
+      }
+    }
+
+    setPhase("completed", `project ${project}: ${orderResult.order.length} service(s) processed sequentially`);
+    setJob(jobKey, {
+      phase: "completed",
+      finishedAt: new Date().toISOString(),
+      lastResult: {
+        result: "success",
+        services: orderResult.order,
+        durationMs: Date.now() - startedAt,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    setPhase("failed", message.slice(0, 280));
+    setJob(jobKey, {
+      phase: "failed",
+      finishedAt: new Date().toISOString(),
+      lastResult: { result: "failed", error: message.slice(0, 300), durationMs: Date.now() - startedAt },
+    });
+  } finally {
+    state.lock = null;
+    state.finishedAt = new Date().toISOString();
+  }
+}
 
 function constantTimeEqual(a, b) {
   const bufA = Buffer.from(String(a));
@@ -1060,6 +1341,13 @@ const server = http.createServer(async (req, res) => {
             const labels = {};
             for (const key of [
               "com.cyxno.update-manager",
+              "com.cyxno.management",
+              "com.cyxno.update.policy",
+              "com.cyxno.update.risk",
+              "com.cyxno.pipeline.repo",
+              "com.cyxno.pipeline.deployer",
+              "com.cyxno.pipeline.sha",
+              "com.cyxno.pipeline.ref",
               "com.docker.compose.project",
               "com.docker.compose.service",
               "com.docker.compose.project.working_dir",
@@ -1085,6 +1373,25 @@ const server = http.createServer(async (req, res) => {
               imageExposed = [];
             }
             const unsupported = findUnsupported(snapForDetect, imageExposed);
+            // RepoDigests live on IMAGE inspect (absent from container
+            // inspect on newer Docker). Cache per image; this is the
+            // pulled index digest used for update comparison.
+            let repoDigests = [];
+            if (imageDigestCache.has(image)) {
+              repoDigests = imageDigestCache.get(image) ?? [];
+            } else {
+              try {
+                const parsed = await dockerJson(
+                  ["image", "inspect", "--format", "{{json .RepoDigests}}", current.Image],
+                  STEP_TIMEOUT_MS.inspect,
+                );
+                const list = Array.isArray(parsed) ? parsed : [parsed];
+                repoDigests = list.map(String).slice(0, 4);
+              } catch {
+                repoDigests = [];
+              }
+              imageDigestCache.set(image, repoDigests);
+            }
             containers.push({
               id,
               name,
@@ -1093,29 +1400,21 @@ const server = http.createServer(async (req, res) => {
               status,
               health: current?.State?.Health?.Status ?? null,
               imageId: current?.Image ?? null,
-              repoDigests: await (async () => {
-                // RepoDigests live on IMAGE inspect (absent from container
-                // inspect on newer Docker). Cache per image; this is the
-                // pulled index digest used for update comparison.
-                if (imageDigestCache.has(image)) return imageDigestCache.get(image) ?? [];
-                let digests = [];
-                try {
-                  const parsed = await dockerJson(
-                    ["image", "inspect", "--format", "{{json .RepoDigests}}", current.Image],
-                    STEP_TIMEOUT_MS.inspect,
-                  );
-                  const list = Array.isArray(parsed) ? parsed : [parsed];
-                  digests = list.map(String).slice(0, 4);
-                } catch {
-                  digests = [];
-                }
-                imageDigestCache.set(image, digests);
-                return digests;
-              })(),
+              repoDigests,
+              networks: Object.keys(current?.NetworkSettings?.Networks ?? {}).slice(0, 8),
+              volumeSources: (current?.Mounts ?? [])
+                .filter((mount) => typeof mount?.Source === "string" && mount.Source.length > 0)
+                .map((mount) => mount.Source)
+                .slice(0, 12),
               created: current?.Created ?? null,
               labels,
               unsupported,
-              externallyManaged: labels["com.cyxno.update-manager"] === "external",
+              externallyManaged:
+                labels["com.cyxno.update-manager"] === "external" ||
+                labels["com.cyxno.management"] === "pipeline",
+              snapshotPresent: existsSync(
+                nodePath.join(SNAPSHOT_DIR, `${name.replace(/[^A-Za-z0-9_.-]/g, "_")}.json`),
+              ),
             });
           } catch (inspectError) {
             log("inventory", `inspect failed for ${name}: ${String(inspectError.message).slice(0, 100)}`);
@@ -1152,7 +1451,168 @@ const server = http.createServer(async (req, res) => {
       currentImageId: state.currentImageId,
       localVersions: state.localVersions ?? [],
       pullAvailable: state.pullAvailable,
+      /** false = the hourly probe hit an auth wall (GHCR login required). */
+      pullAuthRequired: state.pullAvailable === false,
     });
+  }
+
+  // Read-only list of stored pre-update snapshots (rollback evidence).
+  // NEVER returns snapshot contents (env secrets) — presence metadata only.
+  if (url.pathname === "/snapshots" && req.method === "GET") {
+    if (!authorize(req)) return sendJson(res, 401, { error: "unauthorized" });
+    void (async () => {
+      try {
+        const names = existsSync(SNAPSHOT_DIR) ? readdirSync(SNAPSHOT_DIR).filter((f) => f.endsWith(".json")).sort() : [];
+        const snapshots = [];
+        for (const file of names.slice(0, 200)) {
+          try {
+            const raw = JSON.parse(readFileSync(nodePath.join(SNAPSHOT_DIR, file), "utf8"));
+            snapshots.push({
+              container: raw.name ?? file.replace(/\.json$/, ""),
+              file,
+              imageId: raw.imageId ?? null,
+              image: raw.image ?? null,
+              capturedAt: raw.capturedAt ?? null,
+            });
+          } catch {
+            snapshots.push({ container: file.replace(/\.json$/, ""), file, imageId: null, image: null, capturedAt: null, unreadable: true });
+          }
+        }
+        return sendJson(res, 200, { snapshots });
+      } catch (error) {
+        return sendJson(res, 500, { error: String(error.message ?? error).slice(0, 200) });
+      }
+    })();
+    return;
+  }
+
+  // Clear a stale PRE-MUTATION operation so new work can proceed. Refuses
+  // anything post-mutation (those need recovery, not clearing) and verifies
+  // the target container is running before releasing its job.
+  if (url.pathname === "/recovery/clear-stale" && req.method === "POST") {
+    if (!authorize(req)) return sendJson(res, 401, { error: "unauthorized" });
+    let body = {};
+    try {
+      body = JSON.parse((await readBody(req)) || "{}");
+    } catch {
+      return sendJson(res, 400, { error: "malformed JSON body" });
+    }
+    if (body?.confirm !== "yes") {
+      return sendJson(res, 400, { error: "explicit confirmation required" });
+    }
+    const cleared = [];
+    const refused = [];
+    const jobs = jobStore();
+    const now = Date.now();
+    for (const [key, job] of Object.entries(jobs)) {
+      if (!job || job.finishedAt || !job.startedAt) continue;
+      const phase = String(job.phase ?? "");
+      const basePhase = phase.startsWith("updating:") || phase.startsWith("skipped:") ? "updating" : phase;
+      if (!PRE_MUTATION_PHASES.has(basePhase)) {
+        if (!job.staleOrphan) refused.push({ job: key, reason: `phase ${phase} is post-mutation — needs recovery, not clearing` });
+        continue;
+      }
+      if (now - Date.parse(job.startedAt) < STALE_OP_MS) {
+        refused.push({ job: key, reason: `only ${Math.round((now - Date.parse(job.startedAt)) / 60_000)} min old — not stale` });
+        continue;
+      }
+      // Belt & braces: the target container must exist and be running —
+      // a missing container means the machine may have been mid-replace.
+      const target = key.startsWith("project:") || key.startsWith("compose:") ? null : key;
+      if (target) {
+        const running = await dockerJson(
+          ["container", "inspect", "--format", "{{json .State.Running}}", target],
+          STEP_TIMEOUT_MS.inspect,
+        ).catch(() => null);
+        const isRunning = (Array.isArray(running) ? running[0] : running) === true;
+        if (!isRunning) {
+          refused.push({ job: key, reason: "target container is not running — clearing unsafe" });
+          continue;
+        }
+      }
+      job.phase = "failed";
+      job.finishedAt = new Date().toISOString();
+      job.staleCleared = true;
+      job.lastResult = { ...(job.lastResult ?? {}), result: "stale-cleared", error: "stale pre-mutation operation cleared by operator" };
+      cleared.push(key);
+    }
+    if (cleared.length > 0) {
+      saveJobs(jobs);
+      // Release the shared lock only when every active machine was cleared.
+      if (state.lock && (state.phase === "requested" || state.phase === "checking" || state.phase === "pulling")) {
+        const selfStale = state.startedAt ? now - Date.parse(state.startedAt) >= STALE_OP_MS : false;
+        if (selfStale) {
+          setPhase("failed", "stale pre-mutation operation cleared by operator");
+          state.lock = null;
+          state.finishedAt = new Date().toISOString();
+          cleared.push("self-update");
+        } else {
+          refused.push({ job: "self-update", reason: "self machine not stale yet" });
+        }
+      }
+    }
+    log("recovery", `clear-stale: cleared=${cleared.length} refused=${refused.length}`);
+    return sendJson(res, 200, { cleared, refused });
+  }
+
+  // Read-only compose project model: services + depends_on as CONFIGURED
+  // (docker compose config), never guessed. No mutation.
+  if (url.pathname === "/compose-project" && req.method === "GET") {
+    if (!authorize(req)) return sendJson(res, 401, { error: "unauthorized" });
+    void (async () => {
+      try {
+        const project = (url.searchParams.get("project") ?? "").trim();
+        if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(project)) {
+          return sendJson(res, 400, { error: "invalid project name" });
+        }
+        const members = await composeProjectMembers(project);
+        if (members.length === 0) return sendJson(res, 404, { error: `no containers found for project ${project}` });
+
+        // Pipeline-owned projects are read-only everywhere.
+        if (pipelineOwnedProjects().includes(project.toLowerCase()) || members.some((m) => m.labels["com.cyxno.management"] === "pipeline")) {
+          return sendJson(res, 200, {
+            project,
+            pipelineOwned: true,
+            workingDir: members[0]?.workdir ?? null,
+            configFiles: members[0]?.configFiles ?? [],
+            services: members.map((m) => ({ service: m.service, containers: [m.name], state: m.state })),
+            dependsOn: {},
+            graphOk: false,
+            graphReason: "pipeline-owned project — dashboard never plans or executes updates here",
+          });
+        }
+
+        const allowedRoots = (process.env.COMPOSE_ALLOWED_ROOTS ?? "").split(",").map((r) => r.trim()).filter(Boolean);
+        const first = members[0];
+        const wd = compose.validateAllowedPath(first.workdir, allowedRoots);
+        if (!wd.ok) return sendJson(res, 422, { error: `POLICY_DENIED: ${wd.reason}` });
+        const cf = compose.validateConfigFiles(first.configFiles, wd.canonical, allowedRoots);
+        if (!cf.ok) return sendJson(res, 422, { error: `POLICY_DENIED: ${cf.reason}` });
+
+        const args = ["compose", "--project-name", project, "--project-directory", wd.canonical];
+        for (const file of first.configFiles) args.push("--file", file);
+        args.push("config", "--format", "json");
+        const { stdout } = await docker(args, { timeoutMs: 30_000 });
+        const parsed = compose.parseComposeConfig(JSON.parse(stdout));
+        if (!parsed.ok) return sendJson(res, 422, { error: parsed.reason });
+
+        // configured services that have no running container are NOT errors
+        // for planning reads — the plan layer decides ambiguity.
+        return sendJson(res, 200, {
+          project,
+          pipelineOwned: false,
+          workingDir: wd.canonical,
+          configFiles: first.configFiles,
+          services: members.map((m) => ({ service: m.service, containers: [m.name], state: m.state })),
+          dependsOn: parsed.dependsOn,
+          configuredServices: parsed.services,
+          graphOk: true,
+        });
+      } catch (error) {
+        return sendJson(res, 500, { error: String(error.message ?? error).slice(0, 200) });
+      }
+    })();
+    return;
   }
 
   if (url.pathname === "/rollback" && req.method === "POST") {
@@ -1267,6 +1727,68 @@ const server = http.createServer(async (req, res) => {
       void refreshLocalVersions();
     });
     return sendJson(res, 202, { accepted: true, name, phase: "requested" });
+  }
+
+  // Sequential compose PROJECT update (v0.7.13). The request names ONLY the
+  // project; members, order, paths and refusal rules are derived server-side
+  // from live labels + compose config. Stops on first failure.
+  if (url.pathname === "/compose-project-update" && req.method === "POST") {
+    if (!authorize(req)) {
+      log("rejected", "unauthorized compose project update");
+      return sendJson(res, 401, { error: "unauthorized" });
+    }
+    if (state.lock) {
+      return sendJson(res, 409, { error: "another deployment operation is running", phase: state.phase });
+    }
+    let body;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return sendJson(res, 400, { error: "malformed JSON body" });
+    }
+    const project = typeof body?.project === "string" ? body.project.trim() : "";
+    if (!NAME_RE.test(project)) return sendJson(res, 400, { error: "invalid project name" });
+    if (body?.confirm !== "yes") return sendJson(res, 400, { error: "explicit confirmation required" });
+    if (pipelineOwnedProjects().includes(project.toLowerCase())) {
+      return sendJson(res, 403, { error: "pipeline-owned project — dashboard never executes updates here" });
+    }
+
+    // Fast refusal: a project with high-risk / blocked members never starts.
+    try {
+      const members = await composeProjectMembers(project);
+      if (members.length === 0) return sendJson(res, 404, { error: `no containers found for project ${project}` });
+      const refusal = [];
+      for (const member of members) {
+        if (blockedContainers().has(member.name.toLowerCase())) refusal.push(`${member.name}: AIO/externally managed`);
+        if (isHighRisk(member.name, member.image)) refusal.push(`${member.name}: HIGH risk (database/auth/proxy/DNS)`);
+        if (member.labels["com.cyxno.management"] === "pipeline") refusal.push(`${member.name}: pipeline-owned`);
+      }
+      if (refusal.length > 0) {
+        return sendJson(res, 403, { error: `project contains non-updateable members — ${refusal.join("; ")}` });
+      }
+    } catch (error) {
+      return sendJson(res, 500, { error: String(error.message ?? error).slice(0, 200) });
+    }
+
+    state.lock = { token: randomUUID(), since: new Date().toISOString() };
+    state.startedAt = new Date().toISOString();
+    state.finishedAt = null;
+    setJob(`project:${project}`, { phase: "requested", startedAt: new Date().toISOString(), finishedAt: null });
+    void runComposeProjectUpdate(project).then(() => {
+      void refreshCurrentImage();
+      void refreshLocalVersions();
+    });
+    return sendJson(res, 202, { accepted: true, project, phase: "requested" });
+  }
+
+  // Job status for a project update (v0.7.13).
+  if (url.pathname === "/compose-project-job" && req.method === "GET") {
+    if (!authorize(req)) return sendJson(res, 401, { error: "unauthorized" });
+    const project = url.searchParams.get("project");
+    const jobs = loadJobs();
+    const key = project ? `project:${project}` : null;
+    if (key) return sendJson(res, 200, { job: jobs[key] ?? null });
+    return sendJson(res, 200, { jobs: Object.fromEntries(Object.entries(jobs).filter(([k]) => k.startsWith("project:"))) });
   }
 
   if (url.pathname === "/container-update" && req.method === "POST") {

@@ -19,7 +19,7 @@
 set -eu
 
 NAME="unraid-dashboard-helper"
-IMAGE="${1:-ghcr.io/cyxno/unraid-dashboard-helper:0.7.0}"
+IMAGE="${1:-ghcr.io/cyxno/unraid-dashboard-helper:0.7.13}"
 
 if [ -z "${UPDATE_HELPER_TOKEN:-}" ]; then
   echo "ERROR: UPDATE_HELPER_TOKEN must be provided (openssl rand -hex 32)." >&2
@@ -83,16 +83,36 @@ done
 COMPOSE_ROOTS=$(echo "$COMPOSE_ROOTS" | sed "s/^,//")
 echo "==> Compose allowed roots: $COMPOSE_ROOTS"
 
+# GHCR credential (v0.7.13): when the host has done the one-time
+# `scripts/login-ghcr.sh`, the flash-backed credential store is bind-mounted
+# READ-ONLY at /root/.docker so the helper's docker CLI can pull private
+# images — across helper recreates AND host reboots. Optional: without it
+# the helper still works, only private pulls fall back to local images.
+DOCKER_CRED_MOUNT=""
+if [ -f /boot/config/custom/dashboard/docker-cred/config.json ]; then
+  DOCKER_CRED_MOUNT="-v /boot/config/custom/dashboard/docker-cred:/root/.docker:ro"
+  echo "==> GHCR credential mount: enabled (read-only, flash-backed)"
+else
+  echo "==> GHCR credential mount: absent — private pulls need scripts/login-ghcr.sh"
+fi
+
+# Pipeline-owned projects (v0.7.13): the helper refuses mutations on these
+# compose projects even if asked directly (defense in depth; the dashboard
+# gate refuses first).
+PIPELINE_OWNED="${PIPELINE_OWNED_PROJECTS:-tornscope}"
+
 docker run -d \
   --name "$NAME" \
   --network host \
   --restart unless-stopped \
   -v /var/run/docker.sock:/var/run/docker.sock \
   $COMPOSE_MOUNTS \
+  $DOCKER_CRED_MOUNT \
   -v "$STATE_DIR":/helper-state:rw \
   -e UPDATE_HELPER_TOKEN="$UPDATE_HELPER_TOKEN" \
   -e DASHBOARD_AUTH_SECRET="$DASHBOARD_AUTH_SECRET" \
   -e COMPOSE_ALLOWED_ROOTS="$COMPOSE_ROOTS" \
+  -e PIPELINE_OWNED_PROJECTS="$PIPELINE_OWNED" \
   -e DOCKER_STORAGE_MODE="$DOCKER_STORAGE_MODE" \
   -e DOCKER_STORAGE_SOURCE="$DOCKER_STORAGE_SOURCE" \
   -e STATE_DIR=/helper-state \

@@ -13,8 +13,9 @@ import type { UpdateHelperStatus } from "@/server/update/helper-client";
  * the helper on its first status poll.
  */
 
+export type UpdateScope = "self" | "container" | "compose" | "project";
+
 export interface UpdateHistoryEntry {
-  /** Machine completion time (ISO). */
   timestamp: string;
   /** Machine start time — the dedupe key against helper state. */
   startedAt: string;
@@ -30,6 +31,12 @@ export interface UpdateHistoryEntry {
   rollbackPerformed: boolean;
   usedLocalImage: boolean;
   error?: string;
+  /** v0.7.13: what this entry is about (defaults to "self"). */
+  scope?: UpdateScope;
+  /** Container or project name for non-self scopes. */
+  target?: string;
+  /** Adapter that executed it (e.g. "helper", "compose"). */
+  adapter?: string;
 }
 
 const MAX_BYTES = 512 * 1024;
@@ -227,4 +234,114 @@ export function validatedVersions(history: UpdateHistoryEntry[]): string[] {
 /** Test hook. */
 export function resetUpdateHistoryQueue(): void {
   globalStore.__dashboardUpdateHistoryQueue = undefined;
+}
+
+/* ---- container/project history (v0.7.13) ------------------------------------- */
+
+export interface ContainerUpdateStats {
+  manualSuccesses: number;
+  rollbackCount: number;
+  lastSuccess: { image: string; at: string } | null;
+  lastAttempt: UpdateHistoryEntry | null;
+}
+
+function isContainerEntry(entry: UpdateHistoryEntry): boolean {
+  return (entry.scope ?? "self") !== "self" && typeof entry.target === "string";
+}
+
+/** All non-self history entries, newest first, optionally filtered. */
+export async function readContainerHistory(filter?: {
+  target?: string;
+  result?: UpdateHistoryEntry["result"];
+  scope?: UpdateScope;
+}): Promise<UpdateHistoryEntry[]> {
+  const entries = (await readUpdateHistory()).filter(isContainerEntry);
+  return entries.filter((entry) => {
+    if (filter?.target && entry.target !== filter.target) return false;
+    if (filter?.result && entry.result !== filter.result) return false;
+    if (filter?.scope && entry.scope !== filter.scope) return false;
+    return true;
+  });
+}
+
+/** Records a container/compose/project machine outcome (request-side hook). */
+export async function recordContainerUpdate(entry: {
+  startedAt: string;
+  actor: string;
+  target: string;
+  scope: Exclude<UpdateScope, "self">;
+  adapter: string;
+  image: string;
+  previousImage?: string | null;
+  digest?: string | null;
+  durationMs: number;
+  phasesReached: string[];
+  result: UpdateHistoryEntry["result"];
+  rollbackPerformed: boolean;
+  error?: string;
+}): Promise<void> {
+  const historyEntry: UpdateHistoryEntry = {
+    timestamp: new Date().toISOString(),
+    startedAt: entry.startedAt,
+    actor: entry.actor,
+    fromVersion: entry.previousImage?.slice(0, 80) ?? "unknown",
+    fromDigest: null,
+    toVersion: entry.image.slice(0, 80),
+    toDigest: entry.digest ?? null,
+    durationMs: entry.durationMs,
+    phasesReached: entry.phasesReached,
+    result: entry.result,
+    rollbackPerformed: entry.rollbackPerformed,
+    usedLocalImage: false,
+    scope: entry.scope,
+    target: entry.target,
+    adapter: entry.adapter,
+    ...(entry.error ? { error: String(entry.error).slice(0, 300) } : {}),
+  };
+  await recordUpdateEntry(historyEntry);
+}
+
+/** Dedupe check: has this machine run already been persisted? */
+export async function hasContainerRecord(startedAt: string, target: string): Promise<boolean> {
+  const entries = (await readUpdateHistory()).filter(isContainerEntry);
+  return entries.some((entry) => entry.startedAt === startedAt && entry.target === target);
+}
+
+/** Per-container track record for the auto-eligibility model. */
+export async function containerUpdateStats(target: string): Promise<ContainerUpdateStats> {
+  const entries = await readContainerHistory({ target });
+  return statsFromEntries(entries);
+}
+
+function statsFromEntries(entries: UpdateHistoryEntry[]): ContainerUpdateStats {
+  let manualSuccesses = 0;
+  let rollbackCount = 0;
+  let lastSuccess: ContainerUpdateStats["lastSuccess"] = null;
+  for (const entry of entries) {
+    if (entry.result === "success") {
+      manualSuccesses += 1;
+      if (!lastSuccess) lastSuccess = { image: entry.toVersion, at: entry.timestamp };
+    }
+    if (entry.rollbackPerformed) rollbackCount += 1;
+  }
+  return { manualSuccesses, rollbackCount, lastSuccess, lastAttempt: entries[0] ?? null };
+}
+
+/**
+ * Track record for EVERY container in one history read (bounded: the JSONL
+ * is ≤512KB). UI polls use this instead of per-container reads.
+ */
+export async function containerStatsBatch(): Promise<Map<string, ContainerUpdateStats>> {
+  const entries = (await readUpdateHistory()).filter(isContainerEntry);
+  const byTarget = new Map<string, UpdateHistoryEntry[]>();
+  for (const entry of entries) {
+    const list = byTarget.get(entry.target!) ?? [];
+    list.push(entry);
+    byTarget.set(entry.target!, list);
+  }
+  const out = new Map<string, ContainerUpdateStats>();
+  for (const [target, list] of byTarget) {
+    out.set(target, statsFromEntries(list));
+  }
+  return out;
 }

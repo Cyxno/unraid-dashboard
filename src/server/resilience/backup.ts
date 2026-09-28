@@ -49,7 +49,7 @@ export async function createBackup(): Promise<{ file: string; bytes: number; sha
 
   // 1. Shared dashboards
   const dashDir = path.join(getEnvSafe().DASHBOARDS_DIR);
-  let dashboards: Record<string, unknown> = {};
+  const dashboards: Record<string, unknown> = {};
   try {
     const files = await readdir(dashDir);
     for (const file of files.filter((f) => f.endsWith(".json"))) {
@@ -123,7 +123,7 @@ export async function listBackups(): Promise<Array<{ file: string; bytes: number
 
 /** Validatie van een backup-archief zonder te herstellen (dry-run). */
 export async function validateBackup(file: string): Promise<{ ok: boolean; reason?: string; entries?: number }> {
-  if (!/^resilience-[0-9T-]+\.json$/.test(file)) return { ok: false, reason: "invalid filename" };
+  if (!/^resilience-[0-9TZ-]+\.json$/.test(file)) return { ok: false, reason: "invalid filename" };
   try {
     const raw = await readFile(path.join(backupDir(), file), "utf8");
     const parsed = JSON.parse(raw) as { manifest?: BackupManifest; dashboards?: Record<string, unknown> };

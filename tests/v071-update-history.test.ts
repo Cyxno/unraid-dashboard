@@ -52,6 +52,7 @@ function helperWithLastUpdate(
     currentImageId: "sha256:abc",
     localVersions: ["0.7.0"],
     pullAvailable: false,
+    pullAuthRequired: null,
   };
 }
 

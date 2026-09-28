@@ -642,7 +642,7 @@ export interface AuditEntry {
   actor: string;
   /** Client IP as observed by the dashboard. */
   sourceIp: string;
-  kind: "docker" | "vm" | "notification" | "dashboard" | "update";
+  kind: "docker" | "vm" | "notification" | "dashboard" | "update" | "recovery";
   action: string;
   /** Target name (display) and id. */
   targetName: string;

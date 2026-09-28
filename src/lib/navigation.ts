@@ -9,6 +9,7 @@ import {
   Network,
   ScrollText,
   Settings,
+  ShieldCheck,
   Tv,
   type LucideIcon,
 } from "lucide-react";
@@ -28,6 +29,7 @@ export const NAV_ITEMS: NavItem[] = [
   { title: "VMs", href: "/vms", icon: Monitor, partial: true },
   { title: "Network", href: "/network", icon: Network },
   { title: "System", href: "/system", icon: Activity },
+  { title: "Operations", href: "/operations", icon: ShieldCheck },
   { title: "Notifications", href: "/notifications", icon: BellRing },
   { title: "Logs", href: "/logs", icon: ScrollText },
   { title: "Audit", href: "/audit", icon: ClipboardList },

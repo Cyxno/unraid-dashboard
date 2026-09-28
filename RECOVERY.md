@@ -107,11 +107,39 @@ curl -sk --resolve kiosk-dashboard.familievalk.com:443:192.168.1.2 \
 ## GHCR unavailable
 
 For remote pulls the host needs a persistent login: run
-`scripts/login-ghcr.sh` with a `read:packages` PAT (one-time). Without
-it local images are used and update detection reports `auth required`.
+`scripts/login-ghcr.sh` with a `read:packages` PAT (one-time,
+input hidden). That script now ALSO persists the credential: it copies the
+Docker credential store to the flash drive
+(`/boot/config/custom/dashboard/docker-cred/config.json`, 0600) and
+installs a `/boot/config/go` boot-restore block, so the login survives
+reboots (`/root` is RAM-backed on Unraid) and, via a read-only bind mount,
+helper recreates too. Without it local images are used and update
+detection reports `auth required` (surfaced as "GHCR login required" on
+the Operations page and in Settings).
 
 Local images persist. The update machine falls back to local images on
 pull failure. No unnecessary recreation is triggered.
+
+### Prove the remote-pull path (after login)
+
+```sh
+sh scripts/validate-release.sh 0.7.13
+```
+
+This asserts: the registry serves the tag, a real `docker pull` works, the
+pulled RepoDigest matches the registry manifest digest, and the helper
+container can see the credential. After it passes, the in-app update
+performs the true remote transition (no local fallback).
+
+## Operations page
+
+The read-only Operations page (`/operations`) is the "what is broken?"
+view: app/helper/Unraid/Prometheus/GHCR health, auth mode, `/app/data`
+writability, latest backup, latest successful update and rollback, current
+rollback image, active/stale operations. Safe actions (audited, kind
+`recovery`): create resilience backup, validate latest backup, restore
+dry-run, retry dependency check, clear a stale PRE-mutation operation.
+Deliberately absent: generic shell, arbitrary restore, arbitrary rollback.
 
 ## Firewall (port 8090 isolation)
 

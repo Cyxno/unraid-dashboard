@@ -37,17 +37,28 @@ interface ManagedContainerDto {
   image: string;
   tag: string;
   registry: string;
-  management_type: "unraid" | "compose" | "custom_deploy" | "standalone" | "local_build" | "unknown";
+  management_type: "unraid" | "compose" | "custom_deploy" | "standalone" | "local_build" | "pipeline_owned" | "unknown";
   management_source: string;
   update_strategy: string;
   update_available: boolean;
   update_status: "UP_TO_DATE" | "UPDATE_AVAILABLE" | "PINNED" | "LOCAL_BUILD" | "AUTH_REQUIRED" | "UNKNOWN" | "CHECK_FAILED";
   risk: "LOW" | "MEDIUM" | "HIGH";
   policy: "manual" | "notify" | "auto";
+  externallyManaged?: boolean;
   health: string | null;
   current_digest: string | null;
   remote_digest: string | null;
   last_checked: string | null;
+  rollback?: {
+    ready: boolean;
+    level: "ready" | "unproven" | "not_ready";
+    snapshot_present: boolean;
+  };
+  provenance?: {
+    state: "synced" | "registry_ahead" | "local_build" | "auth_required" | "check_failed" | "unknown";
+    note: string | null;
+  };
+  unsupported?: string[];
 }
 
 interface UpdatesPayload {
@@ -84,10 +95,25 @@ const MANAGEMENT_LABEL: Record<ManagedContainerDto["management_type"], string> =
   custom_deploy: "Deploy script",
   standalone: "Standalone",
   local_build: "Local build",
+  pipeline_owned: "Pipeline",
   unknown: "Unknown",
 };
 
-/** Server-side gate mirrored in the UI (the API re-validates anyway). */
+const PROVENANCE_META: Record<NonNullable<ManagedContainerDto["provenance"]>["state"], { label: string; variant: "success" | "warning" | "destructive" | "muted" | "secondary" }> = {
+  synced: { label: "provenance synced", variant: "success" },
+  registry_ahead: { label: "registry ahead", variant: "warning" },
+  local_build: { label: "locally built", variant: "muted" },
+  auth_required: { label: "registry auth", variant: "destructive" },
+  check_failed: { label: "check failed", variant: "destructive" },
+  unknown: { label: "provenance ?", variant: "secondary" },
+};
+
+/**
+ * Server-side gate mirrored in the UI (the API re-validates anyway).
+ * v0.7.13: compose services update through the dashboard like any other
+ * container (unless HIGH-risk), pipeline-owned projects are always
+ * refused, and mutation requires a resolvable rollback image.
+ */
 function computeGate(container: ManagedContainerDto): { canUpdate: boolean; reason: string | null } {
   const lower = container.name.toLowerCase();
   if (["dumb", "dumbscope", "unraid-dashboard", "unraid-dashboard-helper", "watchtower"].includes(lower)) {
@@ -98,7 +124,18 @@ function computeGate(container: ManagedContainerDto): { canUpdate: boolean; reas
         : "Managed externally — dashboard update disabled (own CI/CD or updater)",
     };
   }
-  if (container.management_type === "compose") return { canUpdate: false, reason: "Compose-managed — update via docker compose" };
+  if (container.management_type === "pipeline_owned") {
+    return { canUpdate: false, reason: "Managed by external deployment pipeline — dashboard never mutates this project" };
+  }
+  if (container.externallyManaged === true) {
+    return { canUpdate: false, reason: "Managed externally (label) — dashboard update disabled" };
+  }
+  if ((container.unsupported ?? []).length > 0) {
+    return { canUpdate: false, reason: "Config not generically recreatable: " + (container.unsupported ?? []).join("; ") };
+  }
+  if (container.rollback && !container.rollback.ready) {
+    return { canUpdate: false, reason: "Rollback not ready: running image not resolvable — refusing mutation" };
+  }
   if (container.management_type === "local_build" || container.update_status === "LOCAL_BUILD") return { canUpdate: false, reason: "Local build — update via its build/deploy pipeline" };
   if (container.update_status === "PINNED") return { canUpdate: false, reason: "Digest pinned — image cannot drift from its pin" };
   if (container.risk === "HIGH") return { canUpdate: false, reason: "HIGH risk (database/auth/proxy/DNS) — update manually via Unraid" };
@@ -356,6 +393,20 @@ export function DockerUpdatesPanel() {
                     </Link>
                     <span className="ml-2 text-muted-foreground">{MANAGEMENT_LABEL[container.management_type]}</span>
                   </span>
+                  {container.management_type === "pipeline_owned" && (
+                    <Badge variant="warning" className="gap-1 text-[10px]" title="Managed by external deployment pipeline — read-only here">
+                      pipeline
+                    </Badge>
+                  )}
+                  {container.provenance && container.provenance.state !== "unknown" && container.provenance.state !== "synced" && (
+                    <Badge
+                      variant={PROVENANCE_META[container.provenance.state].variant}
+                      className="hidden text-[10px] lg:inline-flex"
+                      title={container.provenance.note ?? undefined}
+                    >
+                      {PROVENANCE_META[container.provenance.state].label}
+                    </Badge>
+                  )}
                   {container.risk === "HIGH" && (
                     <Badge variant="destructive" className="gap-1 text-[10px]">
                       <ShieldAlert className="size-3" aria-hidden="true" /> HIGH · manual

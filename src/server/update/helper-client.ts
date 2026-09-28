@@ -43,6 +43,8 @@ export interface UpdateHelperStatus {
   currentImageId: string | null;
   localVersions: string[];
   pullAvailable: boolean | null;
+  /** Helper's hourly probe hit an auth wall (GHCR login required). */
+  pullAuthRequired: boolean | null;
 }
 
 const UPDATE_PHASES = new Set([
@@ -94,6 +96,7 @@ export async function getHelperStatus(): Promise<UpdateHelperStatus> {
       currentImageId: null,
       localVersions: [],
       pullAvailable: null,
+      pullAuthRequired: null,
     };
   }
   try {
@@ -123,6 +126,7 @@ export async function getHelperStatus(): Promise<UpdateHelperStatus> {
       currentImageId: body.currentImageId ?? null,
       localVersions: body.localVersions ?? [],
       pullAvailable: body.pullAvailable ?? null,
+      pullAuthRequired: body.pullAuthRequired ?? null,
     };
   } catch (error) {
     return unavailable(error instanceof Error ? error.message : "helper unreachable", config.url);
@@ -149,6 +153,7 @@ function unavailable(reason: string, url: string): UpdateHelperStatus {
     currentImageId: null,
     localVersions: [],
     pullAvailable: null,
+    pullAuthRequired: null,
   };
 }
 
@@ -345,6 +350,141 @@ export function compareSemver(a: string, b: string): number {
     if (diff !== 0) return diff;
   }
   return 0;
+}
+
+/* ---- project + recovery surface (v0.7.13) ------------------------------------- */
+
+/** Read-only compose project model from the helper (compose-config derived). */
+export interface HelperComposeProject {
+  project: string;
+  pipelineOwned: boolean;
+  workingDir: string | null;
+  configFiles: string[];
+  services: Array<{ service: string; containers: string[]; state: string }>;
+  dependsOn: Record<string, string[]>;
+  configuredServices?: string[];
+  graphOk: boolean;
+  graphReason?: string;
+  error?: string;
+}
+
+export async function getHelperComposeProject(project: string): Promise<HelperComposeProject | null> {
+  const config = helperConfig();
+  if (!config) return null;
+  try {
+    const response = await fetch(
+      `${config.url}/compose-project?project=${encodeURIComponent(project)}`,
+      { headers: config.token ? { authorization: `Bearer ${config.token}` } : {}, signal: AbortSignal.timeout(35_000), cache: "no-store" },
+    );
+    const body = (await response.json().catch(() => null)) as HelperComposeProject | { error: string } | null;
+    if (!body) return null;
+    if (!response.ok || !("services" in body)) {
+      const reason = "error" in body ? body.error : `HTTP ${response.status}`;
+      return { project, pipelineOwned: false, workingDir: null, configFiles: [], services: [], dependsOn: {}, graphOk: false, graphReason: reason };
+    }
+    return body;
+  } catch {
+    return null;
+  }
+}
+
+/** Requests the sequential project update (request names only the project). */
+export async function requestProjectUpdate(project: string): Promise<UpdateRequestResult> {
+  const config = helperConfig();
+  if (!config) return { accepted: false, status: 503, reason: "Update helper not configured." };
+  if (!config.token) return { accepted: false, status: 503, reason: "UPDATE_HELPER_TOKEN not configured." };
+  try {
+    const response = await fetch(`${config.url}/compose-project-update`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${config.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ project, confirm: "yes" }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const body = (await response.json().catch(() => ({}))) as { error?: string; accepted?: boolean };
+    if (response.status === 202 && body.accepted) return { accepted: true, status: 202 };
+    return { accepted: false, status: response.status, reason: body.error ?? `Helper responded with HTTP ${response.status}.` };
+  } catch (error) {
+    return { accepted: false, status: 502, reason: error instanceof Error ? error.message : "Helper request failed." };
+  }
+}
+
+export interface ProjectJob {
+  project?: string;
+  phase: string;
+  detail?: string | null;
+  startedAt?: string;
+  finishedAt?: string | null;
+  phases?: Array<{ phase: string; detail: string; at: string }>;
+  lastResult?: { result: string; services?: string[]; durationMs?: number; error?: string };
+}
+
+export async function getProjectJob(project: string): Promise<ProjectJob | null> {
+  const config = helperConfig();
+  if (!config) return null;
+  try {
+    const response = await fetch(
+      `${config.url}/compose-project-job?project=${encodeURIComponent(project)}`,
+      { headers: config.token ? { authorization: `Bearer ${config.token}` } : {}, signal: AbortSignal.timeout(5_000), cache: "no-store" },
+    );
+    if (!response.ok) return null;
+    const body = (await response.json()) as { job?: ProjectJob | null };
+    return body.job ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export interface SnapshotInfo {
+  container: string;
+  imageId: string | null;
+  image: string | null;
+  capturedAt: string | null;
+  unreadable?: boolean;
+}
+
+export async function getHelperSnapshots(): Promise<SnapshotInfo[] | null> {
+  const config = helperConfig();
+  if (!config) return null;
+  try {
+    const response = await fetch(`${config.url}/snapshots`, {
+      headers: config.token ? { authorization: `Bearer ${config.token}` } : {},
+      signal: AbortSignal.timeout(5_000),
+      cache: "no-store",
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { snapshots?: SnapshotInfo[] };
+    return body.snapshots ?? [];
+  } catch {
+    return null;
+  }
+}
+
+export interface ClearStaleResult {
+  cleared: string[];
+  refused: Array<{ job: string; reason: string }>;
+}
+
+/**
+ * Clears stale PRE-MUTATION operations. The helper re-validates every
+ * safety rule server-side; post-mutation operations are refused there.
+ */
+export async function requestClearStale(): Promise<{ status: number; reason?: string } & Partial<ClearStaleResult>> {
+  const config = helperConfig();
+  if (!config) return { status: 503, reason: "Update helper not configured." };
+  if (!config.token) return { status: 503, reason: "UPDATE_HELPER_TOKEN not configured." };
+  try {
+    const response = await fetch(`${config.url}/recovery/clear-stale`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${config.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ confirm: "yes" }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const body = (await response.json().catch(() => ({}))) as { error?: string; cleared?: string[]; refused?: Array<{ job: string; reason: string }> };
+    if (!response.ok) return { status: response.status, reason: body.error ?? `Helper responded with HTTP ${response.status}.` };
+    return { status: 200, cleared: body.cleared ?? [], refused: body.refused ?? [] };
+  } catch (error) {
+    return { status: 502, reason: error instanceof Error ? error.message : "Helper request failed." };
+  }
 }
 
 /** Shared-secret check for the proxy-auth boundary (v0.7). */

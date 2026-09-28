@@ -24,6 +24,8 @@ function facts(overrides: Partial<ContainerFacts> = {}): ContainerFacts {
     imageId: "sha256:imageid",
     repoDigests: ["ghcr.io/owner/app@sha256:aaaa"],
     created: "2026-09-26T00:00:00Z",
+    networks: [],
+    volumeSources: [],
     labels: {},
     ...overrides,
   };
@@ -77,6 +79,20 @@ describe("v0.7.6 management classification (metadata-based, never name-based)", 
   it("compose with a locally built image keeps compose management but local_build strategy", () => {
     const result = classifyManagement(
       facts({
+        name: "tablet-dashboard-app",
+        image: "tablet-dashboard:latest",
+        repoDigests: [],
+        labels: { "com.docker.compose.project": "tablet-dashboard", "com.docker.compose.service": "app" },
+      }),
+      [],
+    );
+    assert.equal(result.management_type, "compose");
+    assert.equal(result.update_strategy, "local_build");
+  });
+
+  it("tornscope compose project classifies pipeline_owned (v0.7.13)", () => {
+    const result = classifyManagement(
+      facts({
         name: "tornscope-web-1",
         image: "tornscope-web:latest",
         repoDigests: [],
@@ -84,8 +100,8 @@ describe("v0.7.6 management classification (metadata-based, never name-based)", 
       }),
       [],
     );
-    assert.equal(result.management_type, "compose");
-    assert.equal(result.update_strategy, "local_build");
+    assert.equal(result.management_type, "pipeline_owned");
+    assert.equal(result.update_strategy, "manual");
   });
 
   it("unraid dockerman label picks unraid_template", () => {

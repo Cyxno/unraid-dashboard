@@ -248,6 +248,20 @@ export function UpdatesSection() {
           </div>
         </div>
 
+        {/* GHCR auth (v0.7.13): private pulls are impossible without the
+            host login. Surface it loudly — this is the #1 update blocker. */}
+        {data?.helper.pullAvailable === false && (
+          <div className="rounded-lg border border-warning/40 bg-warning/10 p-3">
+            <p className="text-sm font-semibold">GHCR login required</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              The host cannot pull private images from <code>ghcr.io/cyxno/*</code>. Fix with one command on the host:{" "}
+              <code className="rounded bg-muted px-1">sh scripts/login-ghcr.sh</code> (a{" "}
+              <code className="rounded bg-muted px-1">read:packages</code> PAT, input hidden, never stored in this
+              app). The credential persists across reboots and helper restarts.
+            </p>
+          </div>
+        )}
+
         {/* Status line */}
         <div className="flex flex-wrap items-center gap-2 text-xs">
           {data?.release?.status === "available" && <Badge variant="warning">update available</Badge>}
