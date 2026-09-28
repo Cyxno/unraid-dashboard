@@ -239,12 +239,8 @@ export async function updatesOverview(options: { refresh?: boolean; wait?: boole
   };
 }
 
-/**
- * Enriches the overview with per-container history stats and the auto-
- * eligibility verdict (v0.7.13). Separated from updatesOverview so the
- * hot path stays cheap — history reads hit disk only here.
- */
-export async function enrichedOverview(options: { refresh?: boolean; wait?: boolean } = {}): Promise<{
+/** Shape of {@link enrichedOverview} (named for reuse in automation). */
+export interface EnrichedOverview {
   available: boolean;
   reason?: string;
   containers: ManagedContainer[];
@@ -252,7 +248,14 @@ export async function enrichedOverview(options: { refresh?: boolean; wait?: bool
   checkedAt: string;
   checking: boolean;
   pending: number;
-}> {
+}
+
+/**
+ * Enriches the overview with per-container history stats and the auto-
+ * eligibility verdict (v0.7.13). Separated from updatesOverview so the
+ * hot path stays cheap — history reads hit disk only here.
+ */
+export async function enrichedOverview(options: { refresh?: boolean; wait?: boolean } = {}): Promise<EnrichedOverview> {
   const overview = await updatesOverview(options);
   if (!overview.available) return overview;
   const allowlist = pilotAllowlist();

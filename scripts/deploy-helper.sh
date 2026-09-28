@@ -19,7 +19,7 @@
 set -eu
 
 NAME="unraid-dashboard-helper"
-IMAGE="${1:-ghcr.io/cyxno/unraid-dashboard-helper:0.7.14}"
+IMAGE="${1:-ghcr.io/cyxno/unraid-dashboard-helper:0.8.0}"
 
 if [ -z "${UPDATE_HELPER_TOKEN:-}" ]; then
   echo "ERROR: UPDATE_HELPER_TOKEN must be provided (openssl rand -hex 32)." >&2

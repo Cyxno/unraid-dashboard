@@ -35,7 +35,7 @@
 
 const http = require("node:http");
 const { spawn } = require("node:child_process");
-const { randomUUID, timingSafeEqual } = require("node:crypto");
+const { randomUUID, timingSafeEqual, createHash } = require("node:crypto");
 const nodePath = require("node:path");
 const { inspectToSnapshot, findUnsupported, snapshotToRunArgs, UNSUPPORTED_PREFIX } = require("./recreate");
 const compose = require("./compose");
@@ -60,7 +60,7 @@ const HEALTH_TIMEOUT_MS = 150_000;
 const VERIFY_TIMEOUT_MS = 30_000;
 const STEP_TIMEOUT_MS = { inspect: 15_000, pull: 300_000, replace: 30_000 };
 
-const HELPER_VERSION = "0.7.14";
+const HELPER_VERSION = "0.8.0";
 
 /** Strict remote mode (v0.7.14): when UPDATE_REQUIRE_REMOTE=true, a
  * self-update pull failure aborts BEFORE any mutation — the local-image
@@ -1600,6 +1600,62 @@ const server = http.createServer(async (req, res) => {
     }
     log("recovery", `clear-stale: cleared=${cleared.length} refused=${refused.length}`);
     return sendJson(res, 200, { cleared, refused });
+  }
+
+  // Stable config hash for a compose project (v0.8.0): sha256 over the
+  // ordered config-file contents + their paths. Read-only over the
+  // deploy-time RO mounts; env values are NOT read or hashed. Drives the
+  // dashboard's project registry + plan invalidation.
+  if (url.pathname === "/compose-project-hash" && req.method === "GET") {
+    if (!authorize(req)) return sendJson(res, 401, { error: "unauthorized" });
+    void (async () => {
+      try {
+        const project = (url.searchParams.get("project") ?? "").trim();
+        if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(project)) {
+          return sendJson(res, 400, { error: "invalid project name" });
+        }
+        if (pipelineOwnedProjects().includes(project.toLowerCase())) {
+          return sendJson(res, 200, { project, pipelineOwned: true, hash: null, files: [] });
+        }
+        const members = await composeProjectMembers(project);
+        if (members.length === 0) return sendJson(res, 404, { error: `no containers found for project ${project}` });
+        const allowedRoots = (process.env.COMPOSE_ALLOWED_ROOTS ?? "").split(",").map((r) => r.trim()).filter(Boolean);
+        const first = members[0];
+        const wd = compose.validateAllowedPath(first.workdir, allowedRoots);
+        if (!wd.ok) return sendJson(res, 422, { error: `POLICY_DENIED: ${wd.reason}` });
+        const cf = compose.validateConfigFiles(first.configFiles, wd.canonical, allowedRoots);
+        if (!cf.ok) return sendJson(res, 422, { error: `POLICY_DENIED: ${cf.reason}` });
+        const hash = createHash("sha256");
+        const files = [];
+        for (const file of first.configFiles) {
+          const resolved = path.isAbsolute(file) ? file : path.join(wd.canonical, file);
+          const normalized = path.normalize(resolved);
+          if (!normalized.startsWith(wd.canonical)) {
+            return sendJson(res, 422, { error: `config file escapes project dir: ${file}` });
+          }
+          let content;
+          try {
+            content = readFileSync(normalized);
+          } catch (readError) {
+            return sendJson(res, 422, { error: `config file unreadable: ${file} (${String(readError.message).slice(0, 80)})` });
+          }
+          hash.update(`${file}\0`);
+          hash.update(content);
+          hash.update("\0");
+          files.push({ file: file.slice(0, 200), bytes: content.length });
+        }
+        return sendJson(res, 200, {
+          project,
+          pipelineOwned: false,
+          hash: hash.digest("hex"),
+          files,
+          computedAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        return sendJson(res, 500, { error: String(error.message ?? error).slice(0, 200) });
+      }
+    })();
+    return;
   }
 
   // Read-only compose project model: services + depends_on as CONFIGURED

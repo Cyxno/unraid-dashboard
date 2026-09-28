@@ -292,7 +292,7 @@ export async function requestContainerRollback(name: string): Promise<UpdateRequ
   return containerOperation(`/container-rollback`, name);
 }
 
-interface ContainerJob {
+export interface ContainerJob {
   name: string;
   phase: string;
   detail?: string | null;

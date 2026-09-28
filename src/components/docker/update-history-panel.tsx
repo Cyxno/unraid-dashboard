@@ -31,6 +31,7 @@ interface HistoryEntry {
 
 type ResultFilter = "all" | "success" | "failed" | "rollback";
 type ScopeFilter = "all" | "self" | "container" | "compose" | "project";
+type SourceFilter = "all" | "auto" | "manual";
 
 const RESULT_VARIANT = {
   success: "success",
@@ -49,6 +50,7 @@ export function UpdateHistoryPanel() {
   const [targetQuery, setTargetQuery] = useState("");
   const [resultFilter, setResultFilter] = useState<ResultFilter>("all");
   const [scopeFilter, setScopeFilter] = useState<ScopeFilter>("all");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const debouncedTarget = useDebouncedValue(targetQuery, 150);
 
   const all = useMemo(
@@ -61,6 +63,8 @@ export function UpdateHistoryPanel() {
     return all
       .filter((entry) => {
         if (scopeFilter !== "all" && entry.scope !== scopeFilter) return false;
+        if (sourceFilter === "auto" && entry.actor !== "system:auto-update") return false;
+        if (sourceFilter === "manual" && entry.actor === "system:auto-update") return false;
         if (resultFilter === "success" && entry.result !== "success") return false;
         if (resultFilter === "failed" && entry.result !== "failed") return false;
         if (resultFilter === "rollback" && !entry.rollbackPerformed) return false;
@@ -148,6 +152,19 @@ export function UpdateHistoryPanel() {
                 size="sm"
                 className="h-8 text-xs capitalize"
                 onClick={() => setScopeFilter(value)}
+              >
+                {value}
+              </Button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-1" role="group" aria-label="Source filter">
+            {(["all", "auto", "manual"] as const).map((value) => (
+              <Button
+                key={value}
+                variant={sourceFilter === value ? "default" : "outline"}
+                size="sm"
+                className="h-8 text-xs capitalize"
+                onClick={() => setSourceFilter(value)}
               >
                 {value}
               </Button>

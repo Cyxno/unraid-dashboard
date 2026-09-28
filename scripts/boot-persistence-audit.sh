@@ -115,7 +115,7 @@ echo "== Summary: $PASS passed, $WARN warnings, $FAIL failures =="
 MARKER_DIR="/mnt/user/appdata/unraid-dashboard"
 MARKER="$MARKER_DIR/boot-verification.json"
 if [ -d "$MARKER_DIR" ] && [ -w "$MARKER_DIR" ]; then
-  printf '{\n  "verifiedAt": "%s",\n  "passed": %s,\n  "passedCount": %s,\n  "warnings": %s,\n  "failures": %s,\n  "scriptVersion": "0.7.14"\n}\n' \
+  printf '{\n  "verifiedAt": "%s",\n  "passed": %s,\n  "passedCount": %s,\n  "warnings": %s,\n  "failures": %s,\n  "scriptVersion": "0.8.0"\n}\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$([ "$FAIL" -eq 0 ] && echo true || echo false)" "$PASS" "$WARN" "$FAIL" \
     > "$MARKER"
   echo "Marker written: $MARKER"

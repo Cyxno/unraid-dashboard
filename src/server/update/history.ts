@@ -43,6 +43,13 @@ export interface UpdateHistoryEntry {
   registryDigest?: string | null;
   digestMatch?: boolean | null;
   requireRemote?: boolean | null;
+  /** v0.8.0: automation context for auto-driven updates. */
+  automation?: {
+    policyVersion: string;
+    reasons: string[];
+    digest: string | null;
+    firstSeenAt: string | null;
+  };
 }
 
 const MAX_BYTES = 512 * 1024;
@@ -299,6 +306,12 @@ export async function recordContainerUpdate(entry: {
   result: UpdateHistoryEntry["result"];
   rollbackPerformed: boolean;
   error?: string;
+  automation?: {
+    policyVersion: string;
+    reasons: string[];
+    digest: string | null;
+    firstSeenAt: string | null;
+  };
 }): Promise<void> {
   const historyEntry: UpdateHistoryEntry = {
     timestamp: new Date().toISOString(),
@@ -316,6 +329,7 @@ export async function recordContainerUpdate(entry: {
     scope: entry.scope,
     target: entry.target,
     adapter: entry.adapter,
+    ...(entry.automation ? { automation: entry.automation } : {}),
     ...(entry.error ? { error: String(entry.error).slice(0, 300) } : {}),
   };
   await recordUpdateEntry(historyEntry);

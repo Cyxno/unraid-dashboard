@@ -10,6 +10,7 @@ import { getBuildInfo } from "@/server/version";
 import { pilotAutoEnabled } from "@/server/update/eligibility";
 import { buildReleaseChain, readBootMarker, type ReleaseChain } from "@/server/update/release-chain";
 import { enrichedOverview } from "@/server/docker/updates";
+import { getAutomationStatus } from "@/server/automation/status";
 
 /**
  * Operations status (v0.7.13): the aggregate behind the read-only
@@ -57,6 +58,27 @@ export interface OperationsStatus {
   };
   /** v0.7.14: tag → CI → GHCR → credential → remote pull → running digest. */
   releaseChain: ReleaseChain;
+  /** v0.8.0: automation + compose registry summaries. */
+  automation: {
+    enabled: boolean;
+    paused: boolean;
+    policyVersion: string;
+    lastTickAt: string | null;
+    windowOpen: boolean;
+    windowReason: string;
+    eligibleCount: number;
+    queuedCount: number;
+    cooldownCount: number;
+    interventionCount: number;
+    optInCount: number;
+  };
+  projects: {
+    count: number;
+    changedConfigs: number;
+    pipelineOwned: number;
+    lastPollAt: string | null;
+    stale: boolean;
+  };
   operations: {
     active: { kind: string; target: string | null; phase: string; startedAt: string | null; stale: boolean } | null;
     staleCandidates: Array<{ job: string; phase: string; startedAt: string | null }>;
@@ -82,7 +104,7 @@ function latestRollbackOf(self: UpdateHistoryEntry[], containers: UpdateHistoryE
 
 export async function getOperationsStatus(): Promise<OperationsStatus> {
   const generatedAt = new Date().toISOString();
-  const [diagnostics, helper, backups, history, containerHistory, release, enriched, bootMarker] = await Promise.all([
+  const [diagnostics, helper, backups, history, containerHistory, release, enriched, bootMarker, automation, projects] = await Promise.all([
     getDiagnostics().catch(() => null as DiagnosticsPayload | null),
     getHelperStatus().catch(() => null),
     listBackups().catch(() => []),
@@ -91,6 +113,8 @@ export async function getOperationsStatus(): Promise<OperationsStatus> {
     checkForUpdate().catch(() => null),
     enrichedOverview().catch(() => null),
     readBootMarker().catch(() => null),
+    getAutomationStatus().catch(() => null),
+    (await import("@/server/automation/project-registry")).projectRegistryView().catch(() => null),
   ]);
   const env = getEnvSafe();
   const build = getBuildInfo();
@@ -226,6 +250,26 @@ export async function getOperationsStatus(): Promise<OperationsStatus> {
       history,
       bootMarker,
     }),
+    automation: {
+      enabled: automation?.enabled ?? false,
+      paused: automation?.paused ?? false,
+      policyVersion: automation?.policyVersion ?? "unknown",
+      lastTickAt: automation?.scheduler.lastTickAt ?? null,
+      windowOpen: automation?.window.inWindow ?? false,
+      windowReason: automation?.window.reason ?? "unknown",
+      eligibleCount: automation?.targets.filter((target) => target.state === "eligible").length ?? 0,
+      queuedCount: automation?.queue.length ?? 0,
+      cooldownCount: automation?.targets.filter((target) => target.state === "cooldown").length ?? 0,
+      interventionCount: automation?.targets.filter((target) => target.interventionRequired).length ?? 0,
+      optInCount: automation?.targets.filter((target) => target.optIn).length ?? 0,
+    },
+    projects: {
+      count: projects?.projects.length ?? 0,
+      changedConfigs: projects?.projects.filter((entry) => entry.configChanged).length ?? 0,
+      pipelineOwned: projects?.projects.filter((entry) => entry.summary?.pipelineOwned).length ?? 0,
+      lastPollAt: projects?.lastPollAt ?? null,
+      stale: projects?.stale ?? true,
+    },
     operations: { active, staleCandidates },
   };
 }

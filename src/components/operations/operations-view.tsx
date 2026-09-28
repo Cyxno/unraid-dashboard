@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import {
   Activity,
   AlertTriangle,
+  Bot,
   CheckCircle2,
   CircleDashed,
   DatabaseBackup,
@@ -71,6 +72,26 @@ interface OperationsStatus {
     digestMatch: boolean | null;
     provenanceBadge: "Registry verified" | "Local build" | "Registry ahead" | "Unknown provenance";
     bootPersistence: { verifiedAt: string | null; passed: boolean | null; failures: number | null; warnings: number | null };
+  };
+  automation: {
+    enabled: boolean;
+    paused: boolean;
+    policyVersion: string;
+    lastTickAt: string | null;
+    windowOpen: boolean;
+    windowReason: string;
+    eligibleCount: number;
+    queuedCount: number;
+    cooldownCount: number;
+    interventionCount: number;
+    optInCount: number;
+  };
+  projects: {
+    count: number;
+    changedConfigs: number;
+    pipelineOwned: number;
+    lastPollAt: string | null;
+    stale: boolean;
   };
   operations: {
     active: { kind: string; target: string | null; phase: string; startedAt: string | null; stale: boolean } | null;
@@ -438,6 +459,60 @@ export default function OperationsPage() {
                   detail={`phase ${candidate.phase} · started ${candidate.startedAt ? formatDateTimeIso(candidate.startedAt) : "?"}`}
                 />
               ))}
+            </CardContent>
+          </Card>
+
+          {/* Automation (v0.8.0) */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Bot className="size-4 text-muted-foreground" aria-hidden /> Automation
+                <Badge variant={data.automation.enabled ? (data.automation.paused ? "warning" : "success") : "muted"} className="ml-auto text-[10px]">
+                  {data.automation.paused ? "PAUSED" : data.automation.enabled ? "ENABLED" : "DISABLED"}
+                </Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <StatusRow
+                label="Scheduler"
+                ok={data.automation.enabled && !data.automation.paused ? true : null}
+                unknown={!data.automation.enabled}
+                detail={data.automation.lastTickAt ? `last tick ${formatDateTimeIso(data.automation.lastTickAt)} · window ${data.automation.windowOpen ? "open" : "closed"}` : "no tick yet"}
+              />
+              <StatusRow
+                label="Pilot targets"
+                ok={data.automation.interventionCount > 0 ? false : null}
+                unknown={data.automation.optInCount === 0}
+                detail={`${data.automation.optInCount} opted in · ${data.automation.eligibleCount} eligible · ${data.automation.queuedCount} queued · ${data.automation.cooldownCount} cooling down`}
+              />
+              {data.automation.interventionCount > 0 && (
+                <StatusRow label="Manual intervention required" ok={false} detail={`${data.automation.interventionCount} target(s) need acknowledgement — see Automation page`} />
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Compose registry (v0.8.0) */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Compose registry</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <StatusRow
+                label="Tracked projects"
+                ok={data.projects.stale ? null : true}
+                unknown={data.projects.stale}
+                detail={`${data.projects.count} projects · last poll ${data.projects.lastPollAt ? formatDateTimeIso(data.projects.lastPollAt) : "never"}${data.projects.stale ? " (stale)" : ""}`}
+              />
+              <StatusRow
+                label="Config changes"
+                ok={data.projects.changedConfigs > 0 ? false : true}
+                detail={data.projects.changedConfigs > 0 ? `${data.projects.changedConfigs} project(s) changed — plans invalidated, fresh planning required` : "no unprocessed config changes"}
+              />
+              <StatusRow
+                label="Pipeline-owned"
+                ok={true}
+                detail={`${data.projects.pipelineOwned} project(s) observed read-only (never mutated)`}
+              />
             </CardContent>
           </Card>
 
