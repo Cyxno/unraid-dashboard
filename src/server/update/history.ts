@@ -37,6 +37,12 @@ export interface UpdateHistoryEntry {
   target?: string;
   /** Adapter that executed it (e.g. "helper", "compose"). */
   adapter?: string;
+  /** v0.7.14 remote provenance: where the image came from and whether
+   * digests matched. Absent on older entries. */
+  source?: "registry" | "local";
+  registryDigest?: string | null;
+  digestMatch?: boolean | null;
+  requireRemote?: boolean | null;
 }
 
 const MAX_BYTES = 512 * 1024;
@@ -139,6 +145,15 @@ export async function maybeRecordFromHelper(
     result: (last.result as UpdateHistoryEntry["result"]) ?? "failed",
     rollbackPerformed: last.result === "rolled-back",
     usedLocalImage: Boolean(last.usedLocalImage),
+    scope: "self",
+    ...(last.source || last.registryDigest !== undefined || last.requireRemote !== undefined
+      ? {
+          source: last.source ?? (last.usedLocalImage ? "local" : "registry"),
+          registryDigest: (last as { registryDigest?: string | null }).registryDigest ?? null,
+          digestMatch: (last as { digestMatch?: boolean | null }).digestMatch ?? null,
+          requireRemote: (last as { requireRemote?: boolean }).requireRemote ?? null,
+        }
+      : {}),
     ...(last.error ? { error: String(last.error).slice(0, 300) } : {}),
   };
 

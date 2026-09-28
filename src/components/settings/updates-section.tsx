@@ -20,6 +20,12 @@ import { usePoll } from "@/hooks/use-poll";
 import { usePwa } from "@/components/layout/pwa-provider";
 import { useLive } from "@/components/layout/live-events";
 import { formatDateTimeIso } from "@/lib/utils";
+
+/** Renders a registry digest as sha256:<12 chars> for UI display. */
+function shortDigest(digest: string | null): string | null {
+  if (!digest) return null;
+  return digest.slice(0, 7 + 13);
+}
 import { cn } from "@/lib/utils";
 import type { BuildInfoDto } from "@/lib/api-types";
 
@@ -41,6 +47,9 @@ interface UpdateHistoryEntry {
   rollbackPerformed: boolean;
   usedLocalImage: boolean;
   error?: string;
+  source?: "registry" | "local";
+  registryDigest?: string | null;
+  digestMatch?: boolean | null;
 }
 
 interface UpdateStatusPayload {
@@ -88,6 +97,17 @@ interface UpdateStatusPayload {
   };
   rollbackCandidates: string[];
   updateInProgress: boolean;
+  releaseChain: {
+    ghcrAuthenticated: boolean | null;
+    remotePullAvailable: boolean | null;
+    requireRemote: boolean | null;
+    lastRemotePull: { at: string; to: string; digest: string | null; registryDigest: string | null; digestMatch: boolean | null; source: string } | null;
+    running: { imageId: string | null; repoDigest: string | null };
+    registryDigest: string | null;
+    digestMatch: boolean | null;
+    provenanceBadge: "Registry verified" | "Local build" | "Registry ahead" | "Unknown provenance";
+    bootPersistence: { verifiedAt: string | null; passed: boolean | null; failures: number | null; warnings: number | null };
+  } | null;
 }
 
 const PHASE_SEQUENCE = [
@@ -262,6 +282,69 @@ export function UpdatesSection() {
           </div>
         )}
 
+        {/* Release provenance (v0.7.14): the registry→production chain
+            verdict for the running dashboard release. Digests are shortened;
+            no credential material is ever shown. */}
+        {data?.releaseChain && (
+          <div className="rounded-lg border p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-semibold">Release provenance</p>
+              <Badge
+                variant={
+                  data.releaseChain.provenanceBadge === "Registry verified"
+                    ? "success"
+                    : data.releaseChain.provenanceBadge === "Local build"
+                      ? "muted"
+                      : data.releaseChain.provenanceBadge === "Registry ahead"
+                        ? "warning"
+                        : "secondary"
+                }
+              >
+                {data.releaseChain.provenanceBadge}
+              </Badge>
+            </div>
+            <div className="mt-1.5 grid gap-x-4 gap-y-0.5 text-xs text-muted-foreground sm:grid-cols-2">
+              <span>
+                GHCR:{" "}
+                {data.releaseChain.remotePullAvailable === true ? (
+                  <span className="text-success">authenticated, pulls work</span>
+                ) : data.releaseChain.remotePullAvailable === false ? (
+                  <span className="text-warning">auth required</span>
+                ) : (
+                  "unknown"
+                )}
+                {data.releaseChain.requireRemote ? " · strict remote mode" : ""}
+              </span>
+              <span>
+                Digest match:{" "}
+                {data.releaseChain.digestMatch === null
+                  ? "unknown"
+                  : data.releaseChain.digestMatch
+                    ? <span className="text-success">running == registry</span>
+                    : <span className="text-warning">mismatch</span>}
+              </span>
+              <span className="font-mono">
+                running: {shortDigest(data.releaseChain.running.repoDigest) ?? data.releaseChain.running.imageId?.slice(7, 19) ?? "—"}
+              </span>
+              <span className="font-mono">registry: {shortDigest(data.releaseChain.registryDigest) ?? "—"}</span>
+              {data.releaseChain.lastRemotePull && (
+                <span className="sm:col-span-2">
+                  last remote pull: v{data.releaseChain.lastRemotePull.to} ·{" "}
+                  {formatDateTimeIso(data.releaseChain.lastRemotePull.at)} · source{" "}
+                  {data.releaseChain.lastRemotePull.source}
+                  {data.releaseChain.lastRemotePull.digestMatch === false ? " · DIGEST MISMATCH" : ""}
+                </span>
+              )}
+              <span className="sm:col-span-2">
+                boot persistence:{" "}
+                {data.releaseChain.bootPersistence.verifiedAt
+                  ? `${data.releaseChain.bootPersistence.passed ? "verified" : "FAILED"} at ${formatDateTimeIso(data.releaseChain.bootPersistence.verifiedAt)} (audit script)`
+                  : "not verified yet — run scripts/boot-persistence-audit.sh after a reboot"}
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Status line */}
         <div className="flex flex-wrap items-center gap-2 text-xs">
           {data?.release?.status === "available" && <Badge variant="warning">update available</Badge>}
@@ -421,7 +504,13 @@ export function UpdatesSection() {
                       v{entry.fromVersion} → v{entry.toVersion}
                     </span>
                     {entry.rollbackPerformed && <Badge variant="warning">rollback performed</Badge>}
-                    {entry.usedLocalImage && <Badge variant="muted">local image</Badge>}
+                    {entry.usedLocalImage ? (
+                      <Badge variant="muted">local image</Badge>
+                    ) : entry.source === "registry" ? (
+                      <Badge variant="success">GHCR</Badge>
+                    ) : null}
+                    {entry.digestMatch === true && <Badge variant="success" className="text-[10px]">digest verified</Badge>}
+                    {entry.digestMatch === false && <Badge variant="destructive" className="text-[10px]">digest mismatch</Badge>}
                   </div>
                   <p className="mt-1 text-[11px] text-muted-foreground">
                     {formatDateTimeIso(entry.timestamp)} · {entry.actor} ·{" "}

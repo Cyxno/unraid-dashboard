@@ -61,6 +61,17 @@ interface OperationsStatus {
     rollbackImage: { tag: string | null; imageId: string | null; currentVersion: string | null; localVersions: string[] };
     pilotAutoEnabled: boolean;
   };
+  releaseChain: {
+    ghcrAuthenticated: boolean | null;
+    remotePullAvailable: boolean | null;
+    requireRemote: boolean | null;
+    lastRemotePull: { at: string; to: string; digest: string | null; registryDigest: string | null; digestMatch: boolean | null; source: string } | null;
+    running: { imageId: string | null; repoDigest: string | null };
+    registryDigest: string | null;
+    digestMatch: boolean | null;
+    provenanceBadge: "Registry verified" | "Local build" | "Registry ahead" | "Unknown provenance";
+    bootPersistence: { verifiedAt: string | null; passed: boolean | null; failures: number | null; warnings: number | null };
+  };
   operations: {
     active: { kind: string; target: string | null; phase: string; startedAt: string | null; stale: boolean } | null;
     staleCandidates: Array<{ job: string; phase: string; startedAt: string | null }>;
@@ -109,6 +120,12 @@ function StatusRow({
       </div>
     </div>
   );
+}
+
+/** Digest shortener for UI display: sha256 + first 12 hex chars. */
+function short(digest: string | null | undefined): string {
+  if (!digest) return "—";
+  return digest.slice(0, 7 + 12);
 }
 
 export default function OperationsPage() {
@@ -312,6 +329,82 @@ export default function OperationsPage() {
                     : "none recorded"
                 }
               />
+            </CardContent>
+          </Card>
+
+          {/* Release chain (v0.7.14): tag → CI → GHCR → credential →
+              remote pull → running digest → boot persistence. */}
+          <Card className="md:col-span-2 xl:col-span-1">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <ShieldCheck className="size-4 text-muted-foreground" aria-hidden /> Release chain
+                {data.releaseChain && (
+                  <Badge
+                    variant={
+                      data.releaseChain.provenanceBadge === "Registry verified"
+                        ? "success"
+                        : data.releaseChain.provenanceBadge === "Local build"
+                          ? "muted"
+                          : data.releaseChain.provenanceBadge === "Registry ahead"
+                            ? "warning"
+                            : "secondary"
+                    }
+                    className="ml-auto text-[10px]"
+                  >
+                    {data.releaseChain.provenanceBadge}
+                  </Badge>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              {data.releaseChain && (
+                <>
+                  <StatusRow
+                    label="GHCR credential"
+                    ok={data.releaseChain.remotePullAvailable === true ? true : data.releaseChain.remotePullAvailable === false ? false : null}
+                    unknown={data.releaseChain.remotePullAvailable === null}
+                    detail={
+                      data.releaseChain.remotePullAvailable === true
+                        ? `authenticated${data.releaseChain.requireRemote ? " · strict remote mode" : ""}`
+                        : data.releaseChain.remotePullAvailable === false
+                          ? "login required (scripts/login-ghcr.sh)"
+                          : "unknown — helper offline"
+                    }
+                  />
+                  <StatusRow
+                    label="Digest match (running vs registry)"
+                    ok={data.releaseChain.digestMatch === null ? null : data.releaseChain.digestMatch}
+                    unknown={data.releaseChain.digestMatch === null}
+                    detail={
+                      data.releaseChain.digestMatch === null
+                        ? "not comparable yet (no registry check for the running tag)"
+                        : data.releaseChain.digestMatch
+                          ? `${short(data.releaseChain.running.repoDigest)} == ${short(data.releaseChain.registryDigest)}`
+                          : `${short(data.releaseChain.running.repoDigest)} != ${short(data.releaseChain.registryDigest)}`
+                    }
+                  />
+                  <StatusRow
+                    label="Last remote pull"
+                    ok={data.releaseChain.lastRemotePull?.source === "registry" ? true : data.releaseChain.lastRemotePull ? false : null}
+                    unknown={!data.releaseChain.lastRemotePull}
+                    detail={
+                      data.releaseChain.lastRemotePull
+                        ? `v${data.releaseChain.lastRemotePull.to} · ${formatDateTimeIso(data.releaseChain.lastRemotePull.at)} · source ${data.releaseChain.lastRemotePull.source}${data.releaseChain.lastRemotePull.digestMatch === false ? " · DIGEST MISMATCH" : ""}`
+                        : "none recorded"
+                    }
+                  />
+                  <StatusRow
+                    label="Boot persistence"
+                    ok={data.releaseChain.bootPersistence.passed}
+                    unknown={data.releaseChain.bootPersistence.passed === null}
+                    detail={
+                      data.releaseChain.bootPersistence.verifiedAt
+                        ? `${data.releaseChain.bootPersistence.passed ? "verified" : "FAILED"} ${formatDateTimeIso(data.releaseChain.bootPersistence.verifiedAt)}${data.releaseChain.bootPersistence.warnings ? ` · ${data.releaseChain.bootPersistence.warnings} warning(s)` : ""}`
+                        : "not verified — run scripts/boot-persistence-audit.sh"
+                    }
+                  />
+                </>
+              )}
             </CardContent>
           </Card>
 

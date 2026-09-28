@@ -53,6 +53,7 @@ function helperWithLastUpdate(
     localVersions: ["0.7.0"],
     pullAvailable: false,
     pullAuthRequired: null,
+    requireRemote: null,
   };
 }
 

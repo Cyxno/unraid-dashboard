@@ -94,7 +94,7 @@ describe("v0.7.13 reboot-persistence configuration (dry-run audit)", () => {
     // Mount only when the store exists (no broken mounts).
     assert.match(deploy, /if \[ -f \/boot\/config\/custom\/dashboard\/docker-cred\/config\.json \]/);
     // Default helper image tag tracks the release.
-    assert.match(deploy, /unraid-dashboard-helper:0\.7\.13/);
+    assert.match(deploy, /unraid-dashboard-helper:0\.7\.14/);
     // Helper keeps localhost-only + token requirements.
     assert.match(deploy, /UPDATE_HELPER_TOKEN/);
   });

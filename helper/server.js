@@ -60,7 +60,13 @@ const HEALTH_TIMEOUT_MS = 150_000;
 const VERIFY_TIMEOUT_MS = 30_000;
 const STEP_TIMEOUT_MS = { inspect: 15_000, pull: 300_000, replace: 30_000 };
 
-const HELPER_VERSION = "0.7.13";
+const HELPER_VERSION = "0.7.14";
+
+/** Strict remote mode (v0.7.14): when UPDATE_REQUIRE_REMOTE=true, a
+ * self-update pull failure aborts BEFORE any mutation — the local-image
+ * fallback is forbidden — and the pulled image must carry a registry
+ * RepoDigest. Used to prove the registry→production release chain. */
+const REQUIRE_REMOTE = process.env.UPDATE_REQUIRE_REMOTE === "true";
 
 /** Containers whose update is refused inside a PROJECT update too (v0.7.13):
  * high-risk patterns mirror the dashboard's risk model (databases, auth,
@@ -347,7 +353,8 @@ async function runUpdate(tag, options = {}) {
     envLines = preserved.env.join("\n");
     log("checking", `network=${preserved.network} restart=${preserved.restart} binds=${preserved.binds.length} env=${preserved.env.length}`);
 
-    // Phase: pulling — registry auth comes from the host Docker daemon config.
+    // Phase: pulling — registry auth comes from the mounted Docker
+    // credential store. Strict remote mode forbids the local fallback.
     setPhase("pulling", targetImage);
     let pullFailed = false;
     try {
@@ -360,6 +367,11 @@ async function runUpdate(tag, options = {}) {
         },
       });
     } catch (pullError) {
+      if (REQUIRE_REMOTE) {
+        // Strict remote mode: abort PRE-mutation — never substitute a
+        // possibly stale local image for the registry release.
+        throw new Error(`STRICT_REMOTE: pull failed (${String(pullError.message).slice(0, 140)}) — local fallback forbidden, nothing mutated`);
+      }
       const local = await dockerJson(["image", "inspect", targetImage], STEP_TIMEOUT_MS.inspect).catch(() => null);
       if (!local) {
         // Nothing was mutated yet — fail cleanly.
@@ -369,7 +381,7 @@ async function runUpdate(tag, options = {}) {
       log("pulling", "pull failed — using existing local image");
     }
 
-    // Phase: validating image — pinned repo + sane labels.
+    // Phase: validating image — pinned repo + sane labels + registry digest.
     setPhase("validating", targetImage);
     const imageInspect = await dockerJson(["image", "inspect", targetImage], STEP_TIMEOUT_MS.inspect);
     const labels = imageInspect[0]?.Config?.Labels ?? {};
@@ -379,7 +391,29 @@ async function runUpdate(tag, options = {}) {
     if (imageVersion && imageVersion !== normalizedTag) {
       throw new Error(`image label version ${imageVersion} does not match requested ${normalizedTag}`);
     }
-    log("validating", `version=${imageVersion ?? "unlabeled"} revision=${imageRevision ? String(imageRevision).slice(0, 12) : "n/a"}`);
+    if (REQUIRE_REMOTE && !pullFailed && !replacementDigest) {
+      throw new Error("STRICT_REMOTE: pulled image carries no RepoDigest — cannot prove registry origin, aborting pre-mutation");
+    }
+    // Registry-side index digest (read-only imagetools query with the same
+    // stored credentials as the pull). Best-effort: absent when buildx is
+    // unavailable; MANDATORY match in strict mode.
+    let registryDigest = null;
+    let digestMatch = null;
+    try {
+      const raw = await docker(["buildx", "imagetools", "inspect", targetImage], { timeoutMs: 45_000 });
+      const found = raw.stdout.match(/^Digest:\s*(sha256:[a-f0-9]{64})\s*$/m);
+      if (found) {
+        registryDigest = found[1];
+        digestMatch = replacementDigest === registryDigest;
+        if (REQUIRE_REMOTE && !digestMatch) {
+          throw new Error(`STRICT_REMOTE: registry digest ${registryDigest.slice(0, 25)} != pulled RepoDigest ${String(replacementDigest).slice(0, 25)} — aborting pre-mutation`);
+        }
+      }
+    } catch (digestError) {
+      if (REQUIRE_REMOTE && digestError instanceof Error && digestError.message.startsWith("STRICT_REMOTE")) throw digestError;
+      log("validating", `registry digest unavailable (non-fatal): ${String(digestError.message).slice(0, 100)}`);
+    }
+    log("validating", `version=${imageVersion ?? "unlabeled"} revision=${imageRevision ? String(imageRevision).slice(0, 12) : "n/a"} repoDigest=${replacementDigest ? String(replacementDigest).slice(7, 25) : "none"} registryDigest=${registryDigest ? registryDigest.slice(7, 25) : "n/a"} match=${digestMatch === null ? "n/a" : digestMatch}`);
 
     // Phase: replacing — remove + recreate with preserved configuration.
     setPhase("replacing", targetImage);
@@ -409,6 +443,10 @@ async function runUpdate(tag, options = {}) {
       finishedAt: new Date().toISOString(),
       durationMs: Date.now() - requestedAt,
       digest: replacementDigest, usedLocalImage: pullFailed,
+      source: pullFailed ? "local" : "registry",
+      registryDigest, digestMatch,
+      imageId: imageInspect?.[0]?.Id ?? null,
+      requireRemote: REQUIRE_REMOTE,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1453,6 +1491,8 @@ const server = http.createServer(async (req, res) => {
       pullAvailable: state.pullAvailable,
       /** false = the hourly probe hit an auth wall (GHCR login required). */
       pullAuthRequired: state.pullAvailable === false,
+      /** Strict remote mode active (UPDATE_REQUIRE_REMOTE=true). */
+      requireRemote: REQUIRE_REMOTE,
     });
   }
 

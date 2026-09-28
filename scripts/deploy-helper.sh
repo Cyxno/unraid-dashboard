@@ -19,7 +19,7 @@
 set -eu
 
 NAME="unraid-dashboard-helper"
-IMAGE="${1:-ghcr.io/cyxno/unraid-dashboard-helper:0.7.13}"
+IMAGE="${1:-ghcr.io/cyxno/unraid-dashboard-helper:0.7.14}"
 
 if [ -z "${UPDATE_HELPER_TOKEN:-}" ]; then
   echo "ERROR: UPDATE_HELPER_TOKEN must be provided (openssl rand -hex 32)." >&2
@@ -101,6 +101,12 @@ fi
 # gate refuses first).
 PIPELINE_OWNED="${PIPELINE_OWNED_PROJECTS:-tornscope}"
 
+# Strict remote mode (v0.7.14): when UPDATE_REQUIRE_REMOTE=true the helper's
+# self-update forbids the local-image fallback, requires a pulled RepoDigest
+# and requires it to equal the registry index digest — used to prove the
+# registry→production release chain. Opt-in per deploy.
+REQUIRE_REMOTE="${UPDATE_REQUIRE_REMOTE:-false}"
+
 docker run -d \
   --name "$NAME" \
   --network host \
@@ -113,6 +119,7 @@ docker run -d \
   -e DASHBOARD_AUTH_SECRET="$DASHBOARD_AUTH_SECRET" \
   -e COMPOSE_ALLOWED_ROOTS="$COMPOSE_ROOTS" \
   -e PIPELINE_OWNED_PROJECTS="$PIPELINE_OWNED" \
+  -e UPDATE_REQUIRE_REMOTE="$REQUIRE_REMOTE" \
   -e DOCKER_STORAGE_MODE="$DOCKER_STORAGE_MODE" \
   -e DOCKER_STORAGE_SOURCE="$DOCKER_STORAGE_SOURCE" \
   -e STATE_DIR=/helper-state \

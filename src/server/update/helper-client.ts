@@ -36,6 +36,12 @@ export interface UpdateHelperStatus {
     digest?: string | null;
     usedLocalImage?: boolean;
     error?: string;
+    /** v0.7.14 provenance fields (strict remote mode). */
+    source?: "registry" | "local";
+    registryDigest?: string | null;
+    digestMatch?: boolean | null;
+    imageId?: string | null;
+    requireRemote?: boolean;
   } | null;
   currentImage: string | null;
   currentVersion: string | null;
@@ -45,6 +51,8 @@ export interface UpdateHelperStatus {
   pullAvailable: boolean | null;
   /** Helper's hourly probe hit an auth wall (GHCR login required). */
   pullAuthRequired: boolean | null;
+  /** Strict remote mode active (UPDATE_REQUIRE_REMOTE=true). */
+  requireRemote: boolean | null;
 }
 
 const UPDATE_PHASES = new Set([
@@ -97,6 +105,7 @@ export async function getHelperStatus(): Promise<UpdateHelperStatus> {
       localVersions: [],
       pullAvailable: null,
       pullAuthRequired: null,
+      requireRemote: null,
     };
   }
   try {
@@ -128,6 +137,7 @@ export async function getHelperStatus(): Promise<UpdateHelperStatus> {
       localVersions: body.localVersions ?? [],
       pullAvailable: body.pullAvailable ?? null,
       pullAuthRequired: body.pullAuthRequired ?? null,
+      requireRemote: body.requireRemote ?? null,
     };
   } catch (error) {
     return unavailable(error instanceof Error ? error.message : "helper unreachable", config.url);
@@ -155,6 +165,7 @@ function unavailable(reason: string, url: string): UpdateHelperStatus {
     localVersions: [],
     pullAvailable: null,
     pullAuthRequired: null,
+    requireRemote: null,
   };
 }
 

@@ -8,6 +8,8 @@ import { readUpdateHistory, readContainerHistory, type UpdateHistoryEntry } from
 import { listBackups } from "@/server/resilience/backup";
 import { getBuildInfo } from "@/server/version";
 import { pilotAutoEnabled } from "@/server/update/eligibility";
+import { buildReleaseChain, readBootMarker, type ReleaseChain } from "@/server/update/release-chain";
+import { enrichedOverview } from "@/server/docker/updates";
 
 /**
  * Operations status (v0.7.13): the aggregate behind the read-only
@@ -53,6 +55,8 @@ export interface OperationsStatus {
     rollbackImage: { tag: string | null; imageId: string | null; currentVersion: string | null; localVersions: string[] };
     pilotAutoEnabled: boolean;
   };
+  /** v0.7.14: tag → CI → GHCR → credential → remote pull → running digest. */
+  releaseChain: ReleaseChain;
   operations: {
     active: { kind: string; target: string | null; phase: string; startedAt: string | null; stale: boolean } | null;
     staleCandidates: Array<{ job: string; phase: string; startedAt: string | null }>;
@@ -78,13 +82,15 @@ function latestRollbackOf(self: UpdateHistoryEntry[], containers: UpdateHistoryE
 
 export async function getOperationsStatus(): Promise<OperationsStatus> {
   const generatedAt = new Date().toISOString();
-  const [diagnostics, helper, backups, history, containerHistory, release] = await Promise.all([
+  const [diagnostics, helper, backups, history, containerHistory, release, enriched, bootMarker] = await Promise.all([
     getDiagnostics().catch(() => null as DiagnosticsPayload | null),
     getHelperStatus().catch(() => null),
     listBackups().catch(() => []),
     readUpdateHistory().catch(() => [] as UpdateHistoryEntry[]),
     readContainerHistory().catch(() => [] as UpdateHistoryEntry[]),
     checkForUpdate().catch(() => null),
+    enrichedOverview().catch(() => null),
+    readBootMarker().catch(() => null),
   ]);
   const env = getEnvSafe();
   const build = getBuildInfo();
@@ -214,6 +220,12 @@ export async function getOperationsStatus(): Promise<OperationsStatus> {
       },
       pilotAutoEnabled: pilotAutoEnabled(),
     },
+    releaseChain: buildReleaseChain({
+      helper,
+      appContainer: enriched?.containers.find((entry) => entry.name === "unraid-dashboard") ?? null,
+      history,
+      bootMarker,
+    }),
     operations: { active, staleCandidates },
   };
 }

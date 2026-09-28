@@ -4,6 +4,8 @@ import { getHelperStatus, isUpdatePhaseActive, compareSemver } from "@/server/up
 import { checkForUpdate } from "@/server/actions/update-check";
 import { getBuildInfo } from "@/server/version";
 import { readUpdateHistory, maybeRecordFromHelper, validatedVersions } from "@/server/update/history";
+import { buildReleaseChain, readBootMarker } from "@/server/update/release-chain";
+import { enrichedOverview } from "@/server/docker/updates";
 
 export const dynamic = "force-dynamic";
 
@@ -84,6 +86,13 @@ export async function GET(request: NextRequest) {
     helper.reachable ? helper.localVersions.includes(tag) : false,
   );
 
+  /* Release-chain verdict (v0.7.14): tag → CI → GHCR → credential →
+   * remote pull → running digest, plus the boot-persistence marker. */
+  const enriched = await enrichedOverview().catch(() => null);
+  const appContainer = enriched?.containers.find((entry) => entry.name === "unraid-dashboard") ?? null;
+  const bootMarker = await readBootMarker().catch(() => null);
+  const releaseChain = buildReleaseChain({ helper, appContainer, history, bootMarker });
+
   return NextResponse.json(
     {
       build,
@@ -106,6 +115,7 @@ export async function GET(request: NextRequest) {
         currentImageId: helper.currentImageId,
         localVersions: helper.localVersions,
         pullAvailable: helper.pullAvailable,
+        requireRemote: helper.requireRemote,
         /** In-app update button availability (token configured server-side). */
         requestEnabled:
           helper.configured &&
@@ -114,6 +124,7 @@ export async function GET(request: NextRequest) {
           Boolean(effectiveRelease?.latestTag),
       },
       consistency,
+      releaseChain,
       updateInProgress: isUpdatePhaseActive(helper.phase),
       rollbackCandidates,
       history: history.slice(0, 10),
