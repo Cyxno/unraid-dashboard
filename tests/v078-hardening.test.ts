@@ -136,7 +136,7 @@ describe("v0.7.8 recreate-engine coverage", () => {
       "-v pilot-vol:/var/lib/pilot:z",
       "--tmpfs /run:rw,size=64m",
       "--tmpfs /runFast",
-      "--entrypoint [\"/bin/sh\",\"-c\"]",
+      "--entrypoint /bin/sh",
       "-w /www",
       "--user 1000:1000",
       "--hostname pilot-host",
@@ -182,7 +182,9 @@ describe("v0.7.8 recreate-engine coverage", () => {
   it("cmd wordt als post-image args teruggegeven", () => {
     const snap: Snap = inspectToSnapshot(BASE_INSPECT);
     const { cmd } = snapshotToRunArgs(snap, "busybox:latest");
-    assert.deepEqual(cmd, ["httpd", "-f"]);
+    // docker semantics: full command = entrypoint + cmd, so the entrypoint
+    // tail (["-c"]) is prepended to the post-image cmd.
+    assert.deepEqual(cmd, ["-c", "httpd", "-f"]);
   });
 
   it("unsupported detectie: multi-network, GPU, container:-mode, static-IP-op-bridge, custom-EXPOSE, volumes-from", () => {
@@ -264,7 +266,7 @@ describe("v0.7.8 mutable-latest rollback-identiteit", () => {
     // argument aan dockerRunWithEnv gegeven (dus nooit de actuele
     // betekenis van :latest).
     assert.ok(!args.includes("busybox:latest"));
-    assert.deepEqual(cmd, ["httpd", "-f"]);
+    assert.deepEqual(cmd, ["-c", "httpd", "-f"]);
   });
 });
 

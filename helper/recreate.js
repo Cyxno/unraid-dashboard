@@ -205,7 +205,17 @@ function snapshotToRunArgs(snap, imageRef) {
   // Env is bewust NIET in de argv: het gaat uitsluitend via het 0600
   // --env-file (zie dockerRunWithEnv) zodat secrets nooit in process-
   // lijsten of logs belanden.
-  if (snap.entrypoint) push("--entrypoint", Array.isArray(snap.entrypoint) ? JSON.stringify(snap.entrypoint) : snap.entrypoint);
+  // docker's --entrypoint takes the bare executable path. A JSON-encoded
+  // array here would be executed LITERALLY (exit 127, as caught live by the
+  // v0.8.0 disposable-container test).
+  if (snap.entrypoint) {
+    const entrypoint = Array.isArray(snap.entrypoint) ? (snap.entrypoint[0] ?? null) : snap.entrypoint;
+    if (entrypoint) push("--entrypoint", entrypoint);
+    // Additional entrypoint elements are prepended to cmd (docker semantics).
+    if (Array.isArray(snap.entrypoint) && snap.entrypoint.length > 1) {
+      snap.cmd = [...snap.entrypoint.slice(1), ...(Array.isArray(snap.cmd) ? snap.cmd : [])];
+    }
+  }
   if (snap.workingDir) push("-w", snap.workingDir);
   if (snap.user) push("--user", snap.user);
   if (snap.hostname) push("--hostname", snap.hostname);
