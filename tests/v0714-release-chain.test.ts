@@ -49,7 +49,7 @@ function helper(overrides: Partial<UpdateHelperStatus> = {}): UpdateHelperStatus
   };
 }
 
-function container(overrides: Partial<ManagedContainer["provenance"]> = {}): ManagedContainer {
+function container(provenanceOverrides: Partial<ManagedContainer["provenance"]> = {}, overrides: Partial<ManagedContainer> = {}): ManagedContainer {
   return {
     id: "abc",
     name: "unraid-dashboard",
@@ -76,7 +76,7 @@ function container(overrides: Partial<ManagedContainer["provenance"]> = {}): Man
       registry_digest: "sha256:digest-running",
       locally_built: false,
       note: null,
-      ...overrides,
+      ...provenanceOverrides,
     },
     rollback: { ready: true, level: "ready", snapshot_present: true, image_present: true, last_known_good: null, validated_at: null },
     autoEligible: false,
@@ -84,6 +84,7 @@ function container(overrides: Partial<ManagedContainer["provenance"]> = {}): Man
     health: "healthy",
     last_checked: "2026-09-28T18:00:00Z",
     last_updated: null,
+    ...overrides,
   };
 }
 
@@ -164,6 +165,68 @@ describe("v0.7.14 release-chain verdict", () => {
     assert.equal(chain.remotePullAvailable, null);
     assert.equal(chain.digestMatch, true); // still comparable from inventory+registry cache
     assert.equal(chain.bootPersistence.passed, null);
+  });
+
+  it("strict remote pull proves the badge even when the app-side HEAD is anonymous", () => {
+    // Private package: the app's anonymous HEAD yields auth_required, so
+    // provenance alone can never say "verified". The helper's strict pull
+    // of the RUNNING tag with digestMatch=true is authoritative.
+    const chain = buildReleaseChain({
+      helper: helper({
+        lastUpdate: {
+          from: "ghcr.io/cyxno/unraid-dashboard:0.7.13",
+          to: "ghcr.io/cyxno/unraid-dashboard:0.7.14",
+          result: "success",
+          startedAt: "2026-09-28T18:52:37Z",
+          finishedAt: "2026-09-28T18:52:49Z",
+          durationMs: 12_000,
+          digest: "sha256:digest-running",
+          usedLocalImage: false,
+          source: "registry",
+          registryDigest: "sha256:digest-running",
+          digestMatch: true,
+          requireRemote: true,
+        },
+      }),
+      appContainer: container(
+        { state: "auth_required", locally_built: false, registry_digest: null },
+        { image: "ghcr.io/cyxno/unraid-dashboard:0.7.14", tag: "0.7.14" },
+      ),
+      history: [],
+      bootMarker: null,
+    });
+    assert.equal(chain.provenanceBadge, "Registry verified");
+    assert.equal(chain.digestMatch, true);
+    assert.equal(chain.registryDigest, "sha256:digest-running");
+  });
+
+  it("a strict pull of a DIFFERENT version does not verify the running tag", () => {
+    const chain = buildReleaseChain({
+      helper: helper({
+        lastUpdate: {
+          from: "ghcr.io/cyxno/unraid-dashboard:0.7.13",
+          to: "ghcr.io/cyxno/unraid-dashboard:0.7.15",
+          result: "success",
+          startedAt: "2026-09-28T18:52:37Z",
+          finishedAt: "2026-09-28T18:52:49Z",
+          durationMs: 12_000,
+          digest: "sha256:other",
+          usedLocalImage: false,
+          source: "registry",
+          registryDigest: "sha256:other",
+          digestMatch: true,
+          requireRemote: true,
+        },
+      }),
+      appContainer: container(
+        { state: "auth_required", registry_digest: null },
+        { image: "ghcr.io/cyxno/unraid-dashboard:0.7.14", tag: "0.7.14" },
+      ),
+      history: [],
+      bootMarker: null,
+    });
+    assert.equal(chain.provenanceBadge, "Unknown provenance");
+    assert.equal(chain.digestMatch, null);
   });
 
   it("history fallback supplies last remote pull when the helper was replaced", () => {

@@ -118,7 +118,29 @@ export function buildReleaseChain(input: {
 
   const provenance = appContainer?.provenance;
   const runningRepoDigest = provenance?.local_digest ?? null;
-  const registryDigest = provenance?.registry_digest ?? null;
+
+  // The app's own registry HEAD is anonymous by design (no credential in
+  // app env), so for a PRIVATE package it can never see the manifest. The
+  // helper's strict remote pull is the stronger signal: when it pulled the
+  // RUNNING version from the registry with in-machine digest equality,
+  // that registry digest is authoritative for the running tag.
+  const strictAppliesToRunning =
+    lastRemotePull !== null &&
+    lastRemotePull.source === "registry" &&
+    lastRemotePull.digestMatch === true &&
+    appContainer?.tag != null &&
+    lastRemotePull.to === appContainer.tag;
+  const registryDigest =
+    provenance?.registry_digest ?? (strictAppliesToRunning ? lastRemotePull.registryDigest : null);
+  const digestMatch =
+    runningRepoDigest && registryDigest ? runningRepoDigest === registryDigest : null;
+
+  let provenanceBadge: ProvenanceBadge;
+  if (digestMatch === true || provenance?.state === "synced") {
+    provenanceBadge = "Registry verified";
+  } else {
+    provenanceBadge = provenance ? badgeFromProvenance(provenance.state) : "Unknown provenance";
+  }
 
   return {
     ghcrAuthenticated: pullState === null ? null : !helper?.pullAuthRequired,
@@ -130,9 +152,8 @@ export function buildReleaseChain(input: {
       repoDigest: runningRepoDigest,
     },
     registryDigest,
-    digestMatch:
-      runningRepoDigest && registryDigest ? runningRepoDigest === registryDigest : null,
-    provenanceBadge: provenance ? badgeFromProvenance(provenance.state) : "Unknown provenance",
+    digestMatch,
+    provenanceBadge,
     bootPersistence: {
       verifiedAt: bootMarker?.verifiedAt ?? null,
       passed: typeof bootMarker?.passed === "boolean" ? bootMarker.passed : null,
