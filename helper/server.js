@@ -201,9 +201,9 @@ function sleep(ms) {
 
 /* ---- docker invocation (argv arrays only, never a shell string) ----------- */
 
-function docker(args, { timeoutMs = 30_000, onStdout } = {}) {
+function docker(args, { timeoutMs = 30_000, onStdout, env } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn("docker", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("docker", args, { stdio: ["ignore", "pipe", "pipe"], ...(env ? { env } : {}) });
     let stdout = "";
     let stderr = "";
     const timer = setTimeout(() => {
@@ -387,7 +387,10 @@ async function runUpdate(tag, options = {}) {
     const labels = imageInspect[0]?.Config?.Labels ?? {};
     const imageVersion = labels["org.opencontainers.image.version"];
     const imageRevision = labels["org.opencontainers.image.revision"] ?? null;
-    replacementDigest = imageInspect[0]?.RepoDigests?.[0] ?? null;
+    // RepoDigests entries are "repo@sha256:..."; the comparable value is the
+    // digest after the LAST "@".
+    const repoDigestRef = imageInspect[0]?.RepoDigests?.[0] ?? null;
+    replacementDigest = repoDigestRef ? repoDigestRef.slice(repoDigestRef.lastIndexOf("@") + 1) : null;
     if (imageVersion && imageVersion !== normalizedTag) {
       throw new Error(`image label version ${imageVersion} does not match requested ${normalizedTag}`);
     }
@@ -395,12 +398,16 @@ async function runUpdate(tag, options = {}) {
       throw new Error("STRICT_REMOTE: pulled image carries no RepoDigest — cannot prove registry origin, aborting pre-mutation");
     }
     // Registry-side index digest (read-only imagetools query with the same
-    // stored credentials as the pull). Best-effort: absent when buildx is
-    // unavailable; MANDATORY match in strict mode.
+    // stored credentials as the pull). BUILDX_CONFIG points somewhere
+    // writable because /root/.docker is a READ-ONLY credential mount.
+    // Best-effort when buildx is unavailable; MANDATORY match in strict mode.
     let registryDigest = null;
     let digestMatch = null;
     try {
-      const raw = await docker(["buildx", "imagetools", "inspect", targetImage], { timeoutMs: 45_000 });
+      const raw = await docker(["buildx", "imagetools", "inspect", targetImage], {
+        timeoutMs: 45_000,
+        env: { ...process.env, BUILDX_CONFIG: process.env.BUILDX_CONFIG || "/tmp/buildx" },
+      });
       const found = raw.stdout.match(/^Digest:\s*(sha256:[a-f0-9]{64})\s*$/m);
       if (found) {
         registryDigest = found[1];
@@ -413,7 +420,7 @@ async function runUpdate(tag, options = {}) {
       if (REQUIRE_REMOTE && digestError instanceof Error && digestError.message.startsWith("STRICT_REMOTE")) throw digestError;
       log("validating", `registry digest unavailable (non-fatal): ${String(digestError.message).slice(0, 100)}`);
     }
-    log("validating", `version=${imageVersion ?? "unlabeled"} revision=${imageRevision ? String(imageRevision).slice(0, 12) : "n/a"} repoDigest=${replacementDigest ? String(replacementDigest).slice(7, 25) : "none"} registryDigest=${registryDigest ? registryDigest.slice(7, 25) : "n/a"} match=${digestMatch === null ? "n/a" : digestMatch}`);
+    log("validating", `version=${imageVersion ?? "unlabeled"} revision=${imageRevision ? String(imageRevision).slice(0, 12) : "n/a"} repoDigest=${replacementDigest ? replacementDigest.slice(7, 19) : "none"} registryDigest=${registryDigest ? registryDigest.slice(7, 19) : "n/a"} match=${digestMatch === null ? "n/a" : digestMatch}`);
 
     // Phase: replacing — remove + recreate with preserved configuration.
     setPhase("replacing", targetImage);
