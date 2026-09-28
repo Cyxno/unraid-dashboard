@@ -319,7 +319,7 @@ export default function OperationsPage() {
               <StatusRow
                 label="Pilot auto-update"
                 ok={true}
-                detail={data.updates.pilotAutoEnabled ? "ENABLED (pilot allowlist)" : "disabled by design in v0.7.13"}
+                detail={data.updates.pilotAutoEnabled ? "ENABLED (pilot allowlist)" : "disabled by design (opt-in only)"}
               />
             </CardContent>
           </Card>
