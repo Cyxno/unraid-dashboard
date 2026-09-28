@@ -118,7 +118,7 @@ export function Header({ overview, onMenuClick }: HeaderProps) {
         {storage?.data && (
           <Badge
             variant={storage.data.state === "STARTED" ? "muted" : "warning"}
-            className="hidden md:inline-flex"
+            className="hidden lg:inline-flex"
           >
             Array {humanState(storage.data.state)}
           </Badge>
