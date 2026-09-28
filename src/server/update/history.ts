@@ -43,7 +43,7 @@ const MAX_BYTES = 512 * 1024;
 const KEEP_ROTATED = 2;
 
 const globalStore = globalThis as unknown as {
-  __dashboardUpdateHistoryQueue?: Promise<void>;
+  __dashboardUpdateHistoryQueue?: Promise<boolean | void>;
   /** Pending request-side actor handoff: {tag, actor, requestedAt}. */
   __dashboardUpdatePending?: { tag: string; actor: string; requestedAt: number } | null;
 };
@@ -95,11 +95,6 @@ export async function maybeRecordFromHelper(
   const last = helper.lastUpdate;
   if (!last || !last.finishedAt || !last.to || !last.startedAt) return { recorded: false };
 
-  const existing = await readUpdateHistory();
-  if (existing.some((entry) => entry.startedAt === last.startedAt && entry.toVersion === versionFromRef(last.to))) {
-    return { recorded: false };
-  }
-
   const fromVersion = versionFromRef(last.from);
   const toVersion = versionFromRef(last.to);
 
@@ -147,15 +142,25 @@ export async function maybeRecordFromHelper(
     ...(last.error ? { error: String(last.error).slice(0, 300) } : {}),
   };
 
+  // Dedupe + append must happen inside the SAME queued step: two concurrent
+  // status polls would otherwise both pass the exists-check (read before
+  // either write) and double-record the same machine run.
   const previous = globalStore.__dashboardUpdateHistoryQueue ?? Promise.resolve();
-  globalStore.__dashboardUpdateHistoryQueue = previous
-    .then(() => appendRotated(entry))
-    .catch((error) => {
-      console.error("[update-history] write failed:", error instanceof Error ? error.message : error);
-    });
-  await globalStore.__dashboardUpdateHistoryQueue;
-  if (actor !== "helper-machine") globalStore.__dashboardUpdatePending = null;
-  return { recorded: true };
+  const queued: Promise<boolean> = previous.then(async () => {
+    const existing = await readUpdateHistory();
+    if (existing.some((existingEntry) => existingEntry.startedAt === last.startedAt && existingEntry.toVersion === toVersion)) {
+      return false;
+    }
+    await appendRotated(entry);
+    return true;
+  });
+  globalStore.__dashboardUpdateHistoryQueue = queued.catch((error) => {
+    console.error("[update-history] write failed:", error instanceof Error ? error.message : error);
+    return false;
+  });
+  const recorded = await globalStore.__dashboardUpdateHistoryQueue;
+  if (recorded && actor !== "helper-machine") globalStore.__dashboardUpdatePending = null;
+  return { recorded: Boolean(recorded) };
 }
 
 /** Records an entry with a known actor (request-side hook). */
