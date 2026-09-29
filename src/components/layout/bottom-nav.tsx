@@ -65,7 +65,7 @@ export function BottomNav() {
         <div
           role="dialog"
           aria-label="More pages"
-          className="fixed inset-x-0 bottom-0 z-[61] max-h-[100dvh] overflow-y-auto overscroll-contain rounded-t-2xl border-t bg-card pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-2 shadow-2xl"
+          className="fixed inset-x-0 bottom-0 z-[61] max-h-[100dvh] overflow-y-auto overscroll-contain rounded-t-2xl border-t bg-card pb-[calc(env(safe-area-inset-bottom)+4.25rem)] pt-2 shadow-2xl"
         >
           <div className="mx-auto flex max-w-md items-center justify-between px-4 pb-1">
             <p className="text-xs uppercase tracking-wider text-muted-foreground">All pages</p>

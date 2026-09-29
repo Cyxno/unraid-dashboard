@@ -54,13 +54,17 @@ const OVERLAYS = [
     name: "nav-drawer",
     open: 'button[aria-label="Open navigation"]',
     dialog: 'aside[role="dialog"][aria-label="Navigation"]',
+    // Full-viewport scrim: its center sits beneath the drawer, so close
+    // at an explicit clear point instead.
     close: 'button[aria-label="Close navigation"]',
+    closeAt: { x: 360, y: 300 },
   },
   {
     name: "more-sheet",
     open: 'button[aria-label="More pages"]',
     dialog: 'div[role="dialog"][aria-label="More pages"]',
     close: 'div[role="dialog"][aria-label="More pages"] button[aria-label="Close"]',
+    closeAt: null,
   },
 ];
 
@@ -227,7 +231,8 @@ async function captureOverlays(browser) {
       const shot = await page.screenshot();
       writeFileSync(path.join(CAPTURE_DIR, `${label}.png`), shot);
 
-      await page.click(overlay.close);
+      // Close at an explicit clear point for full-viewport scrims.
+      await page.click(overlay.close, overlay.closeAt ? { position: overlay.closeAt } : {});
       const gone = await page.waitForSelector(overlay.dialog, { state: "detached", timeout: 5_000 }).then(() => true).catch(() => false);
       if (!gone) {
         failures += 1;

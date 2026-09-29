@@ -410,37 +410,40 @@ export default function DockerPage() {
           />
         </label>
 
+        {/* Summary chips (v0.9.2): click to filter — own row on phones so
+            flex-shrink inside the scrolling tab strip can never squeeze
+            them into a vertical stack (v0.9.5). */}
+        {(() => {
+          const counts = {
+            running: containers.filter((c) => c.state === "RUNNING").length,
+            stopped: containers.filter((c) => c.state === "EXITED").length,
+            problems: containers.filter((c) => c.state !== "RUNNING" || c.health === "unhealthy").length,
+            update: containers.filter((c) => c.updateAvailable).length,
+          };
+          const chip = (key: StatusFilter, label: string, count: number) => (
+            <Button
+              key={key}
+              size="sm"
+              variant={filter === key ? "secondary" : "ghost"}
+              aria-pressed={filter === key}
+              onClick={() => setFilter(filter === key ? "all" : key)}
+              className="h-7 gap-1.5 px-2 text-[11px]"
+            >
+              {label}
+              <span className="tnum rounded bg-muted px-1 text-[10px] text-muted-foreground">{count}</span>
+            </Button>
+          );
+          return (
+            <div className="-mb-1 flex flex-wrap items-center gap-1.5">
+              {chip("running", "Running", counts.running)}
+              {chip("problems", "Problems", counts.problems)}
+              {chip("update", "Updates", counts.update)}
+              {chip("stopped", "Stopped", counts.stopped)}
+            </div>
+          );
+        })()}
+
         <div role="group" aria-label="Filter containers" className="flex items-center gap-1 overflow-x-auto pb-1 md:flex-wrap md:pb-0">
-          {/* Summary chips (v0.9.2): click to filter — running/problems/updates/stopped. */}
-          {(() => {
-            const counts = {
-              running: containers.filter((c) => c.state === "RUNNING").length,
-              stopped: containers.filter((c) => c.state === "EXITED").length,
-              problems: containers.filter((c) => c.state !== "RUNNING" || c.health === "unhealthy").length,
-              update: containers.filter((c) => c.updateAvailable).length,
-            };
-            const chip = (key: StatusFilter, label: string, count: number) => (
-              <Button
-                key={key}
-                size="sm"
-                variant={filter === key ? "secondary" : "ghost"}
-                aria-pressed={filter === key}
-                onClick={() => setFilter(filter === key ? "all" : key)}
-                className="h-7 gap-1.5 px-2 text-[11px]"
-              >
-                {label}
-                <span className="tnum rounded bg-muted px-1 text-[10px] text-muted-foreground">{count}</span>
-              </Button>
-            );
-            return (
-              <div className="col-span-full -mb-1 flex flex-wrap items-center gap-1.5">
-                {chip("running", "Running", counts.running)}
-                {chip("problems", "Problems", counts.problems)}
-                {chip("update", "Updates", counts.update)}
-                {chip("stopped", "Stopped", counts.stopped)}
-              </div>
-            );
-          })()}
           <Filter className="size-3.5 text-muted-foreground" aria-hidden="true" />
           {(
             [
