@@ -21,6 +21,7 @@ export interface ProjectRegistryEntry {
   lastSeen: string;
   lastChanged: string | null;
   configChanged: boolean;
+  pipelineOwned: boolean;
   /** Which observed hash the current plan was derived from. */
   planHashBasis: string | null;
 }
@@ -93,6 +94,7 @@ export async function pollProjectRegistry(force = false): Promise<RegistryFile> 
           lastSeen: now,
           lastChanged: existing?.lastChanged ?? null,
           configChanged: false,
+          pipelineOwned: true,
           planHashBasis: null,
         };
         continue;
@@ -104,6 +106,7 @@ export async function pollProjectRegistry(force = false): Promise<RegistryFile> 
         lastSeen: now,
         lastChanged: existing?.lastChanged ?? null,
         configChanged: existing?.configChanged ?? false,
+        pipelineOwned: false,
         planHashBasis: existing?.planHashBasis ?? null,
       };
       if (existing?.hash && hashResult?.hash && existing.hash !== hashResult.hash) {
@@ -149,6 +152,18 @@ export interface ProjectRegistryView {
   >;
   lastPollAt: string | null;
   stale: boolean;
+}
+
+/** Memory-only registry view (no poll, no inventory sweep). */
+export async function registryMemoryView(): Promise<ProjectRegistryView> {
+  const registry = await loadRegistry();
+  return {
+    projects: Object.values(registry.projects)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((entry) => ({ ...entry })),
+    lastPollAt: registry.lastPollAt,
+    stale: !registry.lastPollAt || Date.now() - Date.parse(registry.lastPollAt) > 3 * POLL_MS,
+  };
 }
 
 /** Registry view for the UI/Operations: last poll + per-project status. */

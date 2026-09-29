@@ -147,10 +147,9 @@ async function serveRegistryView(): Promise<ProjectRegistryView> {
   const registry = await registryModule.loadRegistry();
   const expired = !registry.lastPollAt || Date.now() - Date.parse(registry.lastPollAt) > 15 * 60_000;
   if (expired) {
-    const { pollProjectRegistry } = await import("./project-registry");
-    void pollProjectRegistry().catch(() => {});
+    void registryModule.pollProjectRegistry().catch(() => {});
   }
-  return projectRegistryView();
+  return registryModule.registryMemoryView();
 }
 /* ---- operator actions (route boundaries validate + audit) ---------------- */
 
