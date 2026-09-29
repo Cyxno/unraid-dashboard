@@ -129,7 +129,7 @@ function StatusRow({
   unknown?: boolean;
 }) {
   const Icon = ok === null || unknown ? CircleDashed : ok ? CheckCircle2 : XCircle;
-  const tone = ok === null || unknown ? "text-muted-foreground" : ok ? "text-emerald-500" : "text-destructive";
+  const tone = ok === null || unknown ? "text-muted-foreground" : ok ? "text-success" : "text-danger";
   return (
     <div className="flex items-start justify-between gap-3 py-1.5">
       <div className="flex min-w-0 items-start gap-2">
@@ -197,7 +197,7 @@ export default function OperationsPage() {
       {ghcrBanner && (
         <Card className="mb-4 border-amber-500/40 bg-amber-500/5">
           <CardContent className="flex items-start gap-3 py-3">
-            <ShieldAlert className="mt-0.5 size-5 shrink-0 text-amber-500" aria-hidden />
+            <ShieldAlert className="mt-0.5 size-5 shrink-0 text-warning" aria-hidden />
             <div className="min-w-0">
               <div className="text-sm font-semibold">GHCR login required</div>
               <p className="mt-0.5 break-words text-sm text-muted-foreground">
@@ -434,7 +434,7 @@ export default function OperationsPage() {
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-base">
                 {data.operations.active?.stale ? (
-                  <AlertTriangle className="size-4 text-amber-500" aria-hidden />
+                  <AlertTriangle className="size-4 text-warning" aria-hidden />
                 ) : (
                   <Activity className="size-4 text-muted-foreground" aria-hidden />
                 )}
@@ -553,14 +553,14 @@ export default function OperationsPage() {
               </div>
 
               {actionError && (
-                <p className="mt-3 break-words text-sm text-destructive" role="alert">
+                <p className="mt-3 break-words text-sm text-danger" role="alert">
                   {actionError}
                 </p>
               )}
               {lastResult?.ok && (
                 <div className="mt-3 rounded-md border bg-muted/40 p-3 text-sm">
                   <div className="flex items-center gap-2 font-medium">
-                    <CheckCircle2 className="size-4 text-emerald-500" aria-hidden />
+                    <CheckCircle2 className="size-4 text-success" aria-hidden />
                     {lastResult.action} completed
                   </div>
                   {lastResult.result?.file && (

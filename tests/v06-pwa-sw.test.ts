@@ -64,8 +64,9 @@ describe("v06 service worker safety", () => {
 describe("v06 web app manifest", () => {
   it("is valid JSON with the required PWA fields", () => {
     const manifest = JSON.parse(manifestSource) as Record<string, unknown>;
-    assert.equal(manifest.name, "Unraid Dashboard");
-    assert.equal(manifest.short_name, "Unraid");
+    // v0.9.0 product identity: Beacon.
+    assert.equal(manifest.name, "Beacon — Unraid Server Console");
+    assert.equal(manifest.short_name, "Beacon");
     assert.equal(manifest.display, "standalone");
     assert.equal(manifest.start_url, "/");
     assert.equal(manifest.scope, "/");

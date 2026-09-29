@@ -1,15 +1,18 @@
 {
-  "name": "Unraid Dashboard",
-  "short_name": "Unraid",
-  "description": "Self-hosted dashboard for an Unraid server.",
+  "name": "Beacon — Unraid Server Console",
+  "short_name": "Beacon",
+  "description": "Beacon — self-hosted control center for an Unraid server.",
   "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#1c1c22",
-  "theme_color": "#1c1c22",
-  "categories": ["utilities", "productivity"],
+  "background_color": "#161619",
+  "theme_color": "#161619",
+  "categories": [
+    "utilities",
+    "productivity"
+  ],
   "icons": [
     {
       "src": "/icons/icon-192.png",
@@ -40,12 +43,22 @@
     {
       "name": "Docker",
       "url": "/docker",
-      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
     },
     {
       "name": "NOC wallboard",
       "url": "/noc",
-      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
     }
   ]
 }

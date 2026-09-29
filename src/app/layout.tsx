@@ -2,18 +2,19 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
 import { AppShell } from "@/components/layout/app-shell";
+import { AppearanceProvider, APPEARANCE_PREPAINT_SCRIPT } from "@/lib/appearance";
 
 export const metadata: Metadata = {
   title: {
-    default: "Unraid Dashboard",
-    template: "%s · Unraid Dashboard",
+    default: "Beacon",
+    template: "%s · Beacon",
   },
-  description: "Self-hosted dashboard for an Unraid server.",
-  applicationName: "Unraid Dashboard",
+  description: "Beacon — self-hosted control center for an Unraid server.",
+  applicationName: "Beacon",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    title: "Unraid Dashboard",
+    title: "Beacon",
     statusBarStyle: "black-translucent",
   },
   icons: {
@@ -27,10 +28,11 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  // Dark-first palette (see globals.css); both variants are dark so the
-  // browser chrome never flashes light.
-  themeColor: "#1c1c22",
-  colorScheme: "dark",
+  // Appearance-aware chrome colors; dark stays the default experience.
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#161619" },
+    { media: "(prefers-color-scheme: light)", color: "#f7f7f8" },
+  ],
   width: "device-width",
   initialScale: 1,
   // viewport-fit=cover exposes env(safe-area-inset-*) for notched iPhones
@@ -40,9 +42,15 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className="h-full antialiased">
+    <html lang="en" className="h-full antialiased" suppressHydrationWarning>
+      <head>
+        {/* Pre-paint appearance: no theme flash on reload/navigation. */}
+        <script dangerouslySetInnerHTML={{ __html: APPEARANCE_PREPAINT_SCRIPT }} />
+      </head>
       <body className="flex min-h-full flex-col">
-        <AppShell>{children}</AppShell>
+        <AppearanceProvider>
+          <AppShell>{children}</AppShell>
+        </AppearanceProvider>
       </body>
     </html>
   );

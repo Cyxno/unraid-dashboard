@@ -27,6 +27,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useOverview } from "@/components/layout/overview-provider";
 import { InstallHint } from "@/components/layout/pwa-status-banner";
 import { DashboardsSection } from "@/components/settings/dashboards-section";
+import { AppearanceSection } from "@/components/settings/appearance-section";
 import { UpdatesSection } from "@/components/settings/updates-section";
 import type {
   BuildInfoDto,
@@ -538,7 +539,14 @@ export default function SettingsPage() {
         description="Dashboard-local preferences (stored in this browser)"
       />
 
-      <div className="grid gap-3 lg:grid-cols-2">
+      <AppearanceSection />
+
+      <div className="mt-4 flex items-center gap-3">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">General &amp; connections</h3>
+        <div className="h-px flex-1 bg-border" />
+      </div>
+
+      <div className="mt-3 grid gap-3 lg:grid-cols-2">
         <Card className="min-w-0">
           <CardHeader>
             <CardTitle>Display &amp; refresh</CardTitle>
@@ -678,9 +686,19 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
+          <div className="mt-4 flex items-center gap-3 lg:col-span-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Updates &amp; security</h3>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
           <SecuritySection />
 
           <UpdatesSection />
+
+          <div className="mt-4 flex items-center gap-3 lg:col-span-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Shared dashboards &amp; diagnostics</h3>
+            <div className="h-px flex-1 bg-border" />
+          </div>
 
           <DashboardsSection />
 

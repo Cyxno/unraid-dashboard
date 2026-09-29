@@ -14,6 +14,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { useOverview } from "@/components/layout/overview-provider";
 import { MetricCard, MetricCardSkeleton } from "@/components/dashboard/metric-card";
+import { HeroStrip, HeroStripSkeleton } from "@/components/dashboard/hero-strip";
 import { SeriesChart } from "@/components/dashboard/series-chart";
 import { WindowPicker } from "@/components/dashboard/window-picker";
 import { TopConsumersCard } from "@/components/dashboard/top-consumers";
@@ -92,6 +93,20 @@ export default function OverviewPage() {
         </p>
       )}
       {payload?.health && <HealthBanner health={payload.health} />}
+
+      {loading || !payload ? (
+        <HeroStripSkeleton />
+      ) : (
+        <HeroStrip
+          serverName={payload.identity.data?.serverName ?? null}
+          osVersion={payload.identity.data?.osVersion ?? null}
+          uptimeSeconds={payload.identity.data?.uptimeSeconds ?? null}
+          healthLevel={payload.health.level}
+          healthReasons={payload.health.reasons}
+          containersRunning={payload.docker.data?.running ?? null}
+          containersTotal={payload.docker.data?.total ?? null}
+        />
+      )}
 
       <section
         aria-label="Resource summary"

@@ -223,7 +223,7 @@ export default function AutomationPage() {
                 </span>
               </div>
               {error && (
-                <p className="mt-2 text-sm text-destructive" role="alert">
+                <p className="mt-2 text-sm text-danger" role="alert">
                   {error}
                 </p>
               )}
@@ -329,7 +329,7 @@ export default function AutomationPage() {
                   {(target.reasons.length > 0 || target.interventionRequired) && (
                     <ul className="mt-1.5 space-y-0.5">
                       {target.interventionRequired && target.interventionReason && (
-                        <li className="flex items-start gap-1.5 text-xs text-destructive">
+                        <li className="flex items-start gap-1.5 text-xs text-danger">
                           <XCircle className="mt-0.5 size-3 shrink-0" aria-hidden /> {target.interventionReason}
                         </li>
                       )}
@@ -370,9 +370,9 @@ export default function AutomationPage() {
               {data.events.slice(0, 12).map((event) => (
                 <div key={event.id} className="flex items-start gap-2 text-xs">
                   {event.kind === "auto_update_completed" ? (
-                    <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-emerald-500" aria-hidden />
+                    <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-success" aria-hidden />
                   ) : event.kind === "auto_update_rolled_back" || event.kind === "intervention_required" ? (
-                    <XCircle className="mt-0.5 size-3.5 shrink-0 text-destructive" aria-hidden />
+                    <XCircle className="mt-0.5 size-3.5 shrink-0 text-danger" aria-hidden />
                   ) : (
                     <CircleDashed className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
                   )}

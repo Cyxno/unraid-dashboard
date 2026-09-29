@@ -70,11 +70,11 @@ interface ProjectJob {
 }
 
 const HEALTH_TONE: Record<ProjectSummary["healthState"], string> = {
-  healthy: "text-emerald-500",
-  starting: "text-sky-400",
-  degraded: "text-amber-500",
-  mixed: "text-amber-500",
-  down: "text-destructive",
+  healthy: "text-success",
+  starting: "text-info",
+  degraded: "text-warning",
+  mixed: "text-warning",
+  down: "text-danger",
 };
 
 export function ComposeProjectsPanel() {
@@ -186,7 +186,7 @@ export function ComposeProjectsPanel() {
         </Button>
       </CardHeader>
       <CardContent className="pt-0">
-        {projects.error && !data && <p className="text-sm text-destructive">{projects.error}</p>}
+        {projects.error && !data && <p className="text-sm text-danger">{projects.error}</p>}
         {!data && !projects.error && (
           <div className="space-y-2" role="status" aria-label="Loading projects">
             <Skeleton className="h-12 w-full" />
@@ -225,7 +225,7 @@ export function ComposeProjectsPanel() {
 
               {project.pipelineOwned ? (
                 <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
-                  <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-amber-500" aria-hidden />
+                  <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
                   Managed by external deployment pipeline — the dashboard detects update state but never mutates this
                   project.
                 </p>
@@ -254,7 +254,7 @@ export function ComposeProjectsPanel() {
               {planFor === project.name && (
                 <div className="mt-3 rounded-md border bg-muted/30 p-2.5 text-xs">
                   {planLoading && <p className="text-muted-foreground">Deriving plan…</p>}
-                  {planError && <p className="text-destructive">{planError}</p>}
+                  {planError && <p className="text-danger">{planError}</p>}
                   {plan && (
                     <>
                       <div className="flex items-center justify-between gap-2">
@@ -266,7 +266,7 @@ export function ComposeProjectsPanel() {
                         </Badge>
                       </div>
                       {!plan.plan.supported && (
-                        <p className="mt-1 text-amber-600 dark:text-amber-400">{plan.plan.unsupportedReason}</p>
+                        <p className="mt-1 text-warning dark:text-warning">{plan.plan.unsupportedReason}</p>
                       )}
                       {plan.plan.supported && (
                         <>
@@ -342,7 +342,7 @@ export function ComposeProjectsPanel() {
           </p>
         )}
         {runError && (
-          <p className="mt-2 break-words text-sm text-destructive" role="alert">
+          <p className="mt-2 break-words text-sm text-danger" role="alert">
             {runError}
           </p>
         )}

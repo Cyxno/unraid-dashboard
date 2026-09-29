@@ -15,26 +15,38 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+export type NavGroup = "overview" | "infrastructure" | "operations" | "observe" | "configure";
+
 export interface NavItem {
   title: string;
   href: string;
   icon: LucideIcon;
+  /** Sidebar section (v0.9.0 information architecture). */
+  group: NavGroup;
   /** Partially implemented — shows a badge in the sidebar. */
   partial?: boolean;
 }
 
+export const NAV_GROUP_LABELS: Record<NavGroup, string> = {
+  overview: "Overview",
+  infrastructure: "Infrastructure",
+  operations: "Operations",
+  observe: "Observe",
+  configure: "Configure",
+};
+
 export const NAV_ITEMS: NavItem[] = [
-  { title: "Overview", href: "/", icon: LayoutDashboard },
-  { title: "Docker", href: "/docker", icon: Boxes },
-  { title: "Storage", href: "/storage", icon: HardDrive },
-  { title: "VMs", href: "/vms", icon: Monitor, partial: true },
-  { title: "Network", href: "/network", icon: Network },
-  { title: "System", href: "/system", icon: Activity },
-  { title: "Automation", href: "/automation", icon: Bot },
-  { title: "Operations", href: "/operations", icon: ShieldCheck },
-  { title: "Notifications", href: "/notifications", icon: BellRing },
-  { title: "Logs", href: "/logs", icon: ScrollText },
-  { title: "Audit", href: "/audit", icon: ClipboardList },
-  { title: "NOC mode", href: "/noc", icon: Tv },
-  { title: "Settings", href: "/settings", icon: Settings },
+  { title: "Overview", href: "/", icon: LayoutDashboard, group: "overview" },
+  { title: "Docker", href: "/docker", icon: Boxes, group: "infrastructure" },
+  { title: "Storage", href: "/storage", icon: HardDrive, group: "infrastructure" },
+  { title: "VMs", href: "/vms", icon: Monitor, group: "infrastructure", partial: true },
+  { title: "Network", href: "/network", icon: Network, group: "infrastructure" },
+  { title: "System", href: "/system", icon: Activity, group: "operations" },
+  { title: "Automation", href: "/automation", icon: Bot, group: "operations" },
+  { title: "Operations", href: "/operations", icon: ShieldCheck, group: "operations" },
+  { title: "Notifications", href: "/notifications", icon: BellRing, group: "observe" },
+  { title: "Logs", href: "/logs", icon: ScrollText, group: "observe" },
+  { title: "Audit", href: "/audit", icon: ClipboardList, group: "observe" },
+  { title: "NOC mode", href: "/noc", icon: Tv, group: "observe" },
+  { title: "Settings", href: "/settings", icon: Settings, group: "configure" },
 ];
