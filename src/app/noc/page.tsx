@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { BeaconMark } from "@/components/brand/logo";
 import { usePoll } from "@/hooks/use-poll";
 import { PAGE_INTERVAL_MS, usePrefs } from "@/lib/prefs";
 import { useLive } from "@/components/layout/live-events";
@@ -29,6 +30,7 @@ import { dashboardToSavedView } from "@/lib/dashboards";
 import { formatBytes, formatPercent, formatRate, formatTemp, formatUptime, humanState } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { StatusDot } from "@/components/ui/status";
 import { CYCLE_PANELS, CyclePanel, type CyclePanelId } from "./panels";
 import { WidgetGrid } from "@/components/dashboard/widget-registry";
 import type {
@@ -140,22 +142,24 @@ function Tile({
   icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" }>;
   large?: boolean;
 }) {
+  // Alert mode: semantic danger ring + value tint — restrained, no blinking.
   return (
     <div
       className={cn(
-        "rounded-lg border bg-card/60 p-4",
-        large && "p-6",
-        alert && "border-destructive/60",
+        "rounded-xl border bg-card/70 shadow-card",
+        large ? "p-6" : "p-4",
+        alert && "border-danger/70 ring-1 ring-danger/40",
       )}
     >
       <p className={cn("flex items-center gap-1.5 uppercase tracking-wider text-muted-foreground", large ? "text-sm" : "text-xs")}>
         <Icon className="size-3.5" aria-hidden={true} />
         {label}
+        {alert && <span className="ml-auto inline-block size-2 rounded-full bg-danger" aria-hidden={true} />}
       </p>
-      <p className={cn("mt-1 font-mono font-semibold tabular-nums leading-none", large ? "text-5xl" : "text-3xl", alert && "text-destructive")}>
+      <p className={cn("tnum mt-2 font-mono font-semibold leading-none", large ? "text-6xl" : "text-4xl", alert && "text-danger")}>
         {value}
       </p>
-      {sub && <p className={cn("mt-1 truncate text-muted-foreground", large ? "text-base" : "text-xs")}>{sub}</p>}
+      {sub && <p className={cn("mt-2 truncate text-muted-foreground", large ? "text-base" : "text-xs")}>{sub}</p>}
     </div>
   );
 }
@@ -184,6 +188,11 @@ function NocShell() {
   const wakeLock = useWakeLock();
 
   const [panelsOpen, setPanelsOpen] = useState(false);
+  const [clock, setClock] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setClock(new Date()), 15_000);
+    return () => clearInterval(timer);
+  }, []);
   const [shared, setShared] = useState<SharedDashboardDto[] | null>(null);
   const [cycleIndex, setCycleIndex] = useState(0);
   const [cyclePaused, setCyclePaused] = useState(false);
@@ -292,30 +301,25 @@ function NocShell() {
 
   return (
     <div className={cn("safe-frame min-h-svh bg-background", kiosk && "text-lg")}>
-      {/* Header */}
-      <div className="mb-4 flex flex-wrap items-center gap-3">
+      {/* Header: identity + verdict + clock/context */}
+      <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <BeaconMark className="size-9 rounded-lg" aria-hidden={true} />
         <p
           role={health?.level === "critical" ? "alert" : "status"}
           className={cn(
             "flex min-w-0 shrink items-center gap-2 font-semibold",
-            kiosk ? "text-lg" : "text-sm",
+            kiosk ? "text-xl" : "text-base",
             health?.level === "critical"
-              ? "text-destructive"
+              ? "text-danger"
               : health?.level === "attention"
                 ? "text-warning"
                 : "text-success",
           )}
         >
-          <span
-            aria-hidden="true"
-            className={cn(
-              "size-3 rounded-full",
-              health?.level === "critical"
-                ? "animate-pulse bg-destructive"
-                : health?.level === "attention"
-                  ? "bg-warning"
-                  : "bg-success",
-            )}
+          <StatusDot
+            tone={health?.level === "critical" ? "critical" : health?.level === "attention" ? "warning" : "healthy"}
+            pulse={health?.level === "critical"}
+            className="size-3"
           />
           {health?.level === "critical" ? "NEEDS ATTENTION" : health?.level === "attention" ? "WARNING" : "ALL SYSTEMS NOMINAL"}
         </p>
@@ -324,22 +328,21 @@ function NocShell() {
             {payload.identity.data.serverName} · up {formatUptime(payload.identity.data.uptimeSeconds)}
           </span>
         )}
+        {/* Clock/date: subtle context, right-aligned */}
+        <span className="tnum ml-auto hidden shrink-0 text-sm text-muted-foreground sm:inline" aria-hidden={true}>
+          {clock.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })} ·{" "}
+          {clock.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+        </span>
 
         {/* Connection state + last update (NOC v3) */}
         <span
           className="ml-auto flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground sm:text-xs"
           aria-live="polite"
         >
-          <span
-            aria-hidden="true"
-            className={cn(
-              "size-2 rounded-full",
-              !online
-                ? "bg-destructive"
-                : status === "connected"
-                  ? "bg-success"
-                  : "animate-pulse bg-warning",
-            )}
+          <StatusDot
+            tone={!online ? "critical" : status === "connected" ? "healthy" : "warning"}
+            pulse={!online ? false : status !== "connected"}
+            className="size-2"
           />
           {connectionLabel}
           {lastUpdated && (
@@ -437,7 +440,7 @@ function NocShell() {
       )}
 
       {health && health.reasons.length > 0 && (
-        <p className={cn("mb-4 truncate text-sm", health.level === "critical" ? "text-destructive" : "text-warning")}>
+        <p className={cn("mb-4 truncate text-sm", health.level === "critical" ? "text-danger" : "text-warning")}>
           {health.reasons.join(" · ")}
         </p>
       )}

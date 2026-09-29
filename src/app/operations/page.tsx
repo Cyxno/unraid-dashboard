@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import OperationsView from "@/components/operations/operations-view";
 
 export const metadata: Metadata = {
-  title: "Operations — Unraid Dashboard",
+  title: "Operations — Beacon",
   description: "Operator status and safe recovery actions.",
 };
 

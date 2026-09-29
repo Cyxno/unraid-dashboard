@@ -1,6 +1,6 @@
 "use client";
 
-import { HardDrive, Thermometer } from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, HardDrive, Thermometer } from "lucide-react";
 import { usePoll } from "@/hooks/use-poll";
 import {
   HISTORY_INTERVAL_MS,
@@ -14,118 +14,149 @@ import { SeriesChart } from "@/components/dashboard/series-chart";
 import { WindowPicker } from "@/components/dashboard/window-picker";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { StatusDot, type StatusTone } from "@/components/ui/status";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn, formatBytes, formatPercent, formatRate, formatTemp, humanState } from "@/lib/utils";
+import {
+  CapacityBar,
+  arrayHealthLabel,
+  arrayHealthTone,
+  diskHealthLabel,
+  diskHealthTone,
+  diskTempTone,
+  utilizationToneClass,
+} from "@/components/storage/health";
+import { cn, formatBytes, formatPercent, formatRate, formatTemp } from "@/lib/utils";
 import type {
   DiskIoSnapshot,
+  ArrayDiskUsage,
   MetricMeta,
   Section,
   StorageHistoryPayload,
   StorageUsage,
 } from "@/lib/api-types";
 
-const COLOR_CLASS: Record<string, string> = {
-  GREEN: "bg-success",
-  YELLOW: "bg-warning",
-  RED: "bg-destructive",
-  RED_BALL: "bg-destructive",
-  BLUE: "bg-blue-400",
-  GREY: "bg-muted-foreground",
-};
+/**
+ * Storage (v0.9.1 bespoke redesign):
+ *   top    — array hero: verdict, capacity bar, warnings, live IO
+ *   middle — unified disk view (health-first table on desktop, cards on mobile)
+ *   bottom — performance history (Prometheus)
+ *
+ * All health color resolves through storage/health.tsx — no ad-hoc palette.
+ */
 
 /** Storage keeps its own window default; capacity and performance stay separate. */
-function usePersistedWindow(): [
-  HistoryWindowPref,
-  (value: HistoryWindowPref) => void,
-] {
+function usePersistedWindow(): [HistoryWindowPref, (value: HistoryWindowPref) => void] {
   const { prefs, setPref } = usePrefs();
   const allowed: HistoryWindowPref[] = ["15m", "1h", "6h", "24h"];
-  const window = allowed.includes(prefs.historyWindow)
-    ? prefs.historyWindow
-    : "1h";
+  const window = allowed.includes(prefs.historyWindow) ? prefs.historyWindow : "1h";
   return [window, (value) => setPref("historyWindow", value)];
 }
 
-function AggregateCard({
+function HeroStat({
   label,
   value,
   detail,
-  warn,
+  tone,
 }: {
   label: string;
   value: string;
-  detail?: string;
-  warn?: boolean;
+  detail?: React.ReactNode;
+  tone?: StatusTone;
 }) {
   return (
-    <Card className="gap-0 p-4">
-      <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+    <div className="min-w-0">
+      <dt className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
+        {tone && <StatusDot tone={tone} />}
         {label}
-      </p>
-      <p className={cn("mt-1 font-mono text-xl font-semibold tabular-nums", warn && "text-warning")}>
-        {value}
-      </p>
-      {detail && <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>}
-    </Card>
+      </dt>
+      <dd className="tnum mt-0.5 truncate text-xl font-semibold">{value}</dd>
+      {detail && <dd className="truncate text-xs text-muted-foreground">{detail}</dd>}
+    </div>
+  );
+}
+
+function DiskTemp({ tempC, unit }: { tempC: number | null; unit: "C" | "F" }) {
+  const tone = diskTempTone(tempC);
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {tone && <StatusDot tone={tone} />}
+      <span
+        className={cn(
+          "tnum",
+          tone === "critical" && "font-medium text-danger",
+          tone === "warning" && "font-medium text-warning",
+        )}
+      >
+        {formatTemp(tempC, unit)}
+      </span>
+    </span>
   );
 }
 
 export default function StoragePage() {
-  const { data, error, loading } = usePoll<Section<StorageUsage>>(
-    "/api/storage",
-    PAGE_INTERVAL_MS.storage,
-  );
+  const { data, error, loading } = usePoll<Section<StorageUsage>>("/api/storage", PAGE_INTERVAL_MS.storage);
   const { prefs } = usePrefs();
   const storage = data?.data ?? null;
+  const tempUnit = prefs.tempUnit;
 
   /* Runtime disk I/O (Prometheus) + performance history. Capacity views
      above stay purely Unraid; performance views are clearly separate. */
   const [window, setWindow] = usePersistedWindow();
-  // De API wikkelt de snapshot in { meta, data } — data is null bij degrade.
-  const diskIo = usePoll<{ meta: MetricMeta; data: DiskIoSnapshot | null }>(
-    "/api/storage/io",
-    PAGE_INTERVAL_MS.docker,
-  );
+  const diskIo = usePoll<{ meta: MetricMeta; data: DiskIoSnapshot | null }>("/api/storage/io", PAGE_INTERVAL_MS.docker);
   const diskIoData = diskIo.data?.data ?? null;
-  const history = usePoll<StorageHistoryPayload>(
-    `/api/storage/history?window=${window}`,
-    HISTORY_INTERVAL_MS[window],
-  );
+  const history = usePoll<StorageHistoryPayload>(`/api/storage/history?window=${window}`, HISTORY_INTERVAL_MS[window]);
 
-  const ioByDevice = new Map(
-    (diskIoData?.devices ?? []).map((device) => [device.device, device]),
-  );
+  const ioByDevice = new Map((diskIoData?.devices ?? []).map((device) => [device.device, device]));
 
   // Aggregate data-disks only for "usable" capacity — parity disks hold no
   // user data and cache pools are separate tiers, so summing everything would
   // produce a misleading total.
   const dataDisks = storage?.disks.filter((disk) => disk.role === "data") ?? [];
   const cacheDisks = storage?.disks.filter((disk) => disk.role === "cache") ?? [];
-  const sum = (disks: typeof dataDisks, key: "sizeBytes" | "usedBytes" | "freeBytes") =>
+  const sum = (disks: ArrayDiskUsage[], key: "sizeBytes" | "usedBytes" | "freeBytes") =>
     disks.reduce<number>((sum, disk) => sum + (disk[key] ?? 0), 0);
 
   const dataTotal = sum(dataDisks, "sizeBytes");
   const dataUsed = sum(dataDisks, "usedBytes");
+  const dataFree = sum(dataDisks, "freeBytes");
+  const dataPercent = dataTotal > 0 ? (dataUsed / dataTotal) * 100 : null;
+  const cacheTotal = sum(cacheDisks, "sizeBytes");
+  const cacheUsed = sum(cacheDisks, "usedBytes");
+  const cachePercent = cacheTotal > 0 ? (cacheUsed / cacheTotal) * 100 : null;
+
+  const warnings = (storage?.disks ?? []).filter((disk) => {
+    const tone = diskHealthTone(disk);
+    return tone === "warning" || tone === "critical";
+  });
+  const criticals = (storage?.disks ?? []).filter((disk) => diskHealthTone(disk) === "critical");
+  const hotDisks = (storage?.disks ?? []).filter((disk) => (disk.temperatureC ?? 0) >= 45);
+  const arrayTone = storage ? arrayHealthTone(storage.state, storage.disks) : "offline";
+
+  /** Merged disk rows: Unraid facts + Prometheus IO (desktop table + mobile cards). */
+  const diskRows = (storage?.disks ?? []).map((disk) => ({
+    disk,
+    io: disk.device !== null ? (ioByDevice.get(disk.device) ?? null) : null,
+    tone: diskHealthTone(disk),
+    label: diskHealthLabel(disk),
+    percent:
+      disk.sizeBytes && disk.usedBytes !== null && disk.sizeBytes > 0
+        ? (disk.usedBytes / disk.sizeBytes) * 100
+        : null,
+  }));
+
+  const renderIoRead = (row: (typeof diskRows)[number]) => formatRate(row.io?.readBytesPerSec ?? null);
+  const renderIoWrite = (row: (typeof diskRows)[number]) => formatRate(row.io?.writeBytesPerSec ?? null);
 
   return (
     <div>
       <PageHeader
         title="Storage"
         description="Array, pools and disk health"
-        actions={
-          <SectionStatus
-            section={
-              data ?? { status: "unavailable", data: null, fetchedAt: "", ageMs: 0 }
-            }
-          />
-        }
+        actions={<SectionStatus section={data ?? { status: "unavailable", data: null, fetchedAt: "", ageMs: 0 }} />}
       />
 
       {error && !data && (
-        <p
-          role="alert"
-          className="mb-4 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm"
-        >
+        <p role="alert" className="mb-4 rounded-lg border border-danger/40 bg-danger/10 px-4 py-3 text-sm">
           Storage data unavailable: {error}
         </p>
       )}
@@ -134,127 +165,245 @@ export default function StoragePage() {
         <LoadingPanel rows={6} />
       ) : storage ? (
         <div className="space-y-4">
-          <section
-            aria-label="Storage totals"
-            className="grid grid-cols-2 gap-3 lg:grid-cols-4"
-          >
-            <AggregateCard
-              label="Array state"
-              value={humanState(storage.state)}
-              warn={storage.state !== "STARTED"}
-            />
-            <AggregateCard
-              label="Parity"
-              value={humanState(storage.parityStatus)}
-              detail={
-                storage.parityProgressPercent !== null
-                  ? `${storage.parityProgressPercent}%`
-                  : undefined
-              }
-            />
-            <AggregateCard
-              label="Data disks"
-              value={`${dataDisks.length}`}
-              detail={`${formatBytes(dataUsed)} of ${formatBytes(dataTotal)} used`}
-            />
-            <AggregateCard
-              label="Cache / pools"
-              value={`${cacheDisks.length}`}
-              detail={`${formatBytes(sum(cacheDisks, "usedBytes"))} of ${formatBytes(sum(cacheDisks, "sizeBytes"))} used`}
-            />
+          {/* Hero: array verdict + capacity + warnings + live IO ---------------- */}
+          <section aria-label="Array overview" className="rounded-xl border bg-card p-5 shadow-card">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-stretch">
+              {/* Verdict */}
+              <div className="min-w-0 lg:w-56 lg:shrink-0">
+                <div className="flex items-center gap-2">
+                  <HardDrive className="size-5 text-muted-foreground" aria-hidden="true" />
+                  <h2 className="truncate text-lg font-semibold tracking-tight">
+                    {arrayHealthLabel(storage.state)}
+                  </h2>
+                </div>
+                <p className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
+                  <StatusDot tone={arrayTone} pulse={arrayTone === "critical"} />
+                  {arrayTone === "healthy"
+                    ? "All disks healthy"
+                    : `${warnings.length} disk warning${warnings.length === 1 ? "" : "s"}${criticals.length > 0 ? ` · ${criticals.length} critical` : ""}`}
+                </p>
+                {storage.parityStatus && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Parity: {storage.parityStatus}
+                    {storage.parityProgressPercent !== null && ` (${storage.parityProgressPercent}%)`}
+                  </p>
+                )}
+              </div>
+
+              {/* Capacity (data array + pools) */}
+              <div className="min-w-0 flex-1 space-y-3">
+                <div>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <dt className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                      Usable capacity (data disks)
+                    </dt>
+                    <dd
+                      className={cn(
+                        "tnum text-sm font-semibold",
+                        dataPercent !== null && dataPercent >= 90 && "text-danger",
+                        dataPercent !== null && dataPercent >= 75 && dataPercent < 90 && "text-warning",
+                      )}
+                    >
+                      {formatPercent(dataPercent, 0)} used
+                    </dd>
+                  </div>
+                  <CapacityBar
+                    className="mt-1.5"
+                    segments={[{ percent: dataPercent ?? 0, className: utilizationToneClass(dataPercent), label: "used" }]}
+                  />
+                  <p className="tnum mt-1 text-xs text-muted-foreground">
+                    {formatBytes(dataUsed)} used · {formatBytes(dataFree)} free · {formatBytes(dataTotal)} total
+                  </p>
+                </div>
+                {cacheTotal > 0 && (
+                  <div>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <dt className="text-[11px] uppercase tracking-wider text-muted-foreground">Cache / pools</dt>
+                      <dd className="tnum text-sm font-semibold">{formatPercent(cachePercent, 0)} used</dd>
+                    </div>
+                    <CapacityBar
+                      className="mt-1.5"
+                      segments={[{ percent: cachePercent ?? 0, className: utilizationToneClass(cachePercent), label: "cache used" }]}
+                    />
+                    <p className="tnum mt-1 text-xs text-muted-foreground">
+                      {formatBytes(cacheUsed)} used · {formatBytes(cacheTotal)} total
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Warnings + live IO */}
+              <div className="grid shrink-0 grid-cols-2 gap-5 lg:w-72 lg:grid-cols-1">
+                <HeroStat
+                  label="Active warnings"
+                  value={`${warnings.length}`}
+                  detail={
+                    criticals.length > 0
+                      ? `${criticals.length} critical: ${criticals.map((disk) => disk.name).join(", ")}`
+                      : hotDisks.length > 0
+                        ? `${hotDisks.length} disk(s) ≥45°C`
+                        : warnings.length > 0
+                          ? warnings.map((disk) => disk.name).join(", ")
+                          : "clear"
+                  }
+                  tone={criticals.length > 0 ? "critical" : warnings.length > 0 || hotDisks.length > 0 ? "warning" : "healthy"}
+                />
+                <HeroStat
+                  label="Disk I/O (live)"
+                  value={formatRate(diskIoData?.totals.readBytesPerSec ?? null)}
+                  detail={
+                    <span className="inline-flex items-center gap-3">
+                      <span className="inline-flex items-center gap-1">
+                        <ArrowDownToLine className="size-3 text-info" aria-hidden="true" />
+                        {formatRate(diskIoData?.totals.readBytesPerSec ?? null)}
+                      </span>
+                      <span className="inline-flex items-center gap-1">
+                        <ArrowUpFromLine className="size-3 text-warning" aria-hidden="true" />
+                        {formatRate(diskIoData?.totals.writeBytesPerSec ?? null)}
+                      </span>
+                    </span>
+                  }
+                />
+              </div>
+            </div>
           </section>
 
-          {/* Runtime disk activity (Prometheus) ---------------------------- */}
+          {/* Disks: unified health-first view ---------------------------------- */}
           <Card>
             <CardHeader className="gap-2">
-              <CardTitle className="text-base">Disk activity</CardTitle>
-              <MetricStatus meta={diskIo.data?.meta ?? null} />
+              <CardTitle className="text-base">Disks</CardTitle>
+              <span className="text-xs text-muted-foreground">{storage.disks.length} total</span>
             </CardHeader>
             <CardContent>
-              {diskIo.loading && !diskIoData ? (
-                <Skeleton className="h-24 w-full" />
-              ) : diskIoData === null ? (
-                <p className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
-                  Disk I/O unavailable — Prometheus is unreachable. Capacity
-                  and health data remain live from Unraid.
+              {diskRows.length === 0 ? (
+                <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+                  No disks reported.
                 </p>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[560px] text-sm">
-                    <caption className="sr-only">Runtime disk activity per device</caption>
-                    <thead>
-                      <tr className="border-b text-left text-xs uppercase tracking-wider text-muted-foreground">
-                        <th scope="col" className="px-3 py-2 font-medium">Disk</th>
-                        <th scope="col" className="px-3 py-2 font-medium">Device</th>
-                        <th scope="col" className="px-3 py-2 text-right font-medium">Read</th>
-                        <th scope="col" className="px-3 py-2 text-right font-medium">Write</th>
-                        <th scope="col" className="px-3 py-2 text-right font-medium">Read IOPS</th>
-                        <th scope="col" className="px-3 py-2 text-right font-medium">Write IOPS</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {storage?.disks
-                        .filter((disk) => disk.device !== null && ioByDevice.has(disk.device))
-                        .map((disk) => {
-                          const io = ioByDevice.get(disk.device!)!;
-                          return (
-                            <tr key={disk.device} className="border-b last:border-0">
-                              <td className="px-3 py-2.5 font-medium">{disk.name}</td>
-                              <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
-                                {disk.device}
-                              </td>
-                              <td className="px-3 py-2.5 text-right font-mono tabular-nums">
-                                {formatRate(io.readBytesPerSec)}
-                              </td>
-                              <td className="px-3 py-2.5 text-right font-mono tabular-nums">
-                                {formatRate(io.writeBytesPerSec)}
-                              </td>
-                              <td className="px-3 py-2.5 text-right font-mono text-xs tabular-nums text-muted-foreground">
-                                {io.readIops !== null ? io.readIops.toFixed(1) : "—"}
-                              </td>
-                              <td className="px-3 py-2.5 text-right font-mono text-xs tabular-nums text-muted-foreground">
-                                {io.writeIops !== null ? io.writeIops.toFixed(1) : "—"}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      <tr className="font-medium">
-                        <td className="px-3 py-2.5" colSpan={2}>
-                          Total (all physical devices)
-                        </td>
-                        <td className="px-3 py-2.5 text-right font-mono tabular-nums">
-                          {formatRate(diskIoData?.totals.readBytesPerSec ?? null)}
-                        </td>
-                        <td className="px-3 py-2.5 text-right font-mono tabular-nums">
-                          {formatRate(diskIoData?.totals.writeBytesPerSec ?? null)}
-                        </td>
-                        <td className="px-3 py-2.5" colSpan={2} />
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
+                <>
+                  {/* Desktop: health-first table with IO merged in */}
+                  <div className="hidden md:block">
+                    <table className="w-full text-sm">
+                      <caption className="sr-only">Disks with health, capacity and live I/O</caption>
+                      <thead>
+                        <tr className="border-b text-left text-xs uppercase tracking-wider text-muted-foreground">
+                          <th scope="col" className="py-2 pr-3 font-medium">Disk</th>
+                          <th scope="col" className="py-2 pr-3 font-medium">Role</th>
+                          <th scope="col" className="py-2 pr-3 font-medium">Health</th>
+                          <th scope="col" className="py-2 pr-3 font-medium">Utilization</th>
+                          <th scope="col" className="py-2 pr-3 font-medium">Temp</th>
+                          <th scope="col" className="py-2 pr-3 text-right font-medium">Read</th>
+                          <th scope="col" className="py-2 text-right font-medium">Write</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {diskRows.map((row) => (
+                          <tr key={`${row.disk.role}-${row.disk.name}`} className="border-b last:border-0 hover:bg-secondary/40">
+                            <td className="py-2.5 pr-3">
+                              <p className="font-medium">{row.disk.name}</p>
+                              <p className="font-mono text-xs text-muted-foreground">{row.disk.device ?? "—"}</p>
+                            </td>
+                            <td className="py-2.5 pr-3">
+                              <Badge variant="muted">{row.disk.role}</Badge>
+                            </td>
+                            <td className="py-2.5 pr-3">
+                              <span className="inline-flex items-center gap-2">
+                                <StatusDot tone={row.tone} />
+                                {row.label}
+                              </span>
+                            </td>
+                            <td className="w-48 py-2.5 pr-3">
+                              {row.percent !== null ? (
+                                <div className="flex items-center gap-2">
+                                  <CapacityBar
+                                    className="h-1.5 flex-1"
+                                    segments={[
+                                      { percent: row.percent, className: utilizationToneClass(row.percent), label: "used" },
+                                    ]}
+                                  />
+                                  <span className="tnum w-10 text-right text-xs text-muted-foreground">
+                                    {formatPercent(row.percent, 0)}
+                                  </span>
+                                  <span className="tnum hidden text-xs text-muted-foreground lg:inline">
+                                    {formatBytes(row.disk.usedBytes)}
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">
+                                  {row.disk.role === "parity" ? "parity" : "—"}
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 pr-3">
+                              <DiskTemp tempC={row.disk.temperatureC} unit={tempUnit} />
+                            </td>
+                            <td className="tnum py-2.5 pr-3 text-right font-mono">{renderIoRead(row)}</td>
+                            <td className="tnum py-2.5 text-right font-mono">{renderIoWrite(row)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Mobile: health-first cards, no horizontal scroll */}
+                  <div className="grid gap-2.5 md:hidden">
+                    {diskRows.map((row) => (
+                      <div key={`m-${row.disk.role}-${row.disk.name}`} className="rounded-lg border p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="flex min-w-0 items-center gap-2">
+                            <StatusDot tone={row.tone} />
+                            <span className="truncate font-medium">{row.disk.name}</span>
+                          </span>
+                          <Badge variant="muted" className="text-[10px]">
+                            {row.disk.role}
+                          </Badge>
+                        </div>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{row.label}</p>
+                        <div className="mt-2">
+                          <CapacityBar
+                            segments={[
+                              { percent: row.percent ?? 0, className: utilizationToneClass(row.percent), label: "used" },
+                            ]}
+                          />
+                          <p className="tnum mt-1 flex justify-between text-xs text-muted-foreground">
+                            <span>{row.percent !== null ? `${formatPercent(row.percent, 0)} used` : "no filesystem"}</span>
+                            <span>
+                              {row.disk.usedBytes !== null ? formatBytes(row.disk.usedBytes) : "—"} /{" "}
+                              {row.disk.sizeBytes !== null ? formatBytes(row.disk.sizeBytes) : "—"}
+                            </span>
+                          </p>
+                        </div>
+                        <div className="tnum mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                          <span className="inline-flex items-center gap-1">
+                            <Thermometer className="size-3" aria-hidden="true" />
+                            <DiskTemp tempC={row.disk.temperatureC} unit={tempUnit} />
+                          </span>
+                          <span className="inline-flex items-center gap-1">
+                            <ArrowDownToLine className="size-3" aria-hidden="true" /> {renderIoRead(row)}
+                          </span>
+                          <span className="inline-flex items-center gap-1">
+                            <ArrowUpFromLine className="size-3" aria-hidden="true" /> {renderIoWrite(row)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
               )}
               <p className="mt-3 text-[11px] text-muted-foreground">
-                Unraid disks are matched to exporter devices by kernel name
-                (sdX). Parity disks report device-level I/O from rebuilds and
-                reads. The array layer (md) is excluded so member-disk and
-                array I/O are never double-counted.
+                Health reflects Unraid&apos;s disk color/state (healthy = ok). Live I/O matches disks to
+                exporter devices by kernel name (sdX); the array layer (md) is excluded so member-disk and
+                array I/O are never double-counted. SMART detail is not exposed by the Unraid GraphQL API.
               </p>
             </CardContent>
           </Card>
 
-          {/* Performance history (Prometheus) ------------------------------- */}
+          {/* Performance history (Prometheus) ---------------------------------- */}
           <Card>
             <CardHeader className="gap-3">
               <div className="flex flex-wrap items-center gap-2">
-                <CardTitle className="mr-auto text-base">
-                  Performance history
-                </CardTitle>
-                <WindowPicker
-                  value={window}
-                  onChange={setWindow}
-                  options={["15m", "1h", "6h", "24h"]}
-                />
+                <CardTitle className="mr-auto text-base">Performance history</CardTitle>
+                <WindowPicker value={window} onChange={setWindow} options={["15m", "1h", "6h", "24h"]} />
               </div>
               <MetricStatus meta={history.data?.meta ?? null} />
             </CardHeader>
@@ -268,9 +417,7 @@ export default function StoragePage() {
               ) : (
                 <>
                   <div>
-                    <p className="mb-1 text-xs text-muted-foreground">
-                      Aggregate throughput
-                    </p>
+                    <p className="mb-1 text-xs text-muted-foreground">Aggregate throughput</p>
                     <SeriesChart
                       series={[
                         { name: "Read", points: history.data.totals.read },
@@ -281,9 +428,7 @@ export default function StoragePage() {
                     />
                   </div>
                   <div>
-                    <p className="mb-1 text-xs text-muted-foreground">
-                      Per-device throughput (top devices)
-                    </p>
+                    <p className="mb-1 text-xs text-muted-foreground">Per-device throughput (top devices)</p>
                     <SeriesChart
                       series={history.data.read}
                       breakdown={history.data.write}
@@ -294,109 +439,6 @@ export default function StoragePage() {
                   </div>
                 </>
               )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Disks</CardTitle>
-              <span className="text-xs text-muted-foreground">
-                {storage.disks.length} total
-              </span>
-            </CardHeader>
-            <CardContent>
-              {storage.disks.length === 0 ? (
-                <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                  No disks reported.
-                </p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[680px] text-sm">
-                    <caption className="sr-only">Disks</caption>
-                    <thead>
-                      <tr className="border-b text-left text-xs uppercase tracking-wider text-muted-foreground">
-                        <th scope="col" className="px-3 py-2 font-medium">Disk</th>
-                        <th scope="col" className="px-3 py-2 font-medium">Role</th>
-                        <th scope="col" className="px-3 py-2 font-medium">Health</th>
-                        <th scope="col" className="px-3 py-2 font-medium">Utilization</th>
-                        <th scope="col" className="px-3 py-2 font-medium">Filesystem</th>
-                        <th scope="col" className="px-3 py-2 font-medium">Temp</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {storage.disks.map((disk) => {
-                        const percent =
-                          disk.sizeBytes && disk.usedBytes !== null && disk.sizeBytes > 0
-                            ? (disk.usedBytes / disk.sizeBytes) * 100
-                            : null;
-                        const colorClass = disk.fsColor
-                          ? (COLOR_CLASS[disk.fsColor] ?? "bg-muted-foreground")
-                          : disk.state === "DISK_OK"
-                            ? "bg-success"
-                            : "bg-warning";
-                        return (
-                          <tr key={`${disk.role}-${disk.name}`} className="border-b last:border-0">
-                            <td className="px-3 py-2.5 font-medium">{disk.name}</td>
-                            <td className="px-3 py-2.5">
-                              <Badge variant="muted">{disk.role}</Badge>
-                            </td>
-                            <td className="px-3 py-2.5">
-                              <span className="inline-flex items-center gap-2">
-                                <span
-                                  className={cn("size-2 rounded-full", colorClass)}
-                                  aria-hidden="true"
-                                />
-                                {humanState(disk.state)}
-                              </span>
-                            </td>
-                            <td className="w-48 px-3 py-2.5">
-                              {percent !== null ? (
-                                <div className="flex items-center gap-2">
-                                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-                                    <div
-                                      className={cn(
-                                        "h-full rounded-full",
-                                        percent >= 90
-                                          ? "bg-destructive"
-                                          : percent >= 75
-                                            ? "bg-warning"
-                                            : "bg-primary",
-                                      )}
-                                      style={{ width: `${percent}%` }}
-                                    />
-                                  </div>
-                                  <span className="w-10 text-right font-mono text-xs tabular-nums text-muted-foreground">
-                                    {formatPercent(percent, 0)}
-                                  </span>
-                                </div>
-                              ) : (
-                                <span className="text-xs text-muted-foreground">—</span>
-                              )}
-                            </td>
-                            <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
-                              {disk.fsType ?? "—"}
-                            </td>
-                            <td className="px-3 py-2.5 font-mono text-xs tabular-nums text-muted-foreground">
-                              {disk.temperatureC != null ? (
-                                <span className="inline-flex items-center gap-1">
-                                  <Thermometer className="size-3" aria-hidden="true" />
-                                  {formatTemp(disk.temperatureC, prefs.tempUnit)}
-                                </span>
-                              ) : (
-                                "—"
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              <p className="mt-3 text-[11px] text-muted-foreground">
-                Health dots reflect Unraid&apos;s disk color/state (green = ok).
-                SMART detail views are not exposed by the Unraid GraphQL API.
-              </p>
             </CardContent>
           </Card>
         </div>
