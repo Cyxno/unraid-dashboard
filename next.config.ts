@@ -2,6 +2,12 @@ import type { NextConfig } from "next";
 import { readFileSync } from "node:fs";
 
 function readPackageVersion(): string {
+  // CI/strict-remote builds pass APP_VERSION (from the git tag) — it wins so
+  // the client bundle NEVER disagrees with the deployed release. The
+  // package.json version is only the local/dev fallback.
+  if (process.env.APP_VERSION && /^\d+\.\d+\.\d+$/.test(process.env.APP_VERSION)) {
+    return process.env.APP_VERSION;
+  }
   try {
     const pkg = JSON.parse(readFileSync("./package.json", "utf8")) as {
       version?: string;

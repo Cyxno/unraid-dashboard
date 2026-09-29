@@ -62,10 +62,18 @@ describe("v06 service worker safety", () => {
 });
 
 describe("v06 web app manifest", () => {
-  it("is valid JSON with the required PWA fields", () => {
+  it("is valid JSON with the required PWA fields", async () => {
     const manifest = JSON.parse(manifestSource) as Record<string, unknown>;
     // v0.9.0 product identity: Beacon.
     assert.equal(manifest.name, "Beacon — Unraid Server Console");
+    // v0.9.2 regression: sw VERSION must track package.json — a stale sw
+    // version froze the cached shell on old bundles (false update banner).
+    {
+      const pkg = JSON.parse(await readFile(path.join(import.meta.dirname ?? "tests", "..", "package.json"), "utf8")) as { version: string };
+      const swSource2 = await readFile(path.join(import.meta.dirname ?? "tests", "..", "public", "sw.js"), "utf8");
+      const swVersion = swSource2.match(/VERSION = "v([^"]+)"/)?.[1];
+      assert.equal(swVersion, pkg.version, "sw.js VERSION must equal package.json version");
+    }
     assert.equal(manifest.short_name, "Beacon");
     assert.equal(manifest.display, "standalone");
     assert.equal(manifest.start_url, "/");
