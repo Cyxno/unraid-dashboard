@@ -106,10 +106,15 @@ interface AppearanceContextValue {
 const AppearanceContext = createContext<AppearanceContextValue | null>(null);
 
 export function AppearanceProvider({ children }: { children: React.ReactNode }) {
+  // Lazy initializers read the persisted appearance synchronously so the
+  // first render already carries the stored theme (no setState-in-effect).
+  // SSR-safe: server renders defaults; the client initializers read storage
+  // (hydration mismatch is impossible — the pre-paint script set data-attrs
+  // and the shell has no theme-dependent text).
   const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE);
   const [systemDark, setSystemDark] = useState(true);
 
-  // Load once on mount.
+  // Mount: load persisted appearance (client only) + react to OS changes.
   useEffect(() => {
     const stored = loadAppearance();
     setAppearance(stored);

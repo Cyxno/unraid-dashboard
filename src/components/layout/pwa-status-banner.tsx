@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { usePwa } from "./pwa-provider";
 import { useLive } from "./live-events";
 import { isAnyBusyScope } from "@/lib/busy-guard";
+import { versionMismatchKind, type ReleaseStatusKind } from "@/lib/release-status";
 import { cn } from "@/lib/utils";
 
 /**
@@ -22,7 +23,11 @@ import { cn } from "@/lib/utils";
 const VERSION_CHECK_MS = 300_000;
 
 /** Backend version vs the version baked into this browser bundle. */
-function useVersionMismatch(): { mismatch: boolean; serverVersion: string | null } {
+function useVersionMismatch(): {
+  mismatch: boolean;
+  kind: ReleaseStatusKind;
+  serverVersion: string | null;
+} {
   const [serverVersion, setServerVersion] = useState<string | null>(null);
 
   const check = useCallback(async () => {
@@ -55,12 +60,8 @@ function useVersionMismatch(): { mismatch: boolean; serverVersion: string | null
 
   // The bundle's build-time version (inlined by next.config env).
   const bundleVersion = process.env.APP_VERSION_FALLBACK ?? null;
-  const mismatch =
-    Boolean(serverVersion) &&
-    Boolean(bundleVersion) &&
-    bundleVersion !== "unknown" &&
-    serverVersion !== bundleVersion;
-  return { mismatch, serverVersion };
+  const kind = versionMismatchKind(serverVersion, bundleVersion);
+  return { mismatch: kind !== "none", kind, serverVersion };
 }
 
 function guardRefresh(action: () => void): void {
@@ -98,7 +99,13 @@ function BannerRow({
 /** All static banners (offline / version mismatch / SW update ready). */
 export function PwaStatusBanner() {
   const { online, updateReady, applyUpdate } = usePwa();
-  const { mismatch } = useVersionMismatch();
+  const { mismatch, kind } = useVersionMismatch();
+  /** Refresh must also apply a waiting service worker, otherwise the stale
+   * shell is served again and the banner never clears. */
+  const refreshToLatest = () => guardRefresh(() => {
+    if (updateReady) applyUpdate();
+    window.location.reload();
+  });
 
   if (!online && !mismatch && !updateReady) {
     return (
@@ -116,14 +123,27 @@ export function PwaStatusBanner() {
           Offline — showing last known state. Server data unavailable; lifecycle actions disabled.
         </BannerRow>
       )}
-      {online && mismatch && (
+      {online && mismatch && kind === "update-available" && (
         <BannerRow tone="warning" icon={RefreshCw}>
-          A newer dashboard version is available
+          New Beacon version available
           <Button
             size="sm"
             variant="outline"
             className="h-6 px-2 text-[11px]"
-            onClick={() => guardRefresh(() => window.location.reload())}
+            onClick={refreshToLatest}
+          >
+            Refresh
+          </Button>
+        </BannerRow>
+      )}
+      {online && mismatch && kind === "browser-refresh" && (
+        <BannerRow tone="warning" icon={RefreshCw}>
+          Beacon was updated — refresh to load the latest interface
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-6 px-2 text-[11px]"
+            onClick={refreshToLatest}
           >
             Refresh
           </Button>

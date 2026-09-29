@@ -1,12 +1,9 @@
 import { access, constants } from "node:fs/promises";
 import { getEnvSafe } from "@/server/env";
 import { getHelperStatus } from "@/server/update/helper-client";
-import { enrichedOverview } from "@/server/docker/updates";
-import { containerStatsBatch } from "@/server/update/history";
-import { evaluateTarget, POLICY_VERSION, type SchedulerContext, type TargetFacts } from "./policy";
-import { automationTick, ensureScheduler, schedulerMeta } from "./scheduler";
+import { POLICY_VERSION, type AutomationConfig } from "./policy";
+import { automationTick, ensureScheduler, lastEvaluation, requestRefresh, schedulerMeta, snapshotAgeMs, type TargetAutomationView } from "./scheduler";
 import {
-  digestAgeMs,
   loadQueue,
   loadState,
   readEvents,
@@ -30,8 +27,8 @@ export interface AutomationStatus {
   policyVersion: string;
   enabled: boolean;
   paused: boolean;
-  config: ReturnType<typeof loadConfigShape>;
-  scheduler: { lastTickAt: string | null; intervalMs: number };
+  config: AutomationConfig;
+  scheduler: { lastTickAt: string | null; intervalMs: number; evaluating: boolean };
   window: { inWindow: boolean; reason: string };
   targets: Array<{
     name: string;
@@ -64,22 +61,11 @@ export interface AutomationStatus {
   };
 }
 
-type LoadedState = Awaited<ReturnType<typeof loadState>>;
-
-function loadConfigShape(state: LoadedState) {
-  return state.config;
-}
-
 export async function getAutomationStatus(): Promise<AutomationStatus> {
   ensureScheduler();
   const now = new Date();
-  const [state, overview, helper] = await Promise.all([
-    loadState(),
-    enrichedOverview().catch(() => null),
-    getHelperStatus().catch(() => null),
-  ]);
+  const [state, helper] = await Promise.all([loadState(), getHelperStatus().catch(() => null)]);
   const queue = await loadQueue();
-  const stats = await containerStatsBatch().catch(() => new Map());
   let writable = true;
   try {
     await access(getEnvSafe().AUDIT_DIR, constants.W_OK);
@@ -89,74 +75,49 @@ export async function getAutomationStatus(): Promise<AutomationStatus> {
 
   const { isInMaintenanceWindow } = await import("./policy");
   const window = isInMaintenanceWindow(now, state.config);
-  const context: SchedulerContext = {
-    now,
-    config: state.config,
-    helperHealthy: helper?.reachable === true,
-    dataDirWritable: writable,
-    operationActive: helper?.lock !== null && helper?.lock !== undefined,
-    windowOperationsUsed: state.windowOperationsUsed,
-    registryDegraded: false,
-    queuedCount: queue.length,
-  };
 
-  const targets: AutomationStatus["targets"] = [];
-  if (overview?.available) {
-    for (const container of overview.containers) {
-      const target = targetState(state, container.name);
-      const targetStats = stats.get(container.name) ?? { manualSuccesses: 0, rollbackCount: 0, lastSuccess: null, lastAttempt: null };
-      const digestAge = await digestAgeMs(container.image, container.remote_digest, now);
-      const facts: TargetFacts = {
-        name: container.name,
+  // v0.9.2 latency fix: serve the scheduler's LAST evaluation — the request
+  // path never recomputes the heavy sweep (65-container inventory + registry
+  // hashes). When the snapshot is missing or stale, request a background
+  // tick and surface "evaluating".
+  const snapshot = lastEvaluation();
+  const age = snapshotAgeMs();
+  const evaluating = age === null || age > 90_000;
+  if (evaluating) requestRefresh();
+
+  const targets: AutomationStatus["targets"] = snapshot.targets
+    .map((view) => {
+      const target = targetState(state, view.name);
+      return {
+        name: view.name,
+        state: view.state,
+        reasons: view.reasons,
         optIn: target.optIn,
-        risk: container.risk,
-        managementType: container.management_type,
-        updateStrategy: container.update_strategy,
-        healthcheckPresent: container.health !== null,
-        snapshotPresent: container.rollback.snapshot_present,
-        registryVerified: container.update_status === "UP_TO_DATE" || container.update_status === "UPDATE_AVAILABLE",
-        updateAvailable: container.update_available,
-        remoteDigest: container.remote_digest,
-        digestAgeMs: digestAge,
-        manualSuccesses: targetStats.manualSuccesses,
-        rollbackCount: targetStats.rollbackCount,
-        interventionRequired: target.interventionRequired,
-        cooldownUntil: target.cooldownUntil,
-        pipelineOwned: container.management_type === "pipeline_owned",
-        externallyManaged: container.externallyManaged,
-      };
-      const verdict = evaluateTarget(facts, context);
-      targets.push({
-        name: container.name,
-        state: verdict.state,
-        reasons: verdict.reasons,
-        optIn: target.optIn,
-        risk: container.risk,
-        managementType: container.management_type,
-        healthcheckPresent: container.health !== null,
-        snapshotPresent: container.rollback.snapshot_present,
-        registryVerified: facts.registryVerified,
-        updateAvailable: container.update_available,
-        remoteDigest: container.remote_digest,
-        digestAgeHours: digestAge === null ? null : Math.round((digestAge / 3_600_000) * 10) / 10,
-        manualSuccesses: targetStats.manualSuccesses,
-        rollbackCount: targetStats.rollbackCount,
-        cooldownUntil: target.cooldownUntil,
+        risk: view.facts.risk,
+        managementType: view.facts.managementType,
+        healthcheckPresent: view.facts.healthcheckPresent,
+        snapshotPresent: view.facts.snapshotPresent,
+        registryVerified: view.facts.registryVerified,
+        updateAvailable: view.facts.updateAvailable,
+        remoteDigest: view.facts.remoteDigest,
+        digestAgeHours: view.facts.digestAgeHours,
+        manualSuccesses: view.facts.manualSuccesses,
+        rollbackCount: view.facts.rollbackCount,
+        cooldownUntil: view.facts.cooldownUntil,
         cooldownReason: target.cooldownReason,
         interventionRequired: target.interventionRequired,
         interventionReason: target.interventionReason,
-        pipelineOwned: container.management_type === "pipeline_owned",
-      });
-    }
-    targets.sort((a, b) => a.name.localeCompare(b.name));
-  }
+        pipelineOwned: view.facts.managementType === "pipeline_owned",
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   return {
     policyVersion: POLICY_VERSION,
     enabled: state.config.enabled,
     paused: state.config.paused,
     config: state.config,
-    scheduler: schedulerMeta(),
+    scheduler: { ...schedulerMeta(), evaluating },
     window,
     targets,
     queue: queue.map((job) => ({
@@ -171,7 +132,7 @@ export async function getAutomationStatus(): Promise<AutomationStatus> {
       policyVersion: job.policyVersion,
     })),
     events: await readEvents(30),
-    projects: await projectRegistryView().catch(() => ({ projects: [], lastPollAt: null, stale: true })),
+    projects: await serveRegistryView(),
     infrastructure: {
       helperHealthy: helper?.reachable ?? null,
       dataDirWritable: writable,
@@ -180,6 +141,17 @@ export async function getAutomationStatus(): Promise<AutomationStatus> {
   };
 }
 
+/** Registry view from memory; expired polls are kicked to the background. */
+async function serveRegistryView(): Promise<ProjectRegistryView> {
+  const registryModule = await import("./project-registry");
+  const registry = await registryModule.loadRegistry();
+  const expired = !registry.lastPollAt || Date.now() - Date.parse(registry.lastPollAt) > 15 * 60_000;
+  if (expired) {
+    const { pollProjectRegistry } = await import("./project-registry");
+    void pollProjectRegistry().catch(() => {});
+  }
+  return projectRegistryView();
+}
 /* ---- operator actions (route boundaries validate + audit) ---------------- */
 
 export async function setConfig(patch: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> {

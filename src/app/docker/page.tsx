@@ -50,15 +50,16 @@ const HIGH_CPU_PERCENT = 80;
 const HIGH_MEMORY_BYTES = 4 * 1024 * 1024 * 1024; // 4 GiB
 const HIGH_MEMORY_PERCENT_OF_LIMIT = 80;
 
+type QuickFilter = "all" | "running" | "problems" | "update" | "stopped";
 type StatusFilter =
   | "all"
   | "running"
   | "stopped"
-  | "unhealthy"
+  | "problems"
   | "update"
   | "high-cpu"
   | "high-memory";
-type SortKey = "name" | "state" | "cpu" | "memory";
+type SortKey = "name" | "state" | "cpu" | "memory" | "operational";
 type GroupMode = "flat" | "compose";
 
 const STATE_META = {
@@ -157,7 +158,7 @@ export default function DockerPage() {
   // filter+sort+group pass runs at most every 150ms while typing.
   const debouncedQuery = useDebouncedValue(query, 150);
   const [filter, setFilter] = useState<StatusFilter>("all");
-  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortKey, setSortKey] = useState<SortKey>("operational");
   const [sortAsc, setSortAsc] = useState(true);
   const [groupMode, setGroupMode] = useState<GroupMode>("flat");
   const router = useRouter();
@@ -190,16 +191,34 @@ export default function DockerPage() {
     }
     if (filter === "running") list = list.filter((c) => c.state === "RUNNING");
     if (filter === "stopped") list = list.filter((c) => c.state === "EXITED");
-    if (filter === "unhealthy")
-      list = list.filter((c) => c.health === "unhealthy");
+    if (filter === "problems")
+      list = list.filter(
+        (c) =>
+          c.state !== "RUNNING" ||
+          c.health === "unhealthy" ||
+          (c.metrics && (c.metrics.cpuPercent ?? -1) >= HIGH_CPU_PERCENT) ||
+          isHighMemory(c),
+      );
     if (filter === "update") list = list.filter((c) => c.updateAvailable);
     if (filter === "high-cpu")
       list = list.filter(
         (c) => (c.metrics?.cpuPercent ?? -1) >= HIGH_CPU_PERCENT,
       );
     if (filter === "high-memory") list = list.filter(isHighMemory);
+    const priority = (c: DockerContainerSummary): number => {
+      // Problems first (unhealthy/exited-with-attention), then running, then stopped.
+      if (c.state !== "RUNNING") return c.state === "EXITED" ? 2 : 3;
+      if (c.health === "unhealthy") return 0;
+      if (c.health === "starting") return 0.5;
+      return 1;
+    };
     const sorted = [...list].sort((a, b) => {
       let comparison: number;
+      if (sortKey === "operational") {
+        comparison = priority(a) - priority(b);
+        if (comparison === 0) comparison = a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+        return sortAsc ? comparison : -comparison;
+      }
       if (sortKey === "cpu") {
         comparison = (a.metrics?.cpuPercent ?? -1) - (b.metrics?.cpuPercent ?? -1);
       } else if (sortKey === "memory") {
@@ -315,14 +334,44 @@ export default function DockerPage() {
         </label>
 
         <div role="group" aria-label="Filter containers" className="flex items-center gap-1 overflow-x-auto pb-1 md:flex-wrap md:pb-0">
+          {/* Summary chips (v0.9.2): click to filter — running/problems/updates/stopped. */}
+          {(() => {
+            const counts = {
+              running: containers.filter((c) => c.state === "RUNNING").length,
+              stopped: containers.filter((c) => c.state === "EXITED").length,
+              problems: containers.filter((c) => c.state !== "RUNNING" || c.health === "unhealthy").length,
+              update: containers.filter((c) => c.updateAvailable).length,
+            };
+            const chip = (key: StatusFilter, label: string, count: number) => (
+              <Button
+                key={key}
+                size="sm"
+                variant={filter === key ? "secondary" : "ghost"}
+                aria-pressed={filter === key}
+                onClick={() => setFilter(filter === key ? "all" : key)}
+                className="h-7 gap-1.5 px-2 text-[11px]"
+              >
+                {label}
+                <span className="tnum rounded bg-muted px-1 text-[10px] text-muted-foreground">{count}</span>
+              </Button>
+            );
+            return (
+              <div className="col-span-full -mb-1 flex flex-wrap items-center gap-1.5">
+                {chip("running", "Running", counts.running)}
+                {chip("problems", "Problems", counts.problems)}
+                {chip("update", "Updates", counts.update)}
+                {chip("stopped", "Stopped", counts.stopped)}
+              </div>
+            );
+          })()}
           <Filter className="size-3.5 text-muted-foreground" aria-hidden="true" />
           {(
             [
               "all",
               "running",
-              "stopped",
-              "unhealthy",
+              "problems",
               "update",
+              "stopped",
               "high-cpu",
               "high-memory",
             ] as const

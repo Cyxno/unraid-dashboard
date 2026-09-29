@@ -546,7 +546,7 @@ export default function SettingsPage() {
         <div className="h-px flex-1 bg-border" />
       </div>
 
-      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+      <div className="mt-3 grid items-start gap-3 lg:grid-cols-2">
         <Card className="min-w-0">
           <CardHeader>
             <CardTitle>Display &amp; refresh</CardTitle>

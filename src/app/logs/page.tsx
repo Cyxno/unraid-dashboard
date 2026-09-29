@@ -20,6 +20,8 @@ export default function LogsPage() {
     PAGE_INTERVAL_MS.logs,
   );
   const [selected, setSelected] = useState<string | null>(null);
+  // v0.9.2: verified 0-byte logs are noise — hidden by default, toggle to show.
+  const [showEmpty, setShowEmpty] = useState(false);
   const [lines, setLines] = useState(DEFAULT_LINES);
   const [search, setSearch] = useState("");
   const [autoRefresh, setAutoRefresh] = useState(false);
@@ -131,8 +133,30 @@ export default function LogsPage() {
             {files.loading && !files.data ? (
               <LoadingPanel rows={5} />
             ) : files.data?.data ? (
+              (() => {
+              // Classification: empty (verified 0 bytes) vs active. The API
+              // only reports size/mtime, so "empty" means a genuinely empty
+              // file — permission failures surface as API errors, not 0 bytes.
+              const all = files.data.data;
+              const emptyCount = all.filter((file) => file.sizeBytes === 0).length;
+              const visible = showEmpty ? all : all.filter((file) => (file.sizeBytes ?? 0) > 0);
+              return (
+              <>
+              {emptyCount > 0 && (
+                <button
+                  type="button"
+                  aria-pressed={showEmpty}
+                  onClick={() => setShowEmpty((value) => !value)}
+                  className="mb-1.5 w-full rounded-md border border-dashed px-2 py-1 text-left text-[11px] text-muted-foreground hover:text-foreground"
+                >
+                  {showEmpty ? "Hide" : "Show"} {emptyCount} empty log{emptyCount === 1 ? "" : "s"}
+                </button>
+              )}
               <ul className="max-h-44 space-y-0.5 overflow-y-auto lg:max-h-[60vh]">
-                {files.data.data.map((file) => (
+                {visible.length === 0 && (
+                  <li className="px-2 py-1 text-xs text-muted-foreground">All logs are empty.</li>
+                )}
+                {visible.map((file) => (
                   <li key={file.path}>
                     <Button
                       variant={selected === file.path ? "secondary" : "ghost"}
@@ -144,8 +168,11 @@ export default function LogsPage() {
                         void loadContent(file.path, lines);
                       }}
                     >
-                      <FileText className="size-3.5 shrink-0" aria-hidden="true" />
-                      <span className="min-w-0 flex-1 truncate text-left">{file.name}</span>
+                      <FileText className={cn("size-3.5 shrink-0", file.sizeBytes === 0 && "opacity-40")} aria-hidden="true" />
+                      <span className={cn("min-w-0 flex-1 truncate text-left", (file.sizeBytes ?? 0) === 0 && "opacity-60")}>{file.name}</span>
+                      <span className="tnum text-[10px] text-muted-foreground">
+                        {(file.sizeBytes ?? 0) === 0 ? "0 B" : formatBytes(file.sizeBytes ?? 0, 0)}
+                      </span>
                       <span className="shrink-0 text-[10px] text-muted-foreground">
                         {formatBytes(file.sizeBytes, 0)}
                       </span>
@@ -153,6 +180,9 @@ export default function LogsPage() {
                   </li>
                 ))}
               </ul>
+              </>
+              );
+              })()
             ) : (
               <p className="text-sm text-muted-foreground">Log list unavailable.</p>
             )}

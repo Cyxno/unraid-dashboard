@@ -23,7 +23,7 @@ import { DockerOverviewList } from "@/components/dashboard/docker-overview-list"
 import { NotificationsCard } from "@/components/dashboard/notifications-card";
 import { MetricStatus } from "@/components/dashboard/section-status";
 import { Button } from "@/components/ui/button";
-import { usePrefs, DEFAULT_OVERVIEW_ORDER, type HistoryWindowPref } from "@/lib/prefs";
+import { usePrefs, DEFAULT_OVERVIEW_ORDER, OVERVIEW_PRESETS, type HistoryWindowPref } from "@/lib/prefs";
 import {
   formatBytes,
   formatPercent,
@@ -131,6 +131,27 @@ export default function OverviewPage() {
             >
               Reset order
             </Button>
+          )}
+          {customizeLayout && (
+            <>
+              <span className="text-[11px] text-muted-foreground">Preset:</span>
+              {Object.entries(OVERVIEW_PRESETS).map(([key, preset]) => (
+                <Button
+                  key={key}
+                  size="sm"
+                  variant="outline"
+                  className="h-6 px-2 text-[11px]"
+                  onClick={() => {
+                    const patch = preset.apply();
+                    for (const [patchKey, patchValue] of Object.entries(patch)) {
+                      setPref(patchKey as "overviewOrder", patchValue as never);
+                    }
+                  }}
+                >
+                  {preset.label}
+                </Button>
+              ))}
+            </>
           )}
         </div>
         {loading || !payload

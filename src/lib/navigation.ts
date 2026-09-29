@@ -23,8 +23,10 @@ export interface NavItem {
   icon: LucideIcon;
   /** Sidebar section (v0.9.0 information architecture). */
   group: NavGroup;
-  /** Partially implemented — shows a badge in the sidebar. */
+  /** Partially implemented — shows a "partial" badge in the sidebar. */
   partial?: boolean;
+  /** Meaningful capability badge (replaces the vague "partial"). */
+  capability?: string;
 }
 
 export const NAV_GROUP_LABELS: Record<NavGroup, string> = {
@@ -39,7 +41,7 @@ export const NAV_ITEMS: NavItem[] = [
   { title: "Overview", href: "/", icon: LayoutDashboard, group: "overview" },
   { title: "Docker", href: "/docker", icon: Boxes, group: "infrastructure" },
   { title: "Storage", href: "/storage", icon: HardDrive, group: "infrastructure" },
-  { title: "VMs", href: "/vms", icon: Monitor, group: "infrastructure", partial: true },
+  { title: "VMs", href: "/vms", icon: Monitor, group: "infrastructure", capability: "power state" },
   { title: "Network", href: "/network", icon: Network, group: "infrastructure" },
   { title: "System", href: "/system", icon: Activity, group: "operations" },
   { title: "Automation", href: "/automation", icon: Bot, group: "operations" },

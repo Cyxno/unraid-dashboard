@@ -40,6 +40,33 @@ export default function NotificationsPage() {
     setArchiveResult(result);
   };
 
+  // Bulk actions (v0.9.2): archive = Unraid's "read" semantics.
+  const [bulkPending, setBulkPending] = useState<string | null>(null);
+  const [bulkResult, setBulkResult] = useState<string | null>(null);
+  const [confirmArchiveAll, setConfirmArchiveAll] = useState(false);
+  const bulk = async (action: "mark-all-read" | "archive-all") => {
+    setBulkPending(action);
+    setBulkResult(null);
+    try {
+      const response = await fetch("/api/notifications/bulk", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string; archived?: number };
+      if (!response.ok) {
+        setBulkResult(payload.error ?? `Bulk action failed (HTTP ${response.status}).`);
+      } else {
+        setBulkResult(`Archived ${payload.archived ?? 0} notification(s).`);
+      }
+    } catch (error) {
+      setBulkResult(error instanceof Error ? error.message : "Bulk action failed.");
+    } finally {
+      setBulkPending(null);
+      setConfirmArchiveAll(false);
+    }
+  };
+
   const params = new URLSearchParams({ type, limit: "100" });
   if (importance !== "all") params.set("importance", importance);
 
@@ -62,6 +89,12 @@ export default function NotificationsPage() {
           />
         }
       />
+
+      {(bulkResult || bulkPending) && (
+        <p className="mb-3 rounded-lg border px-3 py-2 text-xs" role="status">
+          {bulkPending ? <span className="text-muted-foreground">{bulkPending === "mark-all-read" ? "Marking all as read…" : "Archiving all…"}</span> : bulkResult}
+        </p>
+      )}
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div role="group" aria-label="Notification type" className="flex items-center gap-1">
@@ -92,6 +125,50 @@ export default function NotificationsPage() {
             </Button>
           ))}
         </div>
+
+        {/* Bulk actions (v0.9.2) — visible on the unread view only. */}
+        {type === "UNREAD" && notifications.length > 0 && (
+          <div className="ml-auto flex items-center gap-2">
+            {confirmArchiveAll ? (
+              <>
+                <span className="text-xs text-warning">Archive everything?</span>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="h-7 text-xs"
+                  disabled={bulkPending !== null}
+                  onClick={() => bulk("archive-all")}
+                >
+                  {bulkPending === "archive-all" ? "Archiving…" : "Confirm"}
+                </Button>
+                <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setConfirmArchiveAll(false)}>
+                  Cancel
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  disabled={bulkPending !== null}
+                  onClick={() => bulk("mark-all-read")}
+                >
+                  {bulkPending === "mark-all-read" ? "Working…" : `Mark all as read`}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  disabled={bulkPending !== null}
+                  onClick={() => setConfirmArchiveAll(true)}
+                >
+                  Archive all
+                </Button>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {loading && notifications.length === 0 ? (

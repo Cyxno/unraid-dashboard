@@ -42,7 +42,43 @@ const globalStore = globalThis as unknown as {
   __automationTickInFlight?: Promise<void> | null;
   __automationTimer?: ReturnType<typeof setInterval> | null;
   __automationLastTickAt?: string | null;
+  /** Last evaluation snapshot: served by /api/automation without recompute. */
+  __automationSnapshot?: { evaluatedAt: string; targets: TargetAutomationView[] } | null;
 };
+
+/**
+ * Publishes the evaluation result for the status API. /api/automation NEVER
+ * recomputes the heavy evaluation per request — it serves this snapshot and
+ * (when stale) asks the scheduler for a fresh tick in the background.
+ */
+export function publishSnapshot(targets: TargetAutomationView[], evaluatedAt: string): void {
+  globalStore.__automationSnapshot = { targets, evaluatedAt };
+}
+
+export function lastEvaluation(): { evaluatedAt: string | null; targets: TargetAutomationView[] } {
+  return lastSnapshot();
+}
+
+export function lastSnapshot(): { evaluatedAt: string | null; targets: TargetAutomationView[] } {
+  const snapshot = globalStore.__automationSnapshot;
+  return { evaluatedAt: snapshot?.evaluatedAt ?? null, targets: snapshot?.targets ?? [] };
+}
+
+export function snapshotAgeMs(): number | null {
+  const snapshot = globalStore.__automationSnapshot;
+  return snapshot ? Date.now() - Date.parse(snapshot.evaluatedAt) : null;
+}
+
+export function requestRefresh(): void {
+  if (globalStore.__automationTickInFlight) return;
+  const run = automationTick()
+    .then(() => undefined)
+    .catch(() => undefined);
+  globalStore.__automationTickInFlight = run;
+  void run.finally(() => {
+    globalStore.__automationTickInFlight = null;
+  });
+}
 
 export interface TargetAutomationView {
   name: string;
@@ -203,6 +239,10 @@ export async function automationTick(): Promise<{ ranAt: string; summary: string
   if (!overview?.available) {
     return { ranAt: now.toISOString(), summary: "inventory unavailable — tick skipped (no mutation, queue untouched)" };
   }
+  // Registry hash poll runs inside the tick (TTL-gated) so the status API
+  // only ever serves in-memory registry state.
+  const { pollProjectRegistry } = await import("./project-registry");
+  await pollProjectRegistry().catch(() => {});
 
   // /app/data unwritable → block EVERYTHING persistence-dependent (#33):
   // no observations, no queue changes, no mutations. State writes are also
@@ -362,6 +402,7 @@ export async function automationTick(): Promise<{ ranAt: string; summary: string
   }
 
   const states = evaluated.map((entry) => `${entry.name}:${entry.state}`).join(", ") || "no opt-in targets";
+  publishSnapshot(evaluated, now.toISOString());
   return {
     ranAt: now.toISOString(),
     summary: `evaluated [${states}]; queued=${queuedView.length}; window=${window.inWindow ? "open" : "closed"}`,

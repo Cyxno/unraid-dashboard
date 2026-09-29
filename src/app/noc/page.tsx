@@ -400,6 +400,23 @@ function NocShell() {
       {panelsOpen && (
         <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border bg-card/60 p-3 text-xs">
           <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Layout</span>
+            <div role="group" aria-label="NOC layout preset" className="flex items-center gap-1">
+              {(["full", "performance", "storage", "minimal"] as const).map((layout) => (
+                <Button
+                  key={layout}
+                  size="sm"
+                  variant={prefs.nocLayout === layout ? "secondary" : "ghost"}
+                  aria-pressed={prefs.nocLayout === layout}
+                  onClick={() => setPref("nocLayout", layout)}
+                  className="h-6 px-2 text-[11px] capitalize"
+                >
+                  {layout}
+                </Button>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
             <span className="text-muted-foreground">Auto-cycle</span>
             <div role="group" aria-label="Auto-cycle interval" className="flex items-center gap-1">
               {CYCLE_OPTIONS.map((option) => (
@@ -467,7 +484,8 @@ function NocShell() {
           compact={dashboard.preferences.density === "compact"}
         />
       ) : (
-      /* Main tiles (built-in) or cycled panel */
+      /* Main tiles (built-in) or cycled panel. Layout preset (v0.9.2) selects
+         which tiles render: full / performance / storage / minimal. */
       activePanel === "overview" || cycleSeconds === 0 ? (
         <div className={cn("grid gap-3", kiosk ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-2 lg:grid-cols-4 xl:grid-cols-8")}>
           <Tile
@@ -506,7 +524,7 @@ function NocShell() {
             sub={payload?.storage.data ? `${humanState(payload.storage.data.state)} · ${payload.storage.data.disks.length} disks` : null}
             alert={payload?.storage.data?.state !== "STARTED"}
           />
-          {!kiosk && (
+          {!kiosk && prefs.nocLayout !== "minimal" && prefs.nocLayout !== "storage" && (
             <>
               <Tile
                 label="Docker"

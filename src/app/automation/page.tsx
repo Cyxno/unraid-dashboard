@@ -114,10 +114,14 @@ export default function AutomationPage() {
     [status],
   );
 
+  // Optimistic overlay: the toggle reflects the intended state immediately;
+  // the server response confirms or rolls it back (v0.9.2 latency fix).
+  const [optimistic, setOptimistic] = useState<{ enabled?: boolean; paused?: boolean } | null>(null);
   const postConfig = useCallback(
     async (patch: Record<string, unknown>, key: string) => {
       setBusy(key);
       setError(null);
+      setOptimistic((current) => ({ ...(current ?? {}), ...patch }));
       try {
         const response = await fetch("/api/automation/config", {
           method: "POST",
@@ -127,6 +131,7 @@ export default function AutomationPage() {
         const payload = (await response.json().catch(() => ({}))) as { error?: string };
         if (!response.ok) setError(payload.error ?? `Config change failed (HTTP ${response.status}).`);
       } catch (err) {
+        setOptimistic(null);
         setError(err instanceof Error ? err.message : "Config change failed.");
       } finally {
         setBusy(null);
@@ -137,7 +142,9 @@ export default function AutomationPage() {
   );
 
   const data = status.data;
-  const targets = data?.targets ?? [];
+  // Merge optimistic patch over the polled data for instant feedback.
+  const effective = data && optimistic ? { ...data, enabled: optimistic.enabled ?? data.enabled, paused: optimistic.paused ?? data.paused } : data;
+  const targets = effective?.targets ?? [];
   const relevant = targets.filter((target) => target.optIn || target.state !== "blocked");
   const visible = showAllTargets ? relevant : relevant.slice(0, 8);
 
@@ -153,41 +160,41 @@ export default function AutomationPage() {
         }
       />
 
-      {status.error && !data && <ErrorPanel message={status.error} />}
-      {!data && !status.error && <LoadingPanel rows={6} />}
+      {status.error && !effective && <ErrorPanel message={status.error} />}
+      {!effective && !status.error && <LoadingPanel rows={6} />}
 
-      {data && (
+      {effective && (
         <div className="space-y-4">
           {/* Global control */}
           <Card>
             <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-2">
               <CardTitle className="flex items-center gap-2 text-base">
                 <Bot className="size-4 text-muted-foreground" aria-hidden /> Pilot auto-update
-                <Badge variant={data.enabled ? (data.paused ? "warning" : "success") : "muted"}>
-                  {data.paused ? "PAUSED" : data.enabled ? "ENABLED" : "DISABLED"}
+                <Badge variant={effective.enabled ? (effective.paused ? "warning" : "success") : "muted"}>
+                  {effective.paused ? "PAUSED" : effective.enabled ? "ENABLED" : "DISABLED"}
                 </Badge>
                 <Badge variant="outline" className="text-[10px]">
-                  {data.policyVersion}
+                  {effective.policyVersion}
                 </Badge>
               </CardTitle>
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   size="sm"
-                  variant={data.enabled ? "destructive" : "default"}
+                  variant={effective.enabled ? "destructive" : "default"}
                   disabled={busy !== null}
-                  onClick={() => postConfig({ enabled: !data.enabled }, "enable")}
+                  onClick={() => postConfig({ enabled: !effective.enabled }, "enable")}
                 >
                   <PlayCircle className="size-4" aria-hidden />
-                  {data.enabled ? "Disable automation" : "Enable automation"}
+                  {effective.enabled ? "Disable automation" : "Enable automation"}
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={busy !== null || !data.enabled}
-                  onClick={() => postConfig({ paused: !data.paused }, "pause")}
+                  disabled={busy !== null || !effective.enabled}
+                  onClick={() => postConfig({ paused: !effective.paused }, "pause")}
                 >
                   <OctagonPause className="size-4" aria-hidden />
-                  {data.paused ? "Resume" : "Pause automation"}
+                  {effective.paused ? "Resume" : "Pause automation"}
                 </Button>
                 <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => act({ action: "run-once" }, "runonce")}>
                   <RefreshCw className={cn("size-4", busy === "runonce" && "animate-spin")} aria-hidden />
@@ -200,26 +207,26 @@ export default function AutomationPage() {
                 <span className="flex items-center gap-1.5">
                   <Clock className="size-3.5" aria-hidden />
                   Window:{" "}
-                  {data.config.maintenance.enabled ? (
+                  {effective.config.maintenance.enabled ? (
                     <>
-                      {data.config.maintenance.days.map((day) => DAY_LABELS[day]).join(",")} ·{" "}
-                      {String(data.config.maintenance.startHour).padStart(2, "0")}:00–
-                      {String(data.config.maintenance.endHour).padStart(2, "0")}:00 {data.config.maintenance.timezone} ·{" "}
-                      <Badge variant={data.window.inWindow ? "success" : "secondary"} className="text-[10px]">
-                        {data.window.inWindow ? "open" : "closed"}
+                      {effective.config.maintenance.days.map((day) => DAY_LABELS[day]).join(",")} ·{" "}
+                      {String(effective.config.maintenance.startHour).padStart(2, "0")}:00–
+                      {String(effective.config.maintenance.endHour).padStart(2, "0")}:00 {effective.config.maintenance.timezone} ·{" "}
+                      <Badge variant={effective.window.inWindow ? "success" : "secondary"} className="text-[10px]">
+                        {effective.window.inWindow ? "open" : "closed"}
                       </Badge>
                     </>
                   ) : (
                     "always open (window disabled)"
                   )}
                 </span>
-                <span>Min digest age: {data.config.minUpdateAgeHours}h · max {data.config.maxPerWindow} per window · cooldown {data.config.cooldownHours}h</span>
+                <span>Min digest age: {effective.config.minUpdateAgeHours}h · max {effective.config.maxPerWindow} per window · cooldown {effective.config.cooldownHours}h</span>
                 <span>
-                  Scheduler: {data.scheduler.lastTickAt ? `last tick ${formatDateTimeIso(data.scheduler.lastTickAt)}` : "no tick yet"} (every {Math.round(data.scheduler.intervalMs / 1000)}s)
+                  Scheduler: {effective.scheduler.lastTickAt ? `last tick ${formatDateTimeIso(effective.scheduler.lastTickAt)}` : "no tick yet"} (every {Math.round(effective.scheduler.intervalMs / 1000)}s)
                 </span>
                 <span>
-                  Infra: helper {data.infrastructure.helperHealthy === true ? "healthy" : "unavailable"} · /app/data{" "}
-                  {data.infrastructure.dataDirWritable ? "writable" : "NOT writable"} · window used {data.queue.length} queued
+                  Infra: helper {effective.infrastructure.helperHealthy === true ? "healthy" : "unavailable"} · /app/data{" "}
+                  {effective.infrastructure.dataDirWritable ? "writable" : "NOT writable"} · window used {effective.queue.length} queued
                 </span>
               </div>
               {error && (
@@ -227,7 +234,7 @@ export default function AutomationPage() {
                   {error}
                 </p>
               )}
-              {data.infrastructure.dataDirWritable === false && (
+              {effective.infrastructure.dataDirWritable === false && (
                 <p className="mt-2 flex items-center gap-1.5 text-xs text-warning">
                   <ShieldAlert className="size-3.5" aria-hidden /> /app/data is not writable — automation is blocked until persistence recovers.
                 </p>
@@ -236,18 +243,18 @@ export default function AutomationPage() {
           </Card>
 
           {/* Queue */}
-          {data.queue.length > 0 && (
+          {effective.queue.length > 0 && (
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-2 text-base">
                   <Layers className="size-4 text-muted-foreground" aria-hidden /> Queue
                   <Badge variant="secondary" className="text-[10px]">
-                    {data.queue.length}
+                    {effective.queue.length}
                   </Badge>
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 pt-0">
-                {data.queue.map((job) => (
+                {effective.queue.map((job) => (
                   <div key={job.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2.5 text-xs">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
@@ -352,9 +359,9 @@ export default function AutomationPage() {
             </CardHeader>
             <CardContent className="pt-0 text-xs text-muted-foreground">
               <p>
-                {data.projects.count} tracked · {data.projects.changedConfigs} changed config(s) · {data.projects.pipelineOwned} pipeline-owned ·
-                last poll {data.projects.lastPollAt ? formatDateTimeIso(data.projects.lastPollAt) : "never"}
-                {data.projects.stale ? " (stale)" : ""}
+                {effective.projects.count} tracked · {effective.projects.changedConfigs} changed config(s) · {effective.projects.pipelineOwned} pipeline-owned ·
+                last poll {effective.projects.lastPollAt ? formatDateTimeIso(effective.projects.lastPollAt) : "never"}
+                {effective.projects.stale ? " (stale)" : ""}
               </p>
               <p className="mt-1">Project-level automation stays manual-only in v0.8.0; the registry invalidates plans when configs change.</p>
             </CardContent>
@@ -366,8 +373,8 @@ export default function AutomationPage() {
               <CardTitle className="text-base">Automation events</CardTitle>
             </CardHeader>
             <CardContent className="space-y-1.5 pt-0">
-              {data.events.length === 0 && <p className="text-sm text-muted-foreground">No automation events yet.</p>}
-              {data.events.slice(0, 12).map((event) => (
+              {effective.events.length === 0 && <p className="text-sm text-muted-foreground">No automation events yet.</p>}
+              {effective.events.slice(0, 12).map((event) => (
                 <div key={event.id} className="flex items-start gap-2 text-xs">
                   {event.kind === "auto_update_completed" ? (
                     <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-success" aria-hidden />

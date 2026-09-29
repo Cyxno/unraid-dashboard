@@ -17,6 +17,7 @@ import {
 export type TempUnit = "C" | "F";
 export type RefreshPreset = "fast" | "normal" | "relaxed";
 export type Density = "compact" | "comfortable";
+export type NocLayout = "full" | "performance" | "storage" | "minimal";
 export type HistoryWindowPref = "5m" | "15m" | "1h" | "6h" | "24h" | "7d";
 
 export interface Prefs {
@@ -35,6 +36,8 @@ export interface Prefs {
   savedViews: Record<string, SavedView>;
   /** NOC auto-cycle interval in seconds (0 = off). */
   nocCycleSeconds: number;
+  /** NOC wallboard layout preset (v0.9.2): which tiles render. */
+  nocLayout: NocLayout;
   /** Shared dashboard applied inside NOC mode (null = built-in tiles). */
   nocDashboardId: string | null;
 }
@@ -66,6 +69,50 @@ export const BUILT_IN_VIEWS: Record<string, () => Partial<SavedView>> = {
   "Storage-heavy": () => ({ historyWindow: "24h", density: "compact" }),
   Thermal: () => ({ tempUnit: "C", showPerCore: true, historyWindow: "6h" }),
   Network: () => ({ historyWindow: "15m" }),
+};
+
+/**
+ * Overview COMPOSITION presets (v0.9.2): each preset rewrites the visible
+ * widget order (and relevant display prefs), so switching one visibly
+ * restructures the page — not just chart lines.
+ */
+export const OVERVIEW_PRESETS: Record<string, { label: string; apply: () => Partial<SavedView> }> = {
+  balanced: {
+    label: "Balanced",
+    apply: () => ({ overviewOrder: [...DEFAULT_OVERVIEW_ORDER], dockerMetrics: true }),
+  },
+  performance: {
+    label: "Performance",
+    apply: () => ({
+      overviewOrder: ["cpu", "memory", "uptime", "docker", "network", "array"],
+      showPerCore: true,
+      historyWindow: "1h",
+      dockerMetrics: true,
+    }),
+  },
+  storage: {
+    label: "Storage",
+    apply: () => ({
+      overviewOrder: ["array", "uptime", "memory", "cpu", "network", "docker"],
+      historyWindow: "24h",
+      dockerMetrics: false,
+    }),
+  },
+  containers: {
+    label: "Containers",
+    apply: () => ({
+      overviewOrder: ["docker", "cpu", "memory", "uptime", "network", "array"],
+      dockerMetrics: true,
+      historyWindow: "1h",
+    }),
+  },
+  minimal: {
+    label: "Minimal",
+    apply: () => ({
+      overviewOrder: ["uptime", "array", "cpu", "memory", "network", "docker"],
+      dockerMetrics: false,
+    }),
+  },
 };
 
 export const REFRESH_INTERVAL_MS: Record<RefreshPreset, number> = {
@@ -114,6 +161,7 @@ const DEFAULTS: Prefs = {
   overviewOrder: [...DEFAULT_OVERVIEW_ORDER],
   savedViews: {},
   nocCycleSeconds: 0,
+  nocLayout: "full",
   nocDashboardId: null,
 };
 

@@ -100,7 +100,15 @@ export function Sidebar({ mobileOpen, onMobileClose, collapsed, onToggleCollapse
                     <span className={cn("flex-1", collapsed && "md:hidden")}>
                       {item.title}
                     </span>
-                    {item.partial && (
+                    {item.capability && (
+                      <Badge
+                        variant="muted"
+                        className={cn("px-1.5 text-[10px]", collapsed && "md:hidden")}
+                      >
+                        {item.capability}
+                      </Badge>
+                    )}
+                    {item.partial && !item.capability && (
                       <Badge
                         variant="muted"
                         className={cn("px-1.5 text-[10px]", collapsed && "md:hidden")}
