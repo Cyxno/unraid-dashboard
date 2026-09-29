@@ -16,7 +16,9 @@
  *
  * Baselines live OUT of runtime assets (tests/visual-baselines, gitignored
  * by default — baselines are machine-dependent, the harness is the asset).
- * Requires a headless Chrome on 127.0.0.1:9223 and BASE_URL env (default
+ * Requires a FRESH headless Chrome on 127.0.0.1:9223 (restart the container
+ * before running: connectOverCDP fails if a service-worker target from a
+ * previous app visit is registered) and BASE_URL env (default
  * http://127.0.0.1:8090).
  */
 
@@ -73,8 +75,21 @@ async function perceptualDelta(aBuffer, bBuffer) {
 
 const THRESHOLD_RMS = 24; // coarse: catches layout shifts/theme breakage, not AA noise
 
+async function connectWithRetry(attempts = 3) {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await playwright.chromium.connectOverCDP("http://127.0.0.1:9223");
+    } catch (error) {
+      if (attempt === attempts) throw error;
+      console.error(`connect failed (attempt ${attempt}): ${String(error.message).slice(0, 80)} — retrying`);
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+  }
+  throw new Error("unreachable");
+}
+
 async function main() {
-  const browser = await playwright.chromium.connectOverCDP("http://127.0.0.1:9223");
+  const browser = await connectWithRetry();
   mkdirSync(CAPTURE_DIR, { recursive: true });
   if (UPDATE) mkdirSync(BASELINE_DIR, { recursive: true });
 
