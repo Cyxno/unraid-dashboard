@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { execSync } from "node:child_process";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (relative: string): string => readFileSync(path.join(repoRoot, relative), "utf8");
@@ -17,7 +16,7 @@ describe("v0.9.4 agent API security", () => {
     const agentDir = path.join(repoRoot, "src/app/api/agent");
     const walk = (dir: string): string[] => {
       const out: string[] = [];
-      for (const entry of require("node:fs").readdirSync(dir, { withFileTypes: true })) {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) out.push(...walk(full));
         else if (entry.name === "route.ts") out.push(full);
@@ -93,7 +92,7 @@ describe("v0.9.4 agent API contract", () => {
 
   it("agent API is versioned under /api/agent/v1", () => {
     const agentDir = path.join(repoRoot, "src/app/api/agent");
-    const entries = (require("node:fs").readdirSync(agentDir, { withFileTypes: true }) as Array<{ name: string; isDirectory: () => boolean }>).map((entry) => entry.name);
+    const entries = readdirSync(agentDir, { withFileTypes: true }).map((entry) => entry.name);
     assert.deepEqual(entries.filter((entry) => entry !== "auth.ts" && entry !== "issues.ts" && entry !== "snapshot.ts" && entry !== "stream.ts" && entry !== "api.ts"), ["v1"]);
   });
 });

@@ -118,12 +118,11 @@ export function AppearanceProvider({ children }: { children: React.ReactNode }) 
     typeof window === "undefined" ? true : window.matchMedia("(prefers-color-scheme: dark)").matches,
   );
 
-  // Mount: load persisted appearance (client only) + react to OS changes.
+  // Mount: apply the stored appearance to the DOM (state itself is already
+  // hydrated by the lazy initializers) + react to OS scheme changes.
   useEffect(() => {
     const stored = loadAppearance();
-    setAppearance(stored);
     const media = window.matchMedia("(prefers-color-scheme: dark)");
-    setSystemDark(media.matches);
     applyAppearance(stored, media.matches);
     const onChange = (event: MediaQueryListEvent) => {
       setSystemDark(event.matches);

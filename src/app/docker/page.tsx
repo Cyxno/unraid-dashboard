@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Boxes,
   Filter,
@@ -21,6 +21,9 @@ import {
 } from "@/lib/prefs";
 import { PageHeader, LoadingPanel } from "@/components/dashboard/page-primitives";
 import { DockerUpdatesPanel } from "@/components/docker/updates-panel";
+import { useActionCapabilities, useActionRunner } from "@/components/actions/use-actions";
+import { ConfirmDialog } from "@/components/actions/confirm-dialog";
+import { useToast } from "@/components/layout/toast";
 import { ComposeProjectsPanel } from "@/components/docker/projects-panel";
 import { UpdateHistoryPanel } from "@/components/docker/update-history-panel";
 import { MetricStatus, SectionStatus } from "@/components/dashboard/section-status";
@@ -67,6 +70,37 @@ const STATE_META = {
   PAUSED: { label: "Paused", Icon: PauseCircle, iconClass: "text-warning" },
   EXITED: { label: "Stopped", Icon: StopCircle, iconClass: "text-muted-foreground" },
 } as const;
+
+/**
+ * Collapsible secondary section (v0.9.5): children mount only while
+ * expanded, so the updates sweep / project / history polls never start
+ * just because the page loaded. The container list is the first paint.
+ */
+function LazySection({
+  label,
+  openHint,
+  children,
+}: {
+  label: string;
+  openHint?: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      open={open}
+      onToggle={(event) => setOpen((event.target as HTMLDetailsElement).open)}
+    >
+      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        {label}
+        <span className="ml-auto text-[10px] normal-case text-muted-foreground group-open:hidden">
+          {openHint ?? "show"}
+        </span>
+      </summary>
+      {open && <div className="pt-2">{children}</div>}
+    </details>
+  );
+}
 
 function healthBadge(health: ContainerHealth) {
   if (!health) return null;
@@ -161,6 +195,40 @@ export default function DockerPage() {
   const [sortKey, setSortKey] = useState<SortKey>("operational");
   const [sortAsc, setSortAsc] = useState(true);
   const [groupMode, setGroupMode] = useState<GroupMode>("flat");
+  // Quick actions (v0.9.5): verified start/stop surfaced directly on the
+  // container list (mobile cards). Restart is intentionally absent — the
+  // live Unraid API exposes no docker restart and only verified actions
+  // ship; confirm-then-run matches the detail-page policy.
+  const { capabilities: actionCaps } = useActionCapabilities();
+  const { runAction: runContainerAction, pending: actionPending } = useActionRunner();
+  const { toast } = useToast();
+  const [pendingAction, setPendingAction] = useState<{
+    id: string;
+    name: string;
+    action: "start" | "stop";
+  } | null>(null);
+  const actionsEnabled = actionCaps?.enabled ?? false;
+  const canQuickAction = useCallback(
+    (action: "start" | "stop") =>
+      actionsEnabled && (actionCaps?.docker ?? []).includes(action),
+    [actionsEnabled, actionCaps],
+  );
+  const executeQuickAction = useCallback(
+    async (request: { id: string; name: string; action: "start" | "stop" }) => {
+      setPendingAction(null);
+      const result = await runContainerAction({
+        kind: "docker",
+        action: request.action,
+        id: request.id,
+      });
+      if (result?.ok) {
+        toast("success", `${request.name}: ${request.action} accepted`);
+      } else {
+        toast("error", result?.message ?? `${request.name}: ${request.action} failed`);
+      }
+    },
+    [runContainerAction, toast],
+  );
   const router = useRouter();
 
   const containers = useMemo(
@@ -206,11 +274,11 @@ export default function DockerPage() {
       );
     if (filter === "high-memory") list = list.filter(isHighMemory);
     const priority = (c: DockerContainerSummary): number => {
-      // Problems first (unhealthy/exited-with-attention), then running, then stopped.
-      if (c.state !== "RUNNING") return c.state === "EXITED" ? 2 : 3;
+      // Problems first (unhealthy/restarting), then running, stopped, unknown.
       if (c.health === "unhealthy") return 0;
-      if (c.health === "starting") return 0.5;
-      return 1;
+      if (c.state === "RUNNING") return 1;
+      if (c.state === "EXITED" || c.state === "PAUSED") return 2;
+      return 3;
     };
     const sorted = [...list].sort((a, b) => {
       let comparison: number;
@@ -300,17 +368,7 @@ export default function DockerPage() {
         }
       />
 
-      {/* Central update detection (v0.7.6): read-only overview across ALL
-          containers — Unraid, Compose, deploy scripts, local builds. */}
-      <DockerUpdatesPanel />
 
-      {/* Project-aware Compose model (v0.7.13): per-project plans and the
-          sequential project update. Pipeline-owned projects are read-only. */}
-      <ComposeProjectsPanel />
-
-      {/* Persisted update history (v0.7.13): filterable container/project
-          records alongside the dashboard's own releases. */}
-      <UpdateHistoryPanel />
 
       {data?.data?.metricsMeta && data.data.metricsMeta.status !== "live" && (
         <div className="mb-3">
@@ -318,6 +376,25 @@ export default function DockerPage() {
         </div>
       )}
 
+      {/* Anchor navigation (v0.9.5) */}
+      <nav aria-label="Docker page sections" className="mb-3 flex flex-wrap items-center gap-1.5 text-xs">
+        {[
+          ["#docker-containers", "Containers"],
+          ["#docker-updates", "Updates"],
+          ["#docker-projects", "Projects"],
+          ["#docker-history", "History"],
+        ].map(([href, label]) => (
+          <a
+            key={href}
+            href={href}
+            className="rounded-full border px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+          >
+            {label}
+          </a>
+        ))}
+      </nav>
+
+      <section id="docker-containers" aria-label="Containers">
       <div className="mb-3 flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
         <label className="relative md:w-56">
           <span className="sr-only">Search containers</span>
@@ -518,6 +595,50 @@ export default function DockerPage() {
                     </span>
                   )}
                 </button>
+                {(actionsEnabled && (canQuickAction("start") || canQuickAction("stop")) && (
+                  <div className="mt-2 flex items-center gap-2 border-t pt-2">
+                    {container.state === "RUNNING" && canQuickAction("stop") && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 gap-1.5 text-xs"
+                        disabled={actionPending?.id === container.id}
+                        aria-label={`Stop ${container.name}`}
+                        onClick={() =>
+                          setPendingAction({ id: container.id, name: container.name, action: "stop" })
+                        }
+                      >
+                        <StopCircle className="size-3.5" aria-hidden="true" />
+                        Stop
+                      </Button>
+                    )}
+                    {(container.state === "EXITED" || container.state === "PAUSED") &&
+                      canQuickAction("start") && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 gap-1.5 text-xs"
+                          disabled={actionPending?.id === container.id}
+                          aria-label={`Start ${container.name}`}
+                          onClick={() =>
+                            setPendingAction({ id: container.id, name: container.name, action: "start" })
+                          }
+                        >
+                          <PlayCircle className="size-3.5" aria-hidden="true" />
+                          Start
+                        </Button>
+                      )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="ml-auto h-7 text-xs"
+                      aria-label={`Open details for ${container.name}`}
+                      onClick={() => router.push(`/docker/${encodeURIComponent(container.name)}`)}
+                    >
+                      Details
+                    </Button>
+                  </div>
+                ))}
               </Card>
             );
           })}
@@ -673,10 +794,49 @@ export default function DockerPage() {
         </div>
         </>
       )}
+      </section>
+      <section id="docker-updates" aria-label="Updates" className="mt-4">
+        <LazySection label="Updates" openHint="show">
+          <DockerUpdatesPanel />
+        </LazySection>
+      </section>
+
+      <section id="docker-projects" aria-label="Projects" className="mt-4">
+        <LazySection label="Projects" openHint="show">
+          <ComposeProjectsPanel />
+        </LazySection>
+      </section>
+
+      <section id="docker-history" aria-label="History" className="mt-4">
+        <LazySection label="History" openHint="show">
+          <UpdateHistoryPanel />
+        </LazySection>
+      </section>
+
+      <ConfirmDialog
+        open={pendingAction !== null}
+        title={pendingAction ? `${pendingAction.action === "stop" ? "Stop" : "Start"} ${pendingAction.name}?` : ""}
+        severity={pendingAction?.action === "stop" ? "destructive" : "info"}
+        confirmLabel={pendingAction?.action === "stop" ? "Stop container" : "Start container"}
+        busy={actionPending !== null}
+        onCancel={() => setPendingAction(null)}
+        onConfirm={() => pendingAction && executeQuickAction(pendingAction)}
+      >
+        {pendingAction?.action === "stop" ? (
+          <>
+            <p>
+              The container <strong>{pendingAction.name}</strong> is currently running.
+            </p>
+            <p>Stopping makes its service unavailable until started again.</p>
+          </>
+        ) : (
+          <p>Will bring the container up with its existing configuration.</p>
+        )}
+      </ConfirmDialog>
 
       <p className="mt-4 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
         <Boxes className="size-3.5" aria-hidden="true" />
-        Read-only view — container actions are intentionally out of scope.
+        Start/stop actions run confirmed through the guarded action API and are audit-logged; restart is not offered because the Unraid API exposes no verified restart.
         {showMetrics
           ? ` Runtime metrics from Prometheus (docker stats, 15s). Filters: high CPU ≥ ${HIGH_CPU_PERCENT}%, high memory ≥ ${formatBytes(HIGH_MEMORY_BYTES, 0)} or ≥ ${HIGH_MEMORY_PERCENT_OF_LIMIT}% of limit.`
           : " Runtime metrics unavailable — Prometheus not reachable."}

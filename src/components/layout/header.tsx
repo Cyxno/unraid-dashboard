@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { usePathname } from "next/navigation";
 import { Menu, RefreshCw } from "lucide-react";
 import { ViewsMenu } from "./views-menu";
 import { AuthIndicator } from "./auth-indicator";
@@ -86,6 +87,10 @@ function hasDemo(payload: OverviewPayload | null): boolean {
 
 export function Header({ overview, onMenuClick }: HeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  // Views are an Overview-composition feature (v0.9.5): the saved/shared
+  // view controls only apply there, not on section pages.
+  const pathname = usePathname();
+  const showViews = pathname === "/";
   const payload = overview.data;
   const identity: Section<SystemIdentity> | undefined = payload?.identity;
   const storage = payload?.storage;
@@ -132,9 +137,11 @@ export function Header({ overview, onMenuClick }: HeaderProps) {
 
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
         {healthBadge(payload?.health, Boolean(payload))}
-        {dataStatusBadge(overview)}
+        {/* Data status is redundant with the health badge on phones; the
+            health badge stays visible at every width (v0.9.5 topbar rule). */}
+        <span className="hidden sm:inline-flex">{dataStatusBadge(overview)}</span>
         <AuthIndicator />
-        <ViewsMenu />
+        {showViews && <ViewsMenu />}
         <Button
           variant="ghost"
           size="icon"

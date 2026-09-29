@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect } from "react";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NAV_GROUP_LABELS, NAV_ITEMS, type NavGroup } from "@/lib/navigation";
@@ -21,6 +22,17 @@ const GROUP_ORDER: NavGroup[] = ["overview", "infrastructure", "operations", "ob
 export function Sidebar({ mobileOpen, onMobileClose, collapsed, onToggleCollapsed }: SidebarProps) {
   const pathname = usePathname();
 
+  // Scroll lock: the mobile drawer owns the gesture while open (v0.9.5
+  // overlay model, mirrors the bottom-nav More sheet).
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [mobileOpen]);
+
   const grouped = GROUP_ORDER.map((group) => ({
     group,
     items: NAV_ITEMS.filter((item) => item.group === group),
@@ -38,6 +50,9 @@ export function Sidebar({ mobileOpen, onMobileClose, collapsed, onToggleCollapse
       )}
       <aside
         data-collapsed={collapsed}
+        role={mobileOpen ? "dialog" : undefined}
+        aria-modal={mobileOpen ? true : undefined}
+        aria-label={mobileOpen ? "Navigation" : undefined}
         className={cn(
           "fixed inset-y-0 left-0 z-50 flex flex-col border-r bg-card transition-[width,transform] duration-200",
           collapsed ? "md:w-14" : "md:w-56",

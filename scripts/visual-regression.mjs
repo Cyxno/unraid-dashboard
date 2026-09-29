@@ -36,17 +36,38 @@ const UPDATE = process.argv.includes("--update");
 const THEMES = ["dark", "light", "midnight", "ocean"];
 const MATRIX = [
   { path: "/", name: "overview", widths: [390, 768, 1440], themes: THEMES },
-  { path: "/docker", name: "docker", widths: [390, 1440], themes: ["dark", "light"] },
+  { path: "/docker", name: "docker", widths: [390, 430, 1440], themes: ["dark", "light"] },
   { path: "/storage", name: "storage", widths: [390, 1440], themes: ["dark", "light"] },
   { path: "/operations", name: "operations", widths: [1440], themes: THEMES },
-  { path: "/settings", name: "settings", widths: [1440], themes: ["dark", "light"] },
+  { path: "/settings", name: "settings", widths: [390, 1440], themes: ["dark", "light"] },
   { path: "/noc", name: "noc", widths: [1440], themes: ["dark", "midnight"] },
+];
+
+/**
+ * Mobile overlay states (v0.9.5): captured at 390 dark on the overview.
+ * Each state opens the overlay, asserts it fits INSIDE the viewport
+ * (hard gate — this is the "sheet/drawer extends beyond screen" class
+ * of bug), then closes it and asserts it is gone (interaction gate).
+ */
+const OVERLAYS = [
+  {
+    name: "nav-drawer",
+    open: 'button[aria-label="Open navigation"]',
+    dialog: 'aside[role="dialog"][aria-label="Navigation"]',
+    close: 'button[aria-label="Close navigation"]',
+  },
+  {
+    name: "more-sheet",
+    open: 'button[aria-label="More pages"]',
+    dialog: 'div[role="dialog"][aria-label="More pages"]',
+    close: 'div[role="dialog"][aria-label="More pages"] button[aria-label="Close"]',
+  },
 ];
 
 /** Wait for an app-specific readiness marker per route (data rendered). */
 const WAIT_FOR = {
   "/": "text=Uptime",
-  "/docker": "text=Container updates",
+  "/docker": "text=Containers",
   "/storage": "text=Usable capacity",
   "/operations": "text=Release chain",
   "/settings": "text=Appearance",
@@ -151,9 +172,75 @@ async function main() {
     }
   }
 
+  const overlayFailures = await captureOverlays(browser);
+
   await browser.close();
-  console.log(`\n${captures} captures · overflow failures: ${overflowFailures} · diff failures: ${diffFailures}`);
-  process.exit(overflowFailures + diffFailures > 0 ? 1 : 0);
+  console.log(`\n${captures} captures · overflow failures: ${overflowFailures} · diff failures: ${diffFailures} · overlay failures: ${overlayFailures}`);
+  process.exit(overflowFailures + diffFailures + overlayFailures > 0 ? 1 : 0);
+}
+
+/**
+ * Overlay pass (v0.9.5): for every overlay state, open → assert fit inside
+ * the viewport + no page overflow → capture → close → assert gone.
+ */
+async function captureOverlays(browser) {
+  let failures = 0;
+  for (const overlay of OVERLAYS) {
+    const label = `overlay-${overlay.name}-390`;
+    const context = await browser.newContext({ viewport: { width: 390, height: 700 } });
+    const page = await context.newPage();
+    try {
+      await page.goto(`${BASE_URL}/`, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.evaluate(() => {
+        localStorage.setItem(
+          "beacon.appearance.v1",
+          JSON.stringify({ theme: "dark", accent: "emerald", density: "comfortable", motion: "full" }),
+        );
+      });
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.waitForTimeout(1_500);
+
+      await page.click(overlay.open);
+      await page.waitForSelector(overlay.dialog, { timeout: 5_000 });
+      await page.waitForTimeout(400);
+
+      const fit = await page.evaluate((selector) => {
+        const element = document.querySelector(selector);
+        if (!element) return { ok: false, reason: "dialog missing" };
+        const box = element.getBoundingClientRect();
+        const viewportHeight = window.innerHeight;
+        const viewportWidth = window.innerWidth;
+        const inside = box.top >= -1 && box.left >= -1 && box.right <= viewportWidth + 1 && box.bottom <= viewportHeight + 1;
+        const pageOverflow = document.documentElement.scrollWidth > document.documentElement.clientWidth + 1;
+        return {
+          ok: inside && !pageOverflow,
+          reason: inside
+            ? pageOverflow ? "page-level horizontal overflow" : "ok"
+            : `box ${JSON.stringify({ top: box.top, left: box.left, right: box.right, bottom: box.bottom })} vs viewport ${viewportWidth}x${viewportHeight}`,
+        };
+      }, overlay.dialog);
+      if (!fit.ok) {
+        failures += 1;
+        console.error(`FIT FAIL  ${label}: ${fit.reason}`);
+      }
+
+      const shot = await page.screenshot();
+      writeFileSync(path.join(CAPTURE_DIR, `${label}.png`), shot);
+
+      await page.click(overlay.close);
+      const gone = await page.waitForSelector(overlay.dialog, { state: "detached", timeout: 5_000 }).then(() => true).catch(() => false);
+      if (!gone) {
+        failures += 1;
+        console.error(`CLOSE FAIL ${label}: dialog still present after close`);
+      }
+    } catch (error) {
+      failures += 1;
+      console.error(`ERROR     ${label}: ${error.message.slice(0, 100)}`);
+    } finally {
+      await context.close();
+    }
+  }
+  return failures;
 }
 
 main().catch((error) => {

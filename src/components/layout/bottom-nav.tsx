@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Boxes, HardDrive, LayoutDashboard, MoreHorizontal, X } from "lucide-react";
 import { NAV_ITEMS } from "@/lib/navigation";
 import { Activity, BellRing, ClipboardList, Monitor, Network, ScrollText, Settings, Tv } from "lucide-react";
@@ -35,6 +35,17 @@ export function BottomNav() {
   const pathname = usePathname();
   const [moreOpen, setMoreOpen] = useState(false);
 
+  // Scroll lock: the More sheet owns the gesture while open so background
+  // content cannot scroll underneath it on iOS (v0.9.5 overlay model).
+  useEffect(() => {
+    if (!moreOpen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [moreOpen]);
+
   if (pathname === "/noc") return null; // standalone wallboard
 
   const isActive = (href: string) =>
@@ -54,7 +65,7 @@ export function BottomNav() {
         <div
           role="dialog"
           aria-label="More pages"
-          className="fixed inset-x-0 bottom-0 z-[61] rounded-t-2xl border-t bg-card pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-2 shadow-2xl"
+          className="fixed inset-x-0 bottom-0 z-[61] max-h-[100dvh] overflow-y-auto overscroll-contain rounded-t-2xl border-t bg-card pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-2 shadow-2xl"
         >
           <div className="mx-auto flex max-w-md items-center justify-between px-4 pb-1">
             <p className="text-xs uppercase tracking-wider text-muted-foreground">All pages</p>
