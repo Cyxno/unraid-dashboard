@@ -28,7 +28,7 @@ const LIST_UNREAD = /* GraphQL */ `
 `;
 
 const ARCHIVE_IDS = /* GraphQL */ `
-  mutation ArchiveNotifications($ids: [ID!]!) {
+  mutation ArchiveNotifications($ids: [PrefixedID!]!) {
     archiveNotifications(ids: $ids) {
       archive {
         total
