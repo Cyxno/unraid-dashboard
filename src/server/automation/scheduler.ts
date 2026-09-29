@@ -1,4 +1,5 @@
 import { access, constants } from "node:fs/promises";
+import { publishEvent } from "@/server/events/sampler";
 import { getEnvSafe } from "@/server/env";
 import { getHelperStatus, requestContainerUpdate, requestComposeUpdate, getContainerJob, type ContainerJob } from "@/server/update/helper-client";
 import { enrichedOverview, type EnrichedOverview } from "@/server/docker/updates";
@@ -403,6 +404,22 @@ export async function automationTick(): Promise<{ ranAt: string; summary: string
 
   const states = evaluated.map((entry) => `${entry.name}:${entry.state}`).join(", ") || "no opt-in targets";
   publishSnapshot(evaluated, now.toISOString());
+  // Push a COMPACT status event over SSE (normalized, no inventory payload):
+  // live Automation UI updates without waiting for its 15s poll fallback.
+  publishEvent({
+    event: "automation",
+    data: {
+    evaluatedAt: now.toISOString(),
+    enabled: state.config.enabled,
+    paused: state.config.paused,
+    queueLength: queue.length,
+    windowOpen: window.inWindow,
+    eligible: evaluated.filter((entry) => entry.state === "eligible").length,
+    cooldown: evaluated.filter((entry) => entry.state === "cooldown").length,
+    intervention: evaluated.filter((entry) => entry.state === "intervention_required").length,
+    targets: evaluated.map((entry) => ({ name: entry.name, state: entry.state, optIn: entry.facts.optIn })),
+    },
+  });
   return {
     ranAt: now.toISOString(),
     summary: `evaluated [${states}]; queued=${queuedView.length}; window=${window.inWindow ? "open" : "closed"}`,

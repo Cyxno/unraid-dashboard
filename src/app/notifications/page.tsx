@@ -44,14 +44,14 @@ export default function NotificationsPage() {
   const [bulkPending, setBulkPending] = useState<string | null>(null);
   const [bulkResult, setBulkResult] = useState<string | null>(null);
   const [confirmArchiveAll, setConfirmArchiveAll] = useState(false);
-  const bulk = async (action: "mark-all-read" | "archive-all") => {
-    setBulkPending(action);
+  const bulk = async (mode: "unread" | "all") => {
+    setBulkPending(mode);
     setBulkResult(null);
     try {
       const response = await fetch("/api/notifications/bulk", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify(mode === "all" ? { mode, confirm: "yes" } : { mode }),
       });
       const payload = (await response.json().catch(() => ({}))) as { error?: string; archived?: number };
       if (!response.ok) {
@@ -131,15 +131,15 @@ export default function NotificationsPage() {
           <div className="ml-auto flex items-center gap-2">
             {confirmArchiveAll ? (
               <>
-                <span className="text-xs text-warning">Archive everything?</span>
+                <span className="text-xs text-warning">Archive {notifications.length} notifications?</span>
                 <Button
                   size="sm"
                   variant="destructive"
                   className="h-7 text-xs"
                   disabled={bulkPending !== null}
-                  onClick={() => bulk("archive-all")}
+                  onClick={() => bulk("all")}
                 >
-                  {bulkPending === "archive-all" ? "Archiving…" : "Confirm"}
+                  {bulkPending === "all" ? "Archiving…" : `Archive ${notifications.length}`}
                 </Button>
                 <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setConfirmArchiveAll(false)}>
                   Cancel
@@ -152,9 +152,9 @@ export default function NotificationsPage() {
                   variant="outline"
                   className="h-7 text-xs"
                   disabled={bulkPending !== null}
-                  onClick={() => bulk("mark-all-read")}
+                  onClick={() => bulk("unread")}
                 >
-                  {bulkPending === "mark-all-read" ? "Working…" : `Mark all as read`}
+                  {bulkPending === "unread" ? "Working…" : `Mark ${notifications.length} as read`}
                 </Button>
                 <Button
                   size="sm"

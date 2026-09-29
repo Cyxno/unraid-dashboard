@@ -52,67 +52,98 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  let body: { action?: unknown; confirm?: unknown };
+  let body: { mode?: unknown; ids?: unknown; confirm?: unknown };
   try {
     body = (await request.json()) as typeof body;
   } catch {
     return NextResponse.json({ error: "Malformed JSON body." }, { status: 400, headers: { "cache-control": "no-store" } });
   }
-  const action = typeof body.action === "string" ? body.action : "";
-  if (action !== "mark-all-read" && action !== "archive-all") {
+  const mode = typeof body.mode === "string" ? body.mode : "";
+
+  // Explicit modes only. "selected" requires non-empty ids; an empty
+  // selected list is a validation ERROR, never reinterpreted as "all".
+  const MAX_IDS = 200;
+  if (mode === "unread") {
+    // archive every UNREAD notification (Unraid's "indicate all as read")
+  } else if (mode === "all") {
+    // archive every active notification — requires explicit confirmation
+    if (body.confirm !== "yes") {
+      return NextResponse.json(
+        { error: "Mode all requires explicit confirmation." },
+        { status: 400, headers: { "cache-control": "no-store" } },
+      );
+    }
+  } else if (mode === "selected") {
+    if (!Array.isArray(body.ids) || body.ids.length === 0) {
+      return NextResponse.json(
+        { error: "Mode selected requires a non-empty ids array." },
+        { status: 400, headers: { "cache-control": "no-store" } },
+      );
+    }
+    if (body.ids.length > MAX_IDS) {
+      return NextResponse.json(
+        { error: `Mode selected is capped at ${MAX_IDS} ids per call.` },
+        { status: 400, headers: { "cache-control": "no-store" } },
+      );
+    }
+    if (!body.ids.every((id) => typeof id === "string" && id.length > 0 && id.length <= 200)) {
+      return NextResponse.json({ error: "Invalid ids." }, { status: 400, headers: { "cache-control": "no-store" } });
+    }
+  } else {
     return NextResponse.json(
-      { error: "Unknown action. Allowed: mark-all-read, archive-all." },
-      { status: 400, headers: { "cache-control": "no-store" } },
-    );
-  }
-  // Archive-all is the explicit-confirmation action.
-  if (action === "archive-all" && body.confirm !== "yes") {
-    return NextResponse.json(
-      { error: "Archive all requires explicit confirmation." },
+      { error: "Unknown mode. Allowed: unread, all, selected." },
       { status: 400, headers: { "cache-control": "no-store" } },
     );
   }
 
   const client = getUnraidClient();
   try {
-    // Collect unread ids (bounded at 200 like the list view).
-    const listPayload = await client.request(LIST_UNREAD);
-    const payloadShape = listPayload as { notifications?: { list?: Array<{ id: string }> } };
-    const list: Array<{ id: string }> = Array.isArray(payloadShape.notifications?.list)
-      ? payloadShape.notifications.list
-      : [];
-    const ids = list.map((entry) => entry.id);
+    let ids: string[] = [];
+    if (mode === "unread" || mode === "all") {
+      // Resolve the id list server-side from the live unread feed; even in
+      // "all" mode the mutation receives an EXPLICIT id list (bounded 200)
+      // so the empty-ids catch-all of the upstream API is never reachable.
+      const listPayload = await client.request(LIST_UNREAD);
+      const payloadShape = listPayload as { notifications?: { list?: Array<{ id: string }> } };
+      ids = Array.isArray(payloadShape.notifications?.list)
+        ? payloadShape.notifications.list.map((entry) => entry.id)
+        : [];
+      if (mode === "unread") {
+        // "unread" mode = exactly the unread set (already resolved).
+      }
+    } else {
+      ids = (body.ids as string[]).slice(0, MAX_IDS);
+    }
+
     if (ids.length === 0) {
       await recordAudit({
         actor,
         sourceIp: guard.sourceIp,
         kind: "notification",
         action: "notifications-bulk",
-        targetName: action,
-        targetId: "0 unread",
+        targetName: mode,
+        targetId: "0 targets",
         result: "success",
         durationMs: 0,
       }).catch(() => {});
-      return NextResponse.json({ ok: true, archived: 0, unreadRemaining: 0 }, { headers: { "cache-control": "no-store" } });
+      return NextResponse.json({ ok: true, mode, archived: 0 }, { headers: { "cache-control": "no-store" } });
     }
 
     const payload = (await client.request(ARCHIVE_IDS, { ids })) as {
       archiveNotifications: { archive: { total: number }; unread: { total: number } };
     };
-    const archived = payload.archiveNotifications.archive.total;
-    const unreadRemaining = payload.archiveNotifications.unread.total;
     await recordAudit({
       actor,
       sourceIp: guard.sourceIp,
       kind: "notification",
       action: "notifications-bulk",
-      targetName: action,
+      targetName: mode,
       targetId: `${ids.length} archived`,
       result: "success",
       durationMs: 0,
     }).catch(() => {});
     return NextResponse.json(
-      { ok: true, archived: ids.length, archiveTotal: archived, unreadRemaining },
+      { ok: true, mode, archived: ids.length, archiveTotal: payload.archiveNotifications.archive.total, unreadRemaining: payload.archiveNotifications.unread.total },
       { headers: { "cache-control": "no-store" } },
     );
   } catch (error) {
@@ -122,8 +153,8 @@ export async function POST(request: NextRequest) {
       sourceIp: guard.sourceIp,
       kind: "notification",
       action: "notifications-bulk",
-      targetName: action,
-      targetId: action,
+      targetName: mode,
+      targetId: mode,
       result: "failed",
       durationMs: 0,
       error: message,

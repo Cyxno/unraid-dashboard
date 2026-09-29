@@ -240,6 +240,12 @@ export function dispatchForTest(event: SampledEvent): void {
   dispatch(event);
 }
 
+/** Publishes an event to all live SSE subscribers (used by the automation
+ * scheduler and other in-process producers). No-op with zero subscribers. */
+export function publishEvent(event: SampledEvent): void {
+  dispatch(event);
+}
+
 /* ---- update-phase watcher (v0.7) -------------------------------------------
  * Polls the update helper while an update machine is active (or just
  * finished) and fans phase changes out as `update` events. The poll only

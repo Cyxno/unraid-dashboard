@@ -31,6 +31,18 @@ export interface DashboardEvents {
   hello?: { transitions: Array<{ name: string; from: string; to: string; at: string }> };
   /** v0.7: update-machine phase changes from the local helper. */
   update?: { phase: string; detail: string | null; finishedAt: string | null };
+  /** v0.9.3: compact automation evaluation snapshot from the scheduler. */
+  automation?: {
+    evaluatedAt: string;
+    enabled: boolean;
+    paused: boolean;
+    queueLength: number;
+    windowOpen: boolean;
+    eligible: number;
+    cooldown: number;
+    intervention: number;
+    targets: Array<{ name: string; state: string; optIn: boolean }>;
+  };
 }
 
 export function useDashboardEvents(

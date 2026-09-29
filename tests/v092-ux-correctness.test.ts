@@ -106,7 +106,7 @@ describe("v0.9.2 automation latency", () => {
   it("automation page applies optimistic patch over polled data", () => {
     const page = read("src/app/automation/page.tsx");
     assert.match(page, /setOptimistic\(\(current\) => \(\{ \.\.\.\(current \?\? \{\}\), \.\.\.patch \}\)\)/);
-    assert.match(page, /optimistic\.enabled \?\? data\.enabled/);
+    assert.match(page, /optimistic\?\.enabled \?\? liveAutomation\.enabled/);
   });
 });
 
@@ -123,9 +123,9 @@ describe("v0.9.2 notifications bulk actions", () => {
 
   it("page exposes bulk buttons with confirmation flow", () => {
     const page = read("src/app/notifications/page.tsx");
-    assert.match(page, /Mark all as read/);
+    assert.match(page, /Mark \$\{notifications\.length\} as read/);
     assert.match(page, /confirmArchiveAll/);
-    assert.match(page, /bulk\("archive-all"\)/);
+    assert.match(page, /bulk\("all"\)/);
   });
 });
 
@@ -151,7 +151,7 @@ describe("v0.9.2 layout presets", () => {
     assert.match(prefs, /nocLayout: NocLayout;/);
     assert.match(prefs, /nocLayout: "full",/);
     const noc = read("src/app/noc/page.tsx");
-    assert.match(noc, /prefs\.nocLayout !== "minimal"/);
+    assert.match(noc, /NOC_LAYOUT_SEEDS\[prefs\.nocLayout\]/);
     assert.match(noc, /setPref\("nocLayout", layout\)/);
   });
 

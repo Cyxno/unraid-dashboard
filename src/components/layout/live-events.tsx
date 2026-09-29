@@ -18,6 +18,18 @@ export interface UpdatePhaseEvent {
   finishedAt: string | null;
 }
 
+export interface AutomationEvent {
+  evaluatedAt: string;
+  enabled: boolean;
+  paused: boolean;
+  queueLength: number;
+  windowOpen: boolean;
+  eligible: number;
+  cooldown: number;
+  intervention: number;
+  targets: Array<{ name: string; state: string; optIn: boolean }>;
+}
+
 export interface LiveState {
   status: SseStatus;
   snapshot: {
@@ -30,9 +42,11 @@ export interface LiveState {
   dockerCounts: { running: number; total: number } | null;
   /** Latest update-machine phase (v0.7); null when none observed. */
   updatePhase: UpdatePhaseEvent | null;
+  /** Latest automation evaluation (v0.9.3); null until scheduler ticks. */
+  automation: AutomationEvent | null;
 }
 
-const LiveContext = createContext<LiveState>({ status: "connecting", snapshot: null, dockerCounts: null, updatePhase: null });
+const LiveContext = createContext<LiveState>({ status: "connecting", snapshot: null, dockerCounts: null, updatePhase: null, automation: null });
 
 export function useLive(): LiveState {
   return useContext(LiveContext);
@@ -42,6 +56,7 @@ export function LiveEventsProvider({ children }: { children: React.ReactNode }) 
   const [snapshot, setSnapshot] = useState<LiveState["snapshot"]>(null);
   const [dockerCounts, setDockerCounts] = useState<LiveState["dockerCounts"]>(null);
   const [updatePhase, setUpdatePhase] = useState<UpdatePhaseEvent | null>(null);
+  const [automation, setAutomation] = useState<AutomationEvent | null>(null);
   const statusRef = useRef<SseStatus>("connecting");
   const everConnected = useRef(false);
   const { toast } = useToast();
@@ -51,6 +66,8 @@ export function LiveEventsProvider({ children }: { children: React.ReactNode }) 
       setSnapshot(data as LiveState["snapshot"]);
     } else if (name === "docker") {
       setDockerCounts(data as LiveState["dockerCounts"]);
+    } else if (name === "automation") {
+      setAutomation(data as AutomationEvent);
     } else if (name === "update") {
       const phase = data as UpdatePhaseEvent;
       setUpdatePhase(phase);
@@ -91,7 +108,7 @@ export function LiveEventsProvider({ children }: { children: React.ReactNode }) 
   }, [status, toast]);
 
   return (
-    <LiveContext.Provider value={{ status, snapshot, dockerCounts, updatePhase }}>
+    <LiveContext.Provider value={{ status, snapshot, dockerCounts, updatePhase, automation }}>
       {children}
     </LiveContext.Provider>
   );

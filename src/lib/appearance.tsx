@@ -108,11 +108,15 @@ const AppearanceContext = createContext<AppearanceContextValue | null>(null);
 export function AppearanceProvider({ children }: { children: React.ReactNode }) {
   // Lazy initializers read the persisted appearance synchronously so the
   // first render already carries the stored theme (no setState-in-effect).
-  // SSR-safe: server renders defaults; the client initializers read storage
-  // (hydration mismatch is impossible — the pre-paint script set data-attrs
-  // and the shell has no theme-dependent text).
-  const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE);
-  const [systemDark, setSystemDark] = useState(true);
+  // SSR-safe lazy init: server renders defaults; on the client the first
+  // render already carries the stored theme (the pre-paint script set the
+  // data-attrs, so there is no flash and no setState-in-effect).
+  const [appearance, setAppearance] = useState<Appearance>(() =>
+    typeof window === "undefined" ? DEFAULT_APPEARANCE : loadAppearance(),
+  );
+  const [systemDark, setSystemDark] = useState<boolean>(() =>
+    typeof window === "undefined" ? true : window.matchMedia("(prefers-color-scheme: dark)").matches,
+  );
 
   // Mount: load persisted appearance (client only) + react to OS changes.
   useEffect(() => {

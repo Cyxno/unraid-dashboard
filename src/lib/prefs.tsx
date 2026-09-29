@@ -1,5 +1,6 @@
 "use client";
 
+import type { NocWidgetSize } from "./noc-widgets";
 import {
   createContext,
   useCallback,
@@ -38,6 +39,8 @@ export interface Prefs {
   nocCycleSeconds: number;
   /** NOC wallboard layout preset (v0.9.2): which tiles render. */
   nocLayout: NocLayout;
+  /** Per-widget NOC layout (v0.9.3): ordered widget ids + sizes. */
+  nocWidgetLayout: { order: string[]; sizes: Record<string, NocWidgetSize> };
   /** Shared dashboard applied inside NOC mode (null = built-in tiles). */
   nocDashboardId: string | null;
 }
@@ -162,6 +165,7 @@ const DEFAULTS: Prefs = {
   savedViews: {},
   nocCycleSeconds: 0,
   nocLayout: "full",
+  nocWidgetLayout: { order: [], sizes: {} },
   nocDashboardId: null,
 };
 

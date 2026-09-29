@@ -31,6 +31,7 @@ import { formatBytes, formatPercent, formatRate, formatTemp, formatUptime, human
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { StatusDot } from "@/components/ui/status";
+import { NOC_LAYOUT_SEEDS, NOC_WIDGETS, nocWidgetDef, normalizeNocLayout, type NocWidgetSize } from "@/lib/noc-widgets";
 import { CYCLE_PANELS, CyclePanel, type CyclePanelId } from "./panels";
 import { WidgetGrid } from "@/components/dashboard/widget-registry";
 import type {
@@ -188,6 +189,9 @@ function NocShell() {
   const wakeLock = useWakeLock();
 
   const [panelsOpen, setPanelsOpen] = useState(false);
+  // v0.9.3 per-widget layout: edit mode + normalized config from prefs.
+  const [editLayout, setEditLayout] = useState(false);
+  const widgetLayout = normalizeNocLayout(prefs.nocWidgetLayout.order.length > 0 ? prefs.nocWidgetLayout : { order: NOC_LAYOUT_SEEDS[prefs.nocLayout] ?? NOC_LAYOUT_SEEDS.full, sizes: prefs.nocWidgetLayout.sizes });
   const [clock, setClock] = useState(() => new Date());
   useEffect(() => {
     const timer = setInterval(() => setClock(new Date()), 15_000);
@@ -487,77 +491,183 @@ function NocShell() {
       /* Main tiles (built-in) or cycled panel. Layout preset (v0.9.2) selects
          which tiles render: full / performance / storage / minimal. */
       activePanel === "overview" || cycleSeconds === 0 ? (
+        <>
+        <div>
+        {/* Registry-driven tile grid (v0.9.3). Edit mode: reorder/hide/size. */}
+        {editLayout && (
+          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border bg-card/60 p-2 text-xs">
+            <span className="text-muted-foreground">Editing layout — use the controls on each tile. Hidden:</span>
+            {NOC_WIDGETS.filter((widget) => !widgetLayout.order.includes(widget.id)).map((widget) => (
+              <Button
+                key={widget.id}
+                size="sm"
+                variant="outline"
+                className="h-6 px-2 text-[11px]"
+                onClick={() => setPref("nocWidgetLayout", { order: [...widgetLayout.order, widget.id], sizes: widgetLayout.sizes })}
+              >
+                + {widget.title}
+              </Button>
+            ))}
+            {NOC_WIDGETS.every((widget) => widgetLayout.order.includes(widget.id)) && (
+              <span className="text-muted-foreground">none</span>
+            )}
+          </div>
+        )}
         <div className={cn("grid gap-3", kiosk ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-2 lg:grid-cols-4 xl:grid-cols-8")}>
-          <Tile
-            label="CPU"
-            icon={Cpu}
-            large={kiosk}
-            value={formatPercent(snap?.cpuPercent ?? payload?.cpu.data?.percentTotal)}
-            sub={
-              extras?.load?.five !== null && extras?.load
-                ? `load ${extras.load.five?.toFixed(2)} · ${extras.load.threads ?? "?"} threads`
-                : null
+          {widgetLayout.order.map((widgetId) => {
+            const def = nocWidgetDef(widgetId);
+            if (!def) return null;
+            const size: NocWidgetSize = widgetLayout.sizes[widgetId] ?? "1x1";
+            const span = size === "2x2" ? "sm:col-span-2 lg:row-span-2" : "";
+            const large = kiosk || size === "2x2";
+            const tileProps = {
+              large,
+            };
+            const editControls = editLayout ? (
+              <div className="mt-2 flex items-center justify-end gap-1">
+                <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" aria-label={`Move ${def.title} up`}
+                  onClick={() => {
+                    const order = [...widgetLayout.order];
+                    const index = order.indexOf(widgetId);
+                    if (index > 0) {
+                      [order[index - 1], order[index]] = [order[index]!, order[index - 1]!];
+                      setPref("nocWidgetLayout", { order, sizes: widgetLayout.sizes });
+                    }
+                  }}>
+                ↑</Button>
+                <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" aria-label={`Move ${def.title} down`}
+                  onClick={() => {
+                    const order = [...widgetLayout.order];
+                    const index = order.indexOf(widgetId);
+                    if (index < order.length - 1) {
+                      [order[index + 1], order[index]] = [order[index]!, order[index + 1]!];
+                      setPref("nocWidgetLayout", { order, sizes: widgetLayout.sizes });
+                    }
+                  }}>
+                ↓</Button>
+                {def.allowedSizes.length > 1 && (
+                  <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" aria-label={`Resize ${def.title}`}
+                    onClick={() => {
+                      const next: NocWidgetSize = size === "1x1" ? "2x2" : "1x1";
+                      setPref("nocWidgetLayout", { order: widgetLayout.order, sizes: { ...widgetLayout.sizes, [widgetId]: next } });
+                    }}>
+                  {size}</Button>
+                )}
+                <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px] text-danger" aria-label={`Hide ${def.title}`}
+                  onClick={() => setPref("nocWidgetLayout", { order: widgetLayout.order.filter((id) => id !== widgetId), sizes: widgetLayout.sizes })}>
+                ✕</Button>
+              </div>
+            ) : null;
+
+            if (widgetId === "cpu") {
+              return (
+                <div key={widgetId} className={span}>
+                <Tile label="CPU" icon={Cpu} value={formatPercent(snap?.cpuPercent ?? payload?.cpu.data?.percentTotal)} sub={extras?.load?.five !== null && extras?.load ? `load ${extras.load.five?.toFixed(2)} · ${extras.load.threads ?? "?"} threads` : null} alert={(snap?.cpuPercent ?? 0) >= 90} {...tileProps} />
+                {editControls}
+                </div>
+              );
             }
-            alert={(snap?.cpuPercent ?? 0) >= 90}
-          />
-          <Tile
-            label="RAM"
-            icon={MemoryStick}
-            large={kiosk}
-            value={formatPercent(payload?.memory.data?.percentTotal)}
-            sub={payload?.memory.data ? `${formatBytes(payload.memory.data.usedBytes)} / ${formatBytes(payload.memory.data.totalBytes)}` : null}
-            alert={(payload?.memory.data?.percentTotal ?? 0) >= 90}
-          />
-          <Tile
-            label="Package"
-            icon={Thermometer}
-            large={kiosk}
-            value={snapStatus === "unavailable" ? "—" : formatTemp(snap?.thermal?.packageC ?? null, "C")}
-            sub={snap?.thermal?.hottestName ? `hottest ${snap.thermal.hottestName}` : null}
-            alert={(snap?.thermal?.packageC ?? 0) >= 90}
-          />
-          <Tile
-            label="Array"
-            icon={HardDrive}
-            large={kiosk}
-            value={formatBytes(payload?.storage.data?.usedBytes)}
-            sub={payload?.storage.data ? `${humanState(payload.storage.data.state)} · ${payload.storage.data.disks.length} disks` : null}
-            alert={payload?.storage.data?.state !== "STARTED"}
-          />
-          {!kiosk && prefs.nocLayout !== "minimal" && prefs.nocLayout !== "storage" && (
-            <>
-              <Tile
-                label="Docker"
-                icon={Boxes}
-                value={docker.data?.data ? `${docker.data.data.running}/${docker.data.data.total}` : "—"}
-                sub={extras?.unhealthyContainers ? `${extras.unhealthyContainers} unhealthy` : "all healthy"}
-                alert={(extras?.unhealthyContainers ?? 0) > 0}
-              />
-              <Tile
-                label="Net RX"
-                icon={ArrowDownToLine}
-                value={formatRate(extras?.primaryRx ?? payload?.network.data?.rxBytesPerSec)}
-                sub={extras?.primaryInterface ?? null}
-              />
-              <Tile
-                label="Net TX"
-                icon={ArrowUpFromLine}
-                value={formatRate(extras?.primaryTx ?? payload?.network.data?.txBytesPerSec)}
-                sub={extras?.diskIo ? `disk ${formatRate(extras.diskIo.readBytesPerSec)} r` : null}
-              />
-              <Tile
-                label="Load 5"
-                icon={Gauge}
-                value={extras?.load?.five !== null && extras?.load ? extras.load.five.toFixed(2) : "—"}
-                sub={extras?.load?.level ? `level: ${extras.load.level}` : null}
-              />
-            </>
-          )}
+            if (widgetId === "ram") {
+              return (
+                <div key={widgetId} className={span}>
+                <Tile label="RAM" icon={MemoryStick} value={formatPercent(payload?.memory.data?.percentTotal)} sub={payload?.memory.data ? `${formatBytes(payload.memory.data.usedBytes)} / ${formatBytes(payload.memory.data.totalBytes)}` : null} alert={(payload?.memory.data?.percentTotal ?? 0) >= 90} {...tileProps} />
+                {editControls}
+                </div>
+              );
+            }
+            if (widgetId === "temp") {
+              return (
+                <div key={widgetId} className={span}>
+                <Tile label="Package" icon={Thermometer} value={snapStatus === "unavailable" ? "—" : formatTemp(snap?.thermal?.packageC ?? null, "C")} sub={snap?.thermal?.hottestName ? `hottest ${snap.thermal.hottestName}` : null} alert={(snap?.thermal?.packageC ?? 0) >= 90} {...tileProps} />
+                {editControls}
+                </div>
+              );
+            }
+            if (widgetId === "array") {
+              return (
+                <div key={widgetId} className={span}>
+                <Tile label="Array" icon={HardDrive} value={formatBytes(payload?.storage.data?.usedBytes)} sub={payload?.storage.data ? `${humanState(payload.storage.data.state)} · ${payload.storage.data.disks.length} disks` : null} alert={payload?.storage.data?.state !== "STARTED"} {...tileProps} />
+                {editControls}
+                </div>
+              );
+            }
+            if (widgetId === "docker") {
+              return (
+                <div key={widgetId} className={span}>
+                <Tile label="Docker" icon={Boxes} value={docker.data?.data ? `${docker.data.data.running}/${docker.data.data.total}` : "—"} sub={extras?.unhealthyContainers ? `${extras.unhealthyContainers} unhealthy` : "all healthy"} alert={(extras?.unhealthyContainers ?? 0) > 0} {...tileProps} />
+                {editControls}
+                </div>
+              );
+            }
+            if (widgetId === "ntrx") {
+              return (
+                <div key={widgetId} className={span}>
+                <Tile label="Net RX" icon={ArrowDownToLine} value={formatRate(extras?.primaryRx ?? payload?.network.data?.rxBytesPerSec)} sub={extras?.primaryInterface ?? null} {...tileProps} />
+                {editControls}
+                </div>
+              );
+            }
+            if (widgetId === "ntxt") {
+              return (
+                <div key={widgetId} className={span}>
+                <Tile label="Net TX" icon={ArrowUpFromLine} value={formatRate(extras?.primaryTx ?? payload?.network.data?.txBytesPerSec)} sub={extras?.diskIo ? `disk ${formatRate(extras.diskIo.readBytesPerSec)} r` : null} {...tileProps} />
+                {editControls}
+                </div>
+              );
+            }
+            if (widgetId === "load") {
+              return (
+                <div key={widgetId} className={span}>
+                <Tile label="Load 5" icon={Gauge} value={extras?.load?.five !== null && extras?.load ? extras.load.five.toFixed(2) : "—"} sub={extras?.load?.level ? `level: ${extras.load.level}` : null} {...tileProps} />
+                {editControls}
+                </div>
+              );
+            }
+            return null;
+          })}
         </div>
+        {/* Secondary registry widgets (2x-wide cards). */}
+        {widgetLayout.order.includes("topcpu") && (
+          <div className={cn("mt-3 grid gap-3", kiosk ? "lg:grid-cols-1" : "lg:grid-cols-2")}>
+            <div className={cn("rounded-xl border bg-card/70 shadow-card p-4", kiosk && "text-lg", widgetLayout.sizes.topcpu === "2x2" && "sm:col-span-2")}>
+              <p className="text-xs uppercase tracking-wider text-muted-foreground">Top CPU consumers</p>
+              <ul className={cn("mt-2 space-y-1.5", kiosk && "text-base")}>
+                {topCpu.map((entry) => (
+                  <li key={entry.name} className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-sm">{entry.name}</span>
+                    <span className="tnum font-mono text-sm">{formatPercent(entry.percent)}</span>
+                    <div className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
+                      <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(100, entry.percent ?? 0)}%` }} />
+                    </div>
+                  </li>
+                ))}
+                {topCpu.length === 0 && <li className="text-sm text-muted-foreground">unavailable</li>}
+              </ul>
+            </div>
+          </div>
+        )}
+        {widgetLayout.order.includes("diskio") && (
+          <div className={cn("mt-3 rounded-xl border bg-card/70 shadow-card p-4", widgetLayout.sizes.diskio === "2x2" && "sm:col-span-2")}>
+            <p className="text-xs uppercase tracking-wider text-muted-foreground">Disk throughput</p>
+            {extras?.diskIo ? (
+              <div className={cn("mt-2 flex items-center gap-6", kiosk && "text-lg")}>
+                <p className="tnum font-mono text-2xl">{formatRate(extras.diskIo.readBytesPerSec)}</p>
+                <p className="text-xs text-muted-foreground">read</p>
+                <p className="tnum font-mono text-2xl">{formatRate(extras.diskIo.writeBytesPerSec)}</p>
+                <p className="text-xs text-muted-foreground">write</p>
+              </div>
+            ) : (
+              <p className="mt-2 text-sm text-muted-foreground">unavailable</p>
+            )}
+          </div>
+        )}
+        </div>
+        </>
       ) : (
         <CyclePanel panel={activePanel} overview={payload} />
       )
-      )}
+      )
+      }
 
       {/* Cycle indicator (built-in panels only) */}
       {!dashboard && cycleSeconds > 0 && (

@@ -14,6 +14,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { usePoll } from "@/hooks/use-poll";
+import { useLive } from "@/components/layout/live-events";
 import { PageHeader, LoadingPanel, ErrorPanel } from "@/components/dashboard/page-primitives";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -143,7 +144,24 @@ export default function AutomationPage() {
 
   const data = status.data;
   // Merge optimistic patch over the polled data for instant feedback.
-  const effective = data && optimistic ? { ...data, enabled: optimistic.enabled ?? data.enabled, paused: optimistic.paused ?? data.paused } : data;
+  // SSE accelerator (v0.9.3): scheduler ticks push compact automation events;
+  // merge them live between polls. The 15s poll remains the fallback.
+  const { automation: liveAutomation } = useLive();
+  const effective = (data && liveAutomation)
+    ? {
+        ...data,
+        enabled: optimistic?.enabled ?? liveAutomation.enabled,
+        paused: optimistic?.paused ?? liveAutomation.paused,
+        scheduler: {
+          ...data.scheduler,
+          lastTickAt: liveAutomation.evaluatedAt,
+        },
+        targets: data.targets.map((target) => {
+          const live = liveAutomation.targets.find((entry) => entry.name === target.name);
+          return live ? { ...target, state: live.state, optIn: live.optIn } : target;
+        }),
+      }
+    : data;
   const targets = effective?.targets ?? [];
   const relevant = targets.filter((target) => target.optIn || target.state !== "blocked");
   const visible = showAllTargets ? relevant : relevant.slice(0, 8);
