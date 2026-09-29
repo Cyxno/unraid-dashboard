@@ -48,6 +48,7 @@ import {
   getTopConsumers,
 } from "./prometheus/containers";
 import { getBuildInfo } from "./version";
+import { agentCounters as getAgentCounters, isAgentApiEnabled } from "./agent/auth";
 import { getEnv, getEnvSafe } from "./env";
 import { mkdir, open, rm, stat as statFile, statfs } from "node:fs/promises";
 import os from "node:os";
@@ -633,6 +634,8 @@ export async function getDiagnostics(): Promise<DiagnosticsPayload> {
     dataVolumeFreeBytes = null;
   }
   const helperStatus = await getHelperStatus().catch(() => null);
+  const agentCounters = getAgentCounters();
+  const agentApiEnabled = isAgentApiEnabled();
   const env = getEnvSafe();
   const release = await checkForUpdate().catch(() => null);
 
@@ -660,6 +663,15 @@ export async function getDiagnostics(): Promise<DiagnosticsPayload> {
     },
     runningImageId: helperStatus?.currentImageId ?? null,
     ghcrDigest: release?.latestManifestDigest ?? null,
+    agentApi: {
+      enabled: agentApiEnabled,
+      requests: getAgentCounters().requests,
+      authFailures: getAgentCounters().authFailures,
+      rateLimitHits: getAgentCounters().rateLimitHits,
+      sseClients: getAgentCounters().sseClients,
+      lastRequestAt: getAgentCounters().lastRequestAt,
+      lastRequestEndpoint: getAgentCounters().lastRequestEndpoint,
+    },
   };
 
   return {

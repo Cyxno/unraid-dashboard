@@ -28,6 +28,7 @@ import { useOverview } from "@/components/layout/overview-provider";
 import { InstallHint } from "@/components/layout/pwa-status-banner";
 import { DashboardsSection } from "@/components/settings/dashboards-section";
 import { AppearanceSection } from "@/components/settings/appearance-section";
+import { AgentApiSection } from "@/components/settings/agent-api-section";
 import { UpdatesSection } from "@/components/settings/updates-section";
 import type {
   BuildInfoDto,

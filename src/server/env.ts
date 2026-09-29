@@ -116,6 +116,16 @@ const envSchema = z.object({
    * "updates available: yes/no".
    */
   UPDATE_HELPER_TOKEN: z.string().min(32).optional(),
+  /** Agent API (v0.9.4): dedicated read-only machine credential. Bearer
+   * token, min 32 chars. When unset, the Agent API is disabled unless
+   * AGENT_API_TRUST_LOCAL is explicitly true. Never exposed to the browser. */
+  AGENT_API_TOKEN: z.string().min(32).optional(),
+  /** Explicit opt-in for passwordless access from trusted-local sources
+   * (loopback/LAN per the firewall boundary). Default: false. */
+  AGENT_API_TRUST_LOCAL: z
+    .string()
+    .optional()
+    .transform((value) => value === "true"),
   /**
    * Secret the reverse proxy must inject (AUTH_PROXY_SECRET header) in
    * proxy auth mode: direct clients cannot spoof an identity header

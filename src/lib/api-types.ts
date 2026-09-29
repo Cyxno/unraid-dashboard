@@ -538,6 +538,16 @@ export interface DiagnosticsPayload {
     };
     runningImageId: string | null;
     ghcrDigest: string | null;
+    /** v0.9.4: read-only machine API counters (no credentials). */
+    agentApi: {
+      enabled: boolean;
+      requests: number;
+      authFailures: number;
+      rateLimitHits: number;
+      sseClients: number;
+      lastRequestAt: string | null;
+      lastRequestEndpoint: string | null;
+    };
   };
   generatedAt: string;
 }
