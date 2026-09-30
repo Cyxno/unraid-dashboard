@@ -643,26 +643,7 @@ export default function SettingsPage() {
                 populated to near-equal heights — no half-page empty column. */}
             <AboutAndDiagnostics />
 
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <KeyRound className="size-4 text-muted-foreground" aria-hidden="true" />
-                  Security model
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm text-muted-foreground">
-                <p>
-                  The Unraid API key is configured server-side and never sent to
-                  the browser. Prometheus is queried server-side too; the browser
-                  can never run arbitrary PromQL. These settings contain
-                  appearance preferences only.
-                </p>
-                <p>
-                  The dashboard uses a read-only (VIEWER) API key; no write or
-                  lifecycle actions are exposed anywhere in the UI.
-                </p>
-              </CardContent>
-            </Card>
+
           </>
         }
         right={
@@ -745,6 +726,27 @@ export default function SettingsPage() {
             <DashboardsSection />
 
             <AgentApiSection />
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <KeyRound className="size-4 text-muted-foreground" aria-hidden="true" />
+                  Security model
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm text-muted-foreground">
+                <p>
+                  The Unraid API key is configured server-side and never sent to
+                  the browser. Prometheus is queried server-side too; the browser
+                  can never run arbitrary PromQL. These settings contain
+                  appearance preferences only.
+                </p>
+                <p>
+                  The dashboard uses a read-only (VIEWER) API key; no write or
+                  lifecycle actions are exposed anywhere in the UI.
+                </p>
+              </CardContent>
+            </Card>
           </>
         }
       />

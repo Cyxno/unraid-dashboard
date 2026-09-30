@@ -190,7 +190,7 @@ async function assertLayout(browser) {
     const page = await context.newPage();
     try {
       await page.goto(`${BASE_URL}/settings`, { waitUntil: "domcontentloaded", timeout: 30000 });
-      await page.waitForTimeout(3_000);
+      await page.waitForTimeout(4_000);
       const settings = await page.evaluate(() => {
         const grids = [...document.querySelectorAll("main .md\\:grid-cols-2")];
         const stretched = grids.filter((grid) => {
