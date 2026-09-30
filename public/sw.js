@@ -17,7 +17,7 @@
  * mid-action by a version flip.
  */
 
-const VERSION = "v0.9.14";
+const VERSION = "v0.9.15";
 const SHELL_CACHE = `unraid-dash-shell-${VERSION}`;
 const STATIC_CACHE = `unraid-dash-static-${VERSION}`;
 
