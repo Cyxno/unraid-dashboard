@@ -18,11 +18,17 @@ export const metadata: Metadata = {
     statusBarStyle: "black-translucent",
   },
   icons: {
+    // ?v= cache-buster (v0.9.7): iOS caches home-screen icons by URL very
+    // aggressively; a version bump is the only reliable way to push a new
+    // icon out (existing installs may still need remove/re-add once).
     icon: [
-      { url: "/favicon-96.png", type: "image/png", sizes: "96x96" },
-      { url: "/icons/icon-192.png", type: "image/png", sizes: "192x192" },
+      { url: "/favicon-96.png?v=2", type: "image/png", sizes: "96x96" },
+      { url: "/icons/icon-192.png?v=2", type: "image/png", sizes: "192x192" },
     ],
-    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180" }],
+    apple: [
+      { url: "/icons/apple-touch-icon.png?v=2", sizes: "180x180" },
+      { url: "/apple-touch-icon.png?v=2", sizes: "180x180" },
+    ],
   },
   formatDetection: { telephone: false },
 };

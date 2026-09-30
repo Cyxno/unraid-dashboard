@@ -90,7 +90,9 @@ function Shell({ children }: { children: React.ReactNode }) {
         <UpdateMaintenanceBanner />
         {/* Full-screen sign-in state when the proxy session expires. */}
         <AuthExpiredOverlay />
-        <main className="mx-auto w-full max-w-7xl p-3 pb-[calc(env(safe-area-inset-bottom)+4.75rem)] sm:p-6 md:pb-6">{children}</main>
+        {/* Bottom clearance comes from the one authoritative token
+            (--mobile-bottom-clearance in globals.css); no page sets its own. */}
+        <main className="mx-auto w-full max-w-7xl p-3 pb-[var(--mobile-bottom-clearance)] sm:p-6 md:pb-6">{children}</main>
         <footer className="mx-auto w-full max-w-7xl px-4 pb-6 sm:px-6">
           <p className="text-[11px] text-muted-foreground">
             History is served from Prometheus (7-day retention on this host);

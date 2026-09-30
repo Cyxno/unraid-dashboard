@@ -31,6 +31,7 @@ export const METRICS_QUERY = /* GraphQL */ `
       memory {
         total
         used
+        available
         percentTotal
       }
       network {

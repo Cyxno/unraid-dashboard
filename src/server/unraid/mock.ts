@@ -40,9 +40,10 @@ export function mockOverview(): DemoData {
       temperature: null,
     },
     memory: {
-      percentTotal: 48.2,
+      percentTotal: 48.75,
       usedBytes: 31.2 * GB,
       totalBytes: 64 * GB,
+      availableBytes: (64 - 31.2) * GB,
     },
     storage: {
       state: "STARTED",

@@ -104,7 +104,7 @@ export function BottomNav() {
       )}
       <nav
         aria-label="Primary"
-        className="fixed inset-x-0 bottom-0 z-[62] border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
+        className="fixed inset-x-0 bottom-0 z-[62] border-t bg-background pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_16px_rgb(0_0_0/0.2)] md:hidden"
       >
         <ul className="grid grid-cols-5">
           {PRIMARY.map((item) => {

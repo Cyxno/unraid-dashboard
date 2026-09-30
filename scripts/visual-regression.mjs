@@ -113,6 +113,127 @@ async function connectWithRetry(attempts = 3) {
   throw new Error("unreachable");
 }
 
+/**
+ * Layout assertion pass (v0.9.7): semantic DOM checks that screenshot
+ * diffs cannot express — unexpected vertical gaps between sibling
+ * sections, equal-height column stretching, and bottom-nav clearance.
+ * Thresholds are coarse on purpose (not pixel-perfect).
+ */
+async function assertLayout(browser) {
+  let failures = 0;
+  const fail = (label, reason) => {
+    failures += 1;
+    console.error(`LAYOUT    ${label}: ${reason}`);
+  };
+
+  // Desktop: no unexpected giant gaps between sibling blocks; two-column
+  // page grids must be items-start so a short column never stretches.
+  {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+    try {
+      await page.goto(`${BASE_URL}/`, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.waitForTimeout(4_000);
+      const desktop = await page.evaluate(() => {
+        const main = document.querySelector("main");
+        if (!main) return { error: "no <main>" };
+        const kids = [...main.querySelectorAll(":scope > *")].filter((el) => el.getBoundingClientRect().height > 40);
+        const gaps = [];
+        for (let i = 0; i < kids.length - 1; i += 1) {
+          const gap = kids[i + 1].getBoundingClientRect().top - kids[i].getBoundingClientRect().bottom;
+          if (gap > 48) gaps.push(Math.round(gap));
+        }
+        const stretchedGrids = [...main.querySelectorAll("main [class*='grid-cols-2'], main [class*='grid-cols-3']")]
+          .filter((grid) => getComputedStyle(grid).alignItems === "stretch")
+          .filter((grid) => {
+            // Multi-row metric grids legitimately stretch per row; only
+            // flag grids whose direct children visibly outrun their content.
+            const rects = [...grid.children].map((child) => {
+              const last = child.lastElementChild?.getBoundingClientRect().bottom ?? child.getBoundingClientRect().bottom;
+              return child.getBoundingClientRect().bottom - last;
+            });
+            return rects.some((slack) => slack > 64);
+          })
+          .length;
+        return { gaps, stretchedGrids };
+      });
+      if (desktop.error) fail("overview-1440", desktop.error);
+      else {
+        if (desktop.gaps.length > 0) fail("overview-1440", `gaps between sibling sections > 48px: ${desktop.gaps.join(", ")}px`);
+        if (desktop.stretchedGrids > 0) fail("overview-1440", `${desktop.stretchedGrids} grid(s) stretch children > 64px past content (items-start missing)`);
+      }
+    } catch (error) {
+      fail("overview-1440", error.message.slice(0, 90));
+    } finally {
+      await context.close();
+    }
+  }
+
+  // Settings at 1440: the two column stacks must flow independently
+  // (left column bottom must NOT be stretched to the container bottom
+  // when content heights differ).
+  {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+    try {
+      await page.goto(`${BASE_URL}/settings`, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.waitForTimeout(3_000);
+      const settings = await page.evaluate(() => {
+        const grids = [...document.querySelectorAll("main .md\\:grid-cols-2")];
+        const stretched = grids.filter((grid) => {
+          const style = getComputedStyle(grid);
+          if (style.alignItems !== "stretch") return false;
+          const bottoms = [...grid.children].map((child) => child.getBoundingClientRect().bottom);
+          return Math.max(...bottoms) - Math.min(...bottoms) > 64;
+        }).length;
+        return { grids: grids.length, stretched };
+      });
+      if (settings.stretched > 0) fail("settings-1440", `${settings.stretched} column grid(s) stretch the shorter stack (dead space)`);
+    } catch (error) {
+      fail("settings-1440", error.message.slice(0, 90));
+    } finally {
+      await context.close();
+    }
+  }
+
+  // Mobile 390: main's bottom padding must equal the clearance token and
+  // the nav must be opaque (content must not ghost through it).
+  {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const page = await context.newPage();
+    try {
+      await page.goto(`${BASE_URL}/`, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.waitForTimeout(3_000);
+      const mobile = await page.evaluate(() => {
+        const main = document.querySelector("main");
+        const nav = document.querySelector('nav[aria-label="Primary"]');
+        if (!main || !nav) return { error: "main or nav missing" };
+        const pad = parseFloat(getComputedStyle(main).paddingBottom);
+        const navBackground = getComputedStyle(nav).backgroundColor; // rgba()
+        const navTransparent = navBackground.includes("rgba") && parseFloat(navBackground.split(",")[3]) < 0.99;
+        const scrollAfterBottom = document.documentElement.scrollHeight - window.innerHeight - (window.scrollY || 0);
+        return {
+          pad,
+          expectedMin: 56,
+          navTransparent,
+          scrollAfterBottom: Math.round(scrollAfterBottom),
+        };
+      });
+      if (mobile.error) fail("overview-390", mobile.error);
+      else {
+        if (!(mobile.pad >= mobile.expectedMin)) fail("overview-390", `main bottom padding ${mobile.pad}px < nav height`);
+        if (mobile.navTransparent) fail("overview-390", "bottom nav background is translucent — content ghosts through");
+      }
+    } catch (error) {
+      fail("overview-390", error.message.slice(0, 90));
+    } finally {
+      await context.close();
+    }
+  }
+
+  return failures;
+}
+
 async function main() {
   const browser = await connectWithRetry();
   mkdirSync(CAPTURE_DIR, { recursive: true });
@@ -177,10 +298,11 @@ async function main() {
   }
 
   const overlayFailures = await captureOverlays(browser);
+  const layoutFailures = await assertLayout(browser);
 
   await browser.close();
-  console.log(`\n${captures} captures · overflow failures: ${overflowFailures} · diff failures: ${diffFailures} · overlay failures: ${overlayFailures}`);
-  process.exit(overflowFailures + diffFailures + overlayFailures > 0 ? 1 : 0);
+  console.log(`\n${captures} captures · overflow failures: ${overflowFailures} · diff failures: ${diffFailures} · overlay failures: ${overlayFailures} · layout failures: ${layoutFailures}`);
+  process.exit(overflowFailures + diffFailures + overlayFailures + layoutFailures > 0 ? 1 : 0);
 }
 
 /**

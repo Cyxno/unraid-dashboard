@@ -51,6 +51,8 @@ export interface MemoryUsage {
   percentTotal: number;
   usedBytes: number;
   totalBytes: number;
+  /** Canonical: totalBytes − usedBytes when the source exposes it (v0.9.7). */
+  availableBytes: number | null;
 }
 
 export interface ArrayDiskUsage {

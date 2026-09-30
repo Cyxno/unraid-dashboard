@@ -22,6 +22,7 @@ import { StorageOverview } from "@/components/dashboard/storage-overview";
 import { DockerOverviewList } from "@/components/dashboard/docker-overview-list";
 import { NotificationsCard } from "@/components/dashboard/notifications-card";
 import { MetricStatus } from "@/components/dashboard/section-status";
+import { PageStack } from "@/components/dashboard/layout-primitives";
 import { Button } from "@/components/ui/button";
 import { usePrefs, DEFAULT_OVERVIEW_ORDER, OVERVIEW_PRESETS, type HistoryWindowPref } from "@/lib/prefs";
 import {
@@ -86,7 +87,7 @@ export default function OverviewPage() {
   };
 
   return (
-    <div className="space-y-5">
+    <PageStack>
       {overview.error && payload && (
         <p role="alert" className="text-xs text-warning">
           Refresh failed ({overview.error}) — showing last known data, retrying.
@@ -110,7 +111,7 @@ export default function OverviewPage() {
 
       <section
         aria-label="Resource summary"
-        className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3"
+        className="grid grid-cols-1 gap-card sm:grid-cols-2 xl:grid-cols-3"
       >
         <div className="col-span-full -mb-1 flex items-center gap-2">
           <Button
@@ -219,7 +220,11 @@ export default function OverviewPage() {
                           section={memory}
                           value={formatPercent(memory.data?.percentTotal)}
                           percent={memory.data?.percentTotal ?? null}
-                          detail={`${formatBytes(memory.data?.usedBytes)} of ${formatBytes(memory.data?.totalBytes)}`}
+                          detail={`${formatBytes(memory.data?.usedBytes)} of ${formatBytes(memory.data?.totalBytes)}${
+                            memory.data?.availableBytes != null
+                              ? ` · ${formatBytes(memory.data.availableBytes)} available`
+                              : ""
+                          }`}
                         />
                       ) : cardId === "uptime" ? (
                         <MetricCard
@@ -346,7 +351,10 @@ export default function OverviewPage() {
       </section>
 
       {payload && (
-        <section aria-label="Resource history and storage" className="grid gap-3 xl:grid-cols-2">
+        <section
+          aria-label="Resource history and storage"
+          className="grid items-start gap-card xl:grid-cols-2"
+        >
           <div className="min-w-0 xl:col-span-1">
             <SeriesChart
               series={[
@@ -396,7 +404,10 @@ export default function OverviewPage() {
       )}
 
       {payload && (
-        <section aria-label="Containers and events" className="grid gap-3 xl:grid-cols-2">
+        <section
+          aria-label="Containers and events"
+          className="grid items-start gap-card xl:grid-cols-2"
+        >
           <div className="min-w-0 space-y-3">
             <TopConsumersCard consumers={extras?.topConsumers ?? null} />
             <DockerOverviewList docker={payload.docker} />
@@ -427,6 +438,6 @@ export default function OverviewPage() {
           </div>
         </section>
       )}
-    </div>
+    </PageStack>
   );
 }

@@ -89,8 +89,11 @@ describe("v0.9.5 mobile UX + docker operations", () => {
     assert.match(authOverlay, /z-\[100\]/);
   });
 
-  it("main content clears the fixed bottom nav including the safe-area inset", () => {
+  it("main content clears the fixed bottom nav via the authoritative clearance token", () => {
     const shell = read("src/components/layout/app-shell.tsx");
-    assert.match(shell, /pb-\[calc\(env\(safe-area-inset-bottom\)\+4\.75rem\)\] sm:p-6 md:pb-6/);
+    // v0.9.7: clearance moved into --mobile-bottom-clearance (globals.css).
+    assert.match(shell, /pb-\[var\(--mobile-bottom-clearance\)\] sm:p-6 md:pb-6/);
+    const css = read("src/app/globals.css");
+    assert.match(css, /--mobile-bottom-clearance: calc\(env\(safe-area-inset-bottom, 0px\) \+ 4\.75rem\)/);
   });
 });

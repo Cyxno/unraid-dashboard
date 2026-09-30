@@ -172,10 +172,14 @@ describe("v0.9.2 layout presets", () => {
   });
 });
 
-/** Settings whitespace (v0.9.2). */
+/** Settings whitespace (v0.9.2, superseded by the v0.9.7 primitives). */
 describe("v0.9.2 settings whitespace", () => {
-  it("settings columns are items-start (no equal-height stretch)", () => {
+  it("settings columns are independent stacks (no equal-height stretch)", () => {
     const page = read("src/app/settings/page.tsx");
-    assert.match(page, /grid items-start gap-3 lg:grid-cols-2/);
+    // v0.9.7: the balanced two-cell grid became AdaptiveColumns
+    // (items-start, independent column flows).
+    assert.match(page, /<AdaptiveColumns/);
+    const primitives = read("src/components/dashboard/layout-primitives.tsx");
+    assert.match(primitives, /grid items-start gap-card md:grid-cols-2/);
   });
 });

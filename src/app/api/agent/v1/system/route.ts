@@ -18,6 +18,7 @@ export async function GET(request: NextRequest) {
       percent: overview?.memory.data?.percentTotal ?? null,
       usedBytes: overview?.memory.data?.usedBytes ?? null,
       totalBytes: overview?.memory.data?.totalBytes ?? null,
+      availableBytes: overview?.memory.data?.availableBytes ?? null,
     },
     load: {
       five: overview?.extras?.load?.five ?? null,

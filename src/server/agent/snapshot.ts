@@ -76,7 +76,7 @@ export async function loadBundle(): Promise<AgentDataBundle> {
 export interface AgentSummary {
   health: { level: string | null; reasons: string[] };
   cpu: { percent: number | null; load5: number | null };
-  memory: { percent: number | null; usedBytes: number | null; totalBytes: number | null };
+  memory: { percent: number | null; usedBytes: number | null; totalBytes: number | null; availableBytes: number | null };
   storage: { state: string | null; usedBytes: number | null; totalBytes: number | null };
   docker: { running: number | null; total: number | null; unhealthy: number | null };
   vms: { total: number; running: number } | null;
@@ -111,6 +111,7 @@ export function buildSummary(bundle: AgentDataBundle): AgentSummary {
       percent: overviewData?.memory.data?.percentTotal ?? null,
       usedBytes: overviewData?.memory.data?.usedBytes ?? null,
       totalBytes: overviewData?.memory.data?.totalBytes ?? null,
+      availableBytes: overviewData?.memory.data?.availableBytes ?? null,
     },
     storage: {
       state: overviewData?.storage.data?.state ?? null,

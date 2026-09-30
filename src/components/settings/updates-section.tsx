@@ -282,69 +282,6 @@ export function UpdatesSection() {
           </div>
         )}
 
-        {/* Release provenance (v0.7.14): the registry→production chain
-            verdict for the running dashboard release. Digests are shortened;
-            no credential material is ever shown. */}
-        {data?.releaseChain && (
-          <div className="rounded-lg border p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-semibold">Release provenance</p>
-              <Badge
-                variant={
-                  data.releaseChain.provenanceBadge === "Registry verified"
-                    ? "success"
-                    : data.releaseChain.provenanceBadge === "Local build"
-                      ? "muted"
-                      : data.releaseChain.provenanceBadge === "Registry ahead"
-                        ? "warning"
-                        : "secondary"
-                }
-              >
-                {data.releaseChain.provenanceBadge}
-              </Badge>
-            </div>
-            <div className="mt-1.5 grid gap-x-4 gap-y-0.5 text-xs text-muted-foreground sm:grid-cols-2">
-              <span>
-                GHCR:{" "}
-                {data.releaseChain.remotePullAvailable === true ? (
-                  <span className="text-success">authenticated, pulls work</span>
-                ) : data.releaseChain.remotePullAvailable === false ? (
-                  <span className="text-warning">auth required</span>
-                ) : (
-                  "unknown"
-                )}
-                {data.releaseChain.requireRemote ? " · strict remote mode" : ""}
-              </span>
-              <span>
-                Digest match:{" "}
-                {data.releaseChain.digestMatch === null
-                  ? "unknown"
-                  : data.releaseChain.digestMatch
-                    ? <span className="text-success">running == registry</span>
-                    : <span className="text-warning">mismatch</span>}
-              </span>
-              <span className="font-mono">
-                running: {shortDigest(data.releaseChain.running.repoDigest) ?? data.releaseChain.running.imageId?.slice(7, 19) ?? "—"}
-              </span>
-              <span className="font-mono">registry: {shortDigest(data.releaseChain.registryDigest) ?? "—"}</span>
-              {data.releaseChain.lastRemotePull && (
-                <span className="sm:col-span-2">
-                  last remote pull: v{data.releaseChain.lastRemotePull.to} ·{" "}
-                  {formatDateTimeIso(data.releaseChain.lastRemotePull.at)} · source{" "}
-                  {data.releaseChain.lastRemotePull.source}
-                  {data.releaseChain.lastRemotePull.digestMatch === false ? " · DIGEST MISMATCH" : ""}
-                </span>
-              )}
-              <span className="sm:col-span-2">
-                boot persistence:{" "}
-                {data.releaseChain.bootPersistence.verifiedAt
-                  ? `${data.releaseChain.bootPersistence.passed ? "verified" : "FAILED"} at ${formatDateTimeIso(data.releaseChain.bootPersistence.verifiedAt)} (audit script)`
-                  : "not verified yet — run scripts/boot-persistence-audit.sh after a reboot"}
-              </span>
-            </div>
-          </div>
-        )}
-
         {/* Status line */}
         <div className="flex flex-wrap items-center gap-2 text-xs">
           {data?.release?.status === "available" && <Badge variant="warning">update available</Badge>}
@@ -357,54 +294,7 @@ export function UpdatesSection() {
               source: local images
             </Badge>
           )}
-          <span className="flex items-center gap-1 text-muted-foreground">
-            <HardDriveDownload className="size-3" aria-hidden="true" />
-            registry pull:{" "}
-            {data?.helper.pullAvailable === true ? (
-              <Badge variant="success">available</Badge>
-            ) : data?.helper.pullAvailable === false ? (
-              <Badge variant="warning">login required (scripts/login-ghcr.sh)</Badge>
-            ) : (
-              "unknown"
-            )}
-          </span>
         </div>
-
-        {/* Version/digest consistency (v0.7.1) — informational, not alarms */}
-        {data?.consistency && (
-          <p
-            className={cn(
-              "text-[11px]",
-              data.consistency.summary === "consistent" ? "text-muted-foreground" : "text-warning",
-            )}
-            title="Informational — mismatches are not treated as security incidents"
-          >
-            Consistency: {data.consistency.summary}
-            {data.consistency.versionMatchesTag === false && " · version/label mismatch"}
-            {data.consistency.shaMatchesRevision === false && " · SHA/revision mismatch"}
-          </p>
-        )}
-
-        {/* Helper state */}
-        {data?.helper && !data.helper.configured && (
-          <p className="text-xs text-muted-foreground">{data.helper.reason}</p>
-        )}
-        {data?.helper?.configured && !data.helper.reachable && (
-          <p className="text-xs text-warning" title={data.helper.reason ?? undefined}>
-            Update helper unreachable — in-app updates unavailable. Host-side script still works.
-          </p>
-        )}
-        {data?.helper?.configured && data.helper.reachable && (
-          <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">
-            <span>helper v{data.helper.helperVersion ?? "?"}</span>
-            <span>
-              last update:{" "}
-              {data.helper.lastUpdate
-                ? `${data.helper.lastUpdate.result} · ${data.helper.lastUpdate.from.split(":").pop()} → ${data.helper.lastUpdate.to.split(":").pop()} · ${Math.round(data.helper.lastUpdate.durationMs / 1000)}s`
-                : "none yet"}
-            </span>
-          </div>
-        )}
 
         {/* Live phase timeline while a machine runs */}
         {machineRunning && (
@@ -461,6 +351,132 @@ export function UpdatesSection() {
           </p>
         )}
 
+        {/* Advanced (v0.9.7): release provenance, digests, helper detail —
+            collapsed by default so the card leads with version, state and
+            actions instead of a wall of technical detail. */}
+        {(data?.releaseChain || data?.consistency || data?.helper) && (
+          <details className="group rounded-lg border px-3 py-2">
+            <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Advanced
+              <span className="font-normal normal-case text-[10px] text-muted-foreground group-open:hidden">
+                provenance · digest · helper
+              </span>
+            </summary>
+            <div className="mt-2 space-y-3">
+            {/* Release provenance (v0.7.14): the registry→production chain
+                verdict for the running dashboard release. Digests are shortened;
+                no credential material is ever shown. */}
+            {data?.releaseChain && (
+              <div className="rounded-lg border p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold">Release provenance</p>
+                  <Badge
+                    variant={
+                      data.releaseChain.provenanceBadge === "Registry verified"
+                        ? "success"
+                        : data.releaseChain.provenanceBadge === "Local build"
+                          ? "muted"
+                          : data.releaseChain.provenanceBadge === "Registry ahead"
+                            ? "warning"
+                            : "secondary"
+                    }
+                  >
+                    {data.releaseChain.provenanceBadge}
+                  </Badge>
+                </div>
+                <div className="mt-1.5 grid gap-x-4 gap-y-0.5 text-xs text-muted-foreground sm:grid-cols-2">
+                  <span>
+                    GHCR:{" "}
+                    {data.releaseChain.remotePullAvailable === true ? (
+                      <span className="text-success">authenticated, pulls work</span>
+                    ) : data.releaseChain.remotePullAvailable === false ? (
+                      <span className="text-warning">auth required</span>
+                    ) : (
+                      "unknown"
+                    )}
+                    {data.releaseChain.requireRemote ? " · strict remote mode" : ""}
+                  </span>
+                  <span>
+                    Digest match:{" "}
+                    {data.releaseChain.digestMatch === null
+                      ? "unknown"
+                      : data.releaseChain.digestMatch
+                        ? <span className="text-success">running == registry</span>
+                        : <span className="text-warning">mismatch</span>}
+                  </span>
+                  <span className="font-mono">
+                    running: {shortDigest(data.releaseChain.running.repoDigest) ?? data.releaseChain.running.imageId?.slice(7, 19) ?? "—"}
+                  </span>
+                  <span className="font-mono">registry: {shortDigest(data.releaseChain.registryDigest) ?? "—"}</span>
+                  {data.releaseChain.lastRemotePull && (
+                    <span className="sm:col-span-2">
+                      last remote pull: v{data.releaseChain.lastRemotePull.to} ·{" "}
+                      {formatDateTimeIso(data.releaseChain.lastRemotePull.at)} · source{" "}
+                      {data.releaseChain.lastRemotePull.source}
+                      {data.releaseChain.lastRemotePull.digestMatch === false ? " · DIGEST MISMATCH" : ""}
+                    </span>
+                  )}
+                  <span className="sm:col-span-2">
+                    boot persistence:{" "}
+                    {data.releaseChain.bootPersistence.verifiedAt
+                      ? `${data.releaseChain.bootPersistence.passed ? "verified" : "FAILED"} at ${formatDateTimeIso(data.releaseChain.bootPersistence.verifiedAt)} (audit script)`
+                      : "not verified yet — run scripts/boot-persistence-audit.sh after a reboot"}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <HardDriveDownload className="size-3" aria-hidden="true" />
+              registry pull:{" "}
+              {data?.helper.pullAvailable === true ? (
+                <Badge variant="success">available</Badge>
+              ) : data?.helper.pullAvailable === false ? (
+                <Badge variant="warning">login required (scripts/login-ghcr.sh)</Badge>
+              ) : (
+                "unknown"
+              )}
+            </span>
+
+            {/* Version/digest consistency (v0.7.1) — informational, not alarms */}
+            {data?.consistency && (
+              <p
+                className={cn(
+                  "text-[11px]",
+                  data.consistency.summary === "consistent" ? "text-muted-foreground" : "text-warning",
+                )}
+                title="Informational — mismatches are not treated as security incidents"
+              >
+                Consistency: {data.consistency.summary}
+                {data.consistency.versionMatchesTag === false && " · version/label mismatch"}
+                {data.consistency.shaMatchesRevision === false && " · SHA/revision mismatch"}
+              </p>
+            )}
+
+            {/* Helper state */}
+            {data?.helper && !data.helper.configured && (
+              <p className="text-xs text-muted-foreground">{data.helper.reason}</p>
+            )}
+            {data?.helper?.configured && !data.helper.reachable && (
+              <p className="text-xs text-warning" title={data.helper.reason ?? undefined}>
+                Update helper unreachable — in-app updates unavailable. Host-side script still works.
+              </p>
+            )}
+            {data?.helper?.configured && data.helper.reachable && (
+              <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">
+                <span>helper v{data.helper.helperVersion ?? "?"}</span>
+                <span>
+                  last update:{" "}
+                  {data.helper.lastUpdate
+                    ? `${data.helper.lastUpdate.result} · ${data.helper.lastUpdate.from.split(":").pop()} → ${data.helper.lastUpdate.to.split(":").pop()} · ${Math.round(data.helper.lastUpdate.durationMs / 1000)}s`
+                    : "none yet"}
+                </span>
+              </div>
+            )}
+            </div>
+          </details>
+        )}
+
         <ConfirmDialog
           open={confirmOpen}
           title={`Update dashboard to v${targetTag ?? ""}?`}
@@ -479,51 +495,11 @@ export function UpdatesSection() {
           </p>
         </ConfirmDialog>
 
-        {/* Update history (v0.7.1) — mobile-friendly cards */}
+        {/* Update history (v0.7.1) — mobile-friendly cards; compact by
+            default (v0.9.7): last 3, expand for more. Full history lives
+            in Docker → History. */}
         {data?.history && data.history.length > 0 && (
-          <div>
-            <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              Update history
-            </p>
-            <ul className="space-y-1.5">
-              {data.history.slice(0, 6).map((entry, index) => (
-                <li key={`${entry.startedAt}-${index}`} className="rounded-md border p-2.5 text-xs">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge
-                      variant={
-                        entry.result === "success"
-                          ? "success"
-                          : entry.result === "rolled-back"
-                            ? "warning"
-                            : "destructive"
-                      }
-                    >
-                      {entry.result}
-                    </Badge>
-                    <span className="font-mono">
-                      v{entry.fromVersion} → v{entry.toVersion}
-                    </span>
-                    {entry.rollbackPerformed && <Badge variant="warning">rollback performed</Badge>}
-                    {entry.usedLocalImage ? (
-                      <Badge variant="muted">local image</Badge>
-                    ) : entry.source === "registry" ? (
-                      <Badge variant="success">GHCR</Badge>
-                    ) : null}
-                    {entry.digestMatch === true && <Badge variant="success" className="text-[10px]">digest verified</Badge>}
-                    {entry.digestMatch === false && <Badge variant="destructive" className="text-[10px]">digest mismatch</Badge>}
-                  </div>
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    {formatDateTimeIso(entry.timestamp)} · {entry.actor} ·{" "}
-                    {entry.durationMs >= 1000 ? `${Math.round(entry.durationMs / 1000)}s` : `${entry.durationMs}ms`}
-                    {entry.error ? ` · ${entry.error.slice(0, 90)}` : ""}
-                  </p>
-                </li>
-              ))}
-            </ul>
-            <p className="mt-1.5 text-[11px] text-muted-foreground">
-              Persisted to /app/data/update-history.jsonl — survives container replacement.
-            </p>
-          </div>
+          <UpdateHistoryMini entries={data.history} />
         )}
 
         {/* Rollback (v0.7.4) — only to validated releases, strong confirmation */}
@@ -575,5 +551,73 @@ export function UpdatesSection() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Compacted update history (v0.9.7): last 3 entries by default with a
+ * "View full history" expander — the full persisted trail stays in
+ * Docker → History so Settings is not dominated by it.
+ */
+function UpdateHistoryMini({ entries }: { entries: UpdateHistoryEntry[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? entries : entries.slice(0, 3);
+  return (
+    <div>
+      <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+        Update history
+      </p>
+      <ul className="space-y-1.5">
+        {visible.map((entry, index) => (
+          <li key={`${entry.startedAt}-${index}`} className="rounded-md border p-2.5 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge
+                variant={
+                  entry.result === "success"
+                    ? "success"
+                    : entry.result === "rolled-back"
+                      ? "warning"
+                      : "destructive"
+                }
+              >
+                {entry.result}
+              </Badge>
+              <span className="font-mono">
+                v{entry.fromVersion} → v{entry.toVersion}
+              </span>
+              {entry.rollbackPerformed && <Badge variant="warning">rollback performed</Badge>}
+              {entry.usedLocalImage ? (
+                <Badge variant="muted">local image</Badge>
+              ) : entry.source === "registry" ? (
+                <Badge variant="success">GHCR</Badge>
+              ) : null}
+              {entry.digestMatch === true && <Badge variant="success" className="text-[10px]">digest verified</Badge>}
+              {entry.digestMatch === false && <Badge variant="destructive" className="text-[10px]">digest mismatch</Badge>}
+            </div>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {formatDateTimeIso(entry.timestamp)} · {entry.actor} ·{" "}
+              {entry.durationMs >= 1000 ? `${Math.round(entry.durationMs / 1000)}s` : `${entry.durationMs}ms`}
+              {entry.error ? ` · ${entry.error.slice(0, 90)}` : ""}
+            </p>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-1.5 flex flex-wrap items-center gap-3">
+        {entries.length > 3 && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 px-2 text-[11px]"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? "Show less" : `View full history (${entries.length})`}
+          </Button>
+        )}
+        <p className="text-[11px] text-muted-foreground">
+          Persisted to /app/data/update-history.jsonl — full trail in Docker → History.
+        </p>
+      </div>
+    </div>
   );
 }

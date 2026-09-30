@@ -20,6 +20,7 @@ import {
   formatUptime,
 } from "@/lib/utils";
 import { PageHeader, LoadingPanel } from "@/components/dashboard/page-primitives";
+import { AdaptiveColumns, PageStack, SectionRule } from "@/components/dashboard/layout-primitives";
 import { SectionStatus } from "@/components/dashboard/section-status";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -534,7 +535,7 @@ export default function SettingsPage() {
   );
 
   return (
-    <div>
+    <PageStack>
       <PageHeader
         title="Settings"
         description="Dashboard-local preferences (stored in this browser)"
@@ -542,13 +543,16 @@ export default function SettingsPage() {
 
       <AppearanceSection />
 
-      <div className="mt-4 flex items-center gap-3">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">General &amp; connections</h3>
-        <div className="h-px flex-1 bg-border" />
-      </div>
+      <SectionRule label="General &amp; connections" />
 
-      <div className="mt-3 grid items-start gap-3 lg:grid-cols-2">
-        <Card className="min-w-0">
+      {/* Independent column stacks (v0.9.7): each column flows to its own
+          height — no equal-height stretch, no dead space under short
+          content. Left: preferences + security posture. Right: connection,
+          updates, shared dashboards, diagnostics. */}
+      <AdaptiveColumns
+        left={
+          <>
+            <Card className="min-w-0">
           <CardHeader>
             <CardTitle>Display &amp; refresh</CardTitle>
           </CardHeader>
@@ -615,15 +619,40 @@ export default function SettingsPage() {
               </Button>
             </div>
           </CardContent>
-        </Card>
+            </Card>
 
-        <div className="min-w-0 space-y-3">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Plug className="size-4 text-muted-foreground" aria-hidden="true" />
-                Server connection
-              </CardTitle>
+            <SecuritySection />
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <KeyRound className="size-4 text-muted-foreground" aria-hidden="true" />
+                  Security model
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm text-muted-foreground">
+                <p>
+                  The Unraid API key is configured server-side and never sent to
+                  the browser. Prometheus is queried server-side too; the browser
+                  can never run arbitrary PromQL. These settings contain
+                  appearance preferences only.
+                </p>
+                <p>
+                  The dashboard uses a read-only (VIEWER) API key; no write or
+                  lifecycle actions are exposed anywhere in the UI.
+                </p>
+              </CardContent>
+            </Card>
+          </>
+        }
+        right={
+          <>
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Plug className="size-4 text-muted-foreground" aria-hidden="true" />
+                  Server connection
+                </CardTitle>
               <SectionStatus
                 section={
                   overview.data
@@ -687,46 +716,20 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
-          <div className="mt-4 flex items-center gap-3 lg:col-span-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Updates &amp; security</h3>
-            <div className="h-px flex-1 bg-border" />
-          </div>
+            <SectionRule label="Updates &amp; security" />
 
-          <SecuritySection />
+            <UpdatesSection />
 
-          <UpdatesSection />
+            <SectionRule label="Shared dashboards &amp; diagnostics" />
 
-          <div className="mt-4 flex items-center gap-3 lg:col-span-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Shared dashboards &amp; diagnostics</h3>
-            <div className="h-px flex-1 bg-border" />
-          </div>
+            <DashboardsSection />
 
-          <DashboardsSection />
+            <AgentApiSection />
 
-          <AboutAndDiagnostics />
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <KeyRound className="size-4 text-muted-foreground" aria-hidden="true" />
-                Security model
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm text-muted-foreground">
-              <p>
-                The Unraid API key is configured server-side and never sent to
-                the browser. Prometheus is queried server-side too; the browser
-                can never run arbitrary PromQL. These settings contain
-                appearance preferences only.
-              </p>
-              <p>
-                The dashboard uses a read-only (VIEWER) API key; no write or
-                lifecycle actions are exposed anywhere in the UI.
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    </div>
+            <AboutAndDiagnostics />
+          </>
+        }
+      />
+    </PageStack>
   );
 }

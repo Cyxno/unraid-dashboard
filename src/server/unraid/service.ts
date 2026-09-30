@@ -98,6 +98,7 @@ interface RawMetrics {
   cpuPercent: number;
   memoryPercent: number;
   memoryUsedBytes: number;
+  memoryAvailableBytes: number | null;
   memoryTotalBytes: number;
   throughput: NetworkThroughput;
   temperature: TemperatureInfo;
@@ -110,11 +111,27 @@ const metricsProvider = new SectionProvider<RawMetrics>(
   async () => {
     const client = getUnraidClient();
     const payload = await client.request(METRICS_QUERY);
+    // Canonical Linux semantics (v0.9.7): used = total − available, and
+    // usedPercent is DERIVED from that pair, so the invariant
+    // usedBytes / totalBytes ≈ percentTotal holds by construction.
+    // Unraid's own percentTotal already follows (total − available)/total,
+    // but its `used` is MemTotal − MemFree (cache-inclusive); mixing the
+    // two produced contradictory UI values (78% beside "60 of 62 GiB").
+    const totalBytes = Number((payload as any)?.metrics?.memory?.total ?? 0);
+    const availableRaw = (payload as any)?.metrics?.memory?.available;
+    const availableBytes =
+      availableRaw == null ? null : Math.max(0, Number(availableRaw) || 0);
+    const usedBytes =
+      availableBytes != null && totalBytes > 0
+        ? Math.max(0, totalBytes - availableBytes)
+        : Number((payload as any)?.metrics?.memory?.used ?? 0);
     return {
       cpuPercent: (payload as any)?.metrics?.cpu?.percentTotal ?? 0,
-      memoryPercent: (payload as any)?.metrics?.memory?.percentTotal ?? 0,
-      memoryUsedBytes: Number((payload as any)?.metrics?.memory?.used ?? 0),
-      memoryTotalBytes: Number((payload as any)?.metrics?.memory?.total ?? 0),
+      memoryPercent:
+        totalBytes > 0 ? Math.round((usedBytes / totalBytes) * 100000) / 1000 : 0,
+      memoryUsedBytes: usedBytes,
+      memoryAvailableBytes: availableBytes,
+      memoryTotalBytes: totalBytes,
       throughput: mapNetworkThroughput(payload),
       temperature: mapTemperature(payload),
       interfaces: (payload as any)?.metrics?.network,
@@ -242,26 +259,31 @@ export async function getOverview(
     ]);
   const docker = dockerWithMetrics.section;
 
-  const memory: Section<{ percentTotal: number; usedBytes: number; totalBytes: number }> =
-    metrics.data
-      ? {
-          status: metrics.status,
-          data: {
-            percentTotal: metrics.data.memoryPercent,
-            usedBytes: metrics.data.memoryUsedBytes,
-            totalBytes: metrics.data.memoryTotalBytes,
-          },
-          fetchedAt: metrics.fetchedAt,
-          ageMs: metrics.ageMs,
-          reason: metrics.reason,
-        }
-      : {
-          status: metrics.status,
-          data: null,
-          fetchedAt: metrics.fetchedAt,
-          ageMs: metrics.ageMs,
-          reason: metrics.reason,
-        };
+  const memory: Section<{
+    percentTotal: number;
+    usedBytes: number;
+    totalBytes: number;
+    availableBytes: number | null;
+  }> = metrics.data
+    ? {
+        status: metrics.status,
+        data: {
+          percentTotal: metrics.data.memoryPercent,
+          usedBytes: metrics.data.memoryUsedBytes,
+          totalBytes: metrics.data.memoryTotalBytes,
+          availableBytes: metrics.data.memoryAvailableBytes,
+        },
+        fetchedAt: metrics.fetchedAt,
+        ageMs: metrics.ageMs,
+        reason: metrics.reason,
+      }
+    : {
+        status: metrics.status,
+        data: null,
+        fetchedAt: metrics.fetchedAt,
+        ageMs: metrics.ageMs,
+        reason: metrics.reason,
+      };
 
   const cpuSection = {
     ...metrics,

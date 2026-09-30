@@ -19,7 +19,10 @@ const jobs = [
   { file: "icons/icon-maskable-192.png", size: 192, scale: 0.8 },
   { file: "icons/icon-maskable-512.png", size: 512, scale: 0.8 },
   // Apple touch icon: opaque, square (iOS rounds it), no transparency.
+  // Emitted twice: /icons/apple-touch-icon.png (linked from the head)
+  // and /apple-touch-icon.png (the root path iOS probes as a fallback).
   { file: "icons/apple-touch-icon.png", size: 180 },
+  { file: "apple-touch-icon.png", size: 180 },
   { file: "favicon-96.png", size: 96 },
 ];
 

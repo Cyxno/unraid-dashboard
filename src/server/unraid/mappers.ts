@@ -100,14 +100,25 @@ export function mapCpu(payload: any, temperature: TemperatureInfo | null): CpuUs
 }
 
 export function mapMemory(payload: any): MemoryUsage {
+  // Canonical Linux semantics (v0.9.7): used = total − available, and
+  // percentTotal is derived from that pair, so
+  // usedBytes / totalBytes ≈ percentTotal always holds. The upstream
+  // `used` (MemTotal − MemFree) is cache-inclusive and contradicted the
+  // available-based percent when displayed next to it.
   const total = toNumber(payload?.metrics?.memory?.total) ?? 0;
-  const used = toNumber(payload?.metrics?.memory?.used) ?? 0;
-  const percent = toNumber(payload?.metrics?.memory?.percentTotal);
+  const availableRaw = toNumber(payload?.metrics?.memory?.available);
+  const available = availableRaw == null ? null : Math.max(0, availableRaw);
+  const used =
+    available != null && total > 0
+      ? Math.max(0, total - available)
+      : toNumber(payload?.metrics?.memory?.used) ?? 0;
+  const usedBytes = total > 0 && available != null ? Math.min(used, total) : used;
   return {
     totalBytes: total,
-    usedBytes: used,
-    percentTotal:
-      percent ?? (total > 0 ? Math.round((used / total) * 1000) / 10 : 0),
+    usedBytes,
+    availableBytes:
+      available != null && total > 0 ? Math.max(0, total - usedBytes) : null,
+    percentTotal: total > 0 ? Math.round((usedBytes / total) * 1000) / 10 : 0,
   };
 }
 
