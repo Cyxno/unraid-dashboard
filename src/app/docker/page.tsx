@@ -241,6 +241,14 @@ export default function DockerPage() {
         window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
         element.focus({ preventScroll: true });
         setHighlightSection(key);
+        // Corrective re-scroll: the lazily mounted panel grows as its data
+        // lands, which would otherwise leave the section above the viewport.
+        setTimeout(() => {
+          const target = document.getElementById(`docker-${key}`);
+          if (!target) return;
+          const corrected = target.getBoundingClientRect().top + window.scrollY - 64;
+          window.scrollTo({ top: Math.max(0, corrected), behavior: "smooth" });
+        }, 700);
         setTimeout(() => setHighlightSection(null), 1_600);
       }, key === "containers" ? 0 : 60);
     });
