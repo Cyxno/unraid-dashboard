@@ -207,8 +207,25 @@ async function assertLayout(browser) {
         });
         return { stretched, worstImbalance: Math.max(0, ...imbalances) };
       });
-      if (settings.stretched > 0) fail("settings-1440", `${settings.stretched} column grid(s) stretch the shorter stack (dead space)`);
-      if (settings.worstImbalance > 400) fail("settings-1440", `column imbalance ${settings.worstImbalance}px > 400px — redistribute content`);
+      // Cards grow as polls land — re-measure once settled and judge on
+      // the state the user actually sees.
+      await page.waitForTimeout(2_000);
+      const settled = await page.evaluate(() => {
+        const grids = [...document.querySelectorAll("main .md\\:grid-cols-2")];
+        const imbalances = grids.map((grid) => {
+          const heights = [...grid.children].map((child) => child.getBoundingClientRect().height);
+          return Math.round(Math.max(...heights) - Math.min(...heights));
+        });
+        const stretched = grids.filter((grid) => {
+          const style = getComputedStyle(grid);
+          if (style.alignItems !== "stretch") return false;
+          const bottoms = [...grid.children].map((child) => child.getBoundingClientRect().bottom);
+          return Math.max(...bottoms) - Math.min(...bottoms) > 64;
+        }).length;
+        return { stretched, worstImbalance: Math.max(0, ...imbalances) };
+      });
+      if (settled.stretched > 0) fail("settings-1440", `${settled.stretched} column grid(s) stretch the shorter stack (dead space)`);
+      if (settled.worstImbalance > 400) fail("settings-1440", `settled column imbalance ${settled.worstImbalance}px > 400px — redistribute content`);
     } catch (error) {
       fail("settings-1440", error.message.slice(0, 90));
     } finally {
