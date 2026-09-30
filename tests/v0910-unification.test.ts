@@ -57,10 +57,12 @@ describe("v0.9.10 shared action controller + capability model + thermal context"
     assert.match(detailPage, /confirmed via \$\{dockerAction\.result\.via === "sse" \? "live event" : "state poll"\}/);
   });
 
-  it("automation surfaces the lifecycle-capability blocker without faking actionability", () => {
+  it("automation surfaces workflow eligibility without faking actionability (v0.9.11 model)", () => {
     const automation = read("src/app/automation/page.tsx");
-    assert.match(automation, /Action capability unavailable/);
-    assert.match(automation, /Update automation is helper-driven and unaffected/);
+    assert.match(automation, /Workflow eligibility \(capabilities\)/);
+    assert.match(automation, /capabilityContext/);
+    // Never "Ready" without the capability: Ready/Blocked come from the blockers array.
+    assert.match(automation, /workflow\.eligible \? "Ready" : "Blocked"/);
   });
 
   it("Agent API exposes capability context but remains read-only", () => {

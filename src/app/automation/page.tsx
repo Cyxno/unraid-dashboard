@@ -51,7 +51,16 @@ interface AutomationTarget {
   pipelineOwned: boolean;
 }
 
+interface WorkflowEligibility {
+  workflow: string;
+  eligible: boolean;
+  blockers: string[];
+  requiredCapabilities: string[];
+  availableCapabilities: string[];
+}
+
 interface AutomationStatus {
+  capabilityContext?: { computedAt: string; workflows: WorkflowEligibility[] };
   policyVersion: string;
   enabled: boolean;
   paused: boolean;
@@ -319,12 +328,31 @@ export default function AutomationPage() {
               )}
             </CardHeader>
             <CardContent className="space-y-2 pt-0">
-              {caps.data && !caps.data.enabled && (
-                <p role="status" className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
-                  Action capability unavailable — Docker lifecycle actions (start/stop) are disabled on this host
-                  {caps.data.reason ? ` (${caps.data.reason.toLowerCase()})` : ""}. Update automation is helper-driven and unaffected;
-                  any future workflow that needs lifecycle actions will stay blocked until the capability is enabled.
-                </p>
+              {(status.data?.capabilityContext?.workflows ?? []).length > 0 && (
+                <div role="status" className="rounded-md border px-3 py-2 text-xs">
+                  <p className="font-medium text-muted-foreground">Workflow eligibility (capabilities)</p>
+                  <ul className="mt-1.5 space-y-1">
+                    {status.data!.capabilityContext!.workflows.map((workflow: WorkflowEligibility) => (
+                      <li key={workflow.workflow} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <Badge variant={workflow.eligible ? "success" : "muted"} className="text-[10px]">
+                          {workflow.eligible ? "Ready" : "Blocked"}
+                        </Badge>
+                        <span className="font-mono">{workflow.workflow}</span>
+                        <span className="text-muted-foreground">
+                          Requires: {workflow.requiredCapabilities.join(" · ") || "—"} · Available:{" "}
+                          {workflow.availableCapabilities.join(" · ") || "none"}
+                        </span>
+                        {workflow.blockers.length > 0 && (
+                          <span className="text-warning">{workflow.blockers.join("; ")}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    Computed live from the shared capability model — ownership and risk policy still gate
+                    individual targets independently of capabilities.
+                  </p>
+                </div>
               )}
               {visible.length === 0 && <p className="text-sm text-muted-foreground">No opt-in targets yet — opt in below once a container has a proven track record.</p>}
               {visible.map((target) => (

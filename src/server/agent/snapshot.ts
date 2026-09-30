@@ -58,17 +58,60 @@ export interface AgentDataBundle {
   updates: Awaited<ReturnType<typeof enrichedOverview>> | null;
   automation: Awaited<ReturnType<typeof getAutomationStatus>> | null;
   projects: Awaited<ReturnType<typeof listProjects>> | null;
+  thermal: Awaited<ReturnType<typeof getThermalContext>> | null;
 }
 
 export async function loadBundle(): Promise<AgentDataBundle> {
-  const [overview, diagnostics, updates, automation, projects] = await Promise.all([
+  const [overview, diagnostics, updates, automation, projects, thermal] = await Promise.all([
     getOverview("15m").catch(() => null),
     getDiagnostics().catch(() => null),
     enrichedOverview().catch(() => null),
     getAutomationStatus().catch(() => null),
     listProjects().catch(() => null),
+    getThermalContext().catch(() => null),
   ]);
-  return { overview, diagnostics, updates, automation, projects };
+  return { overview, diagnostics, updates, automation, projects, thermal };
+}
+
+/**
+ * Read-only thermal context for the Agent API (v0.9.11): assembled from
+ * the same cached analyses the UI uses — current, 24h/7d aggregates,
+ * active-episode flag, recent episode count and the correlation summary
+ * of the latest episode. No thresholds are duplicated here.
+ */
+export async function getThermalContext() {
+  const { isPrometheusConfigured } = await import("@/server/prometheus/client");
+  if (!isPrometheusConfigured()) return null;
+  const { getThermalAnalysis, getThermal7dContext } = await import("@/server/prometheus/thermal");
+  const { CPU_TEMP_WARNING_C, CPU_TEMP_CRITICAL_C } = await import("@/server/thresholds");
+  const client = new (await import("@/server/prometheus/client")).PromClient();
+  const [analysis, context7d] = await Promise.all([
+    getThermalAnalysis(client, CPU_TEMP_WARNING_C, CPU_TEMP_CRITICAL_C).catch(() => null),
+    getThermal7dContext(client, CPU_TEMP_WARNING_C, CPU_TEMP_CRITICAL_C).catch(() => null),
+  ]);
+  const latest = context7d?.recentEpisodes?.[0] ?? null;
+  return {
+    currentC: analysis?.currentC ?? null,
+    avg24hC: analysis?.avg24hC ?? null,
+    avg7dC: context7d?.avg7dC ?? null,
+    prev7dAvgC: context7d?.prev7dAvgC ?? null,
+    deltaC: context7d?.deltaC ?? null,
+    state: analysis?.state ?? null,
+    activeEpisode: latest?.ongoing === true,
+    recentEpisodeCount7d: context7d?.episodes.aboveWarning ?? null,
+    latestEpisode: latest
+      ? {
+          startMs: latest.startMs,
+          endMs: latest.endMs,
+          avgC: latest.avgC,
+          maxC: latest.maxC,
+          ongoing: latest.ongoing,
+        }
+      : null,
+    dataQuality: context7d
+      ? { coverageRatio: context7d.coverageRatio, samples: context7d.samples }
+      : null,
+  };
 }
 
 /* ---- summary -------------------------------------------------------------- */
@@ -84,6 +127,19 @@ export interface AgentSummary {
   docker: { running: number | null; total: number | null; unhealthy: number | null };
   vms: { total: number; running: number } | null;
   updatesAvailable: number | null;
+  /** v0.9.11: read-only thermal context (no thresholds duplicated). */
+  thermal: {
+    currentC: number | null;
+    avg24hC: number | null;
+    avg7dC: number | null;
+    prev7dAvgC: number | null;
+    deltaC: number | null;
+    state: string | null;
+    activeEpisode: boolean;
+    recentEpisodeCount7d: number | null;
+    latestEpisode: { startMs: number; endMs: number | null; avgC: number; maxC: number; ongoing: boolean } | null;
+    dataQuality: { coverageRatio: number; samples: number } | null;
+  } | null;
   /** v0.9.10: read-only capability context (normalized model; the Agent
    *  API has NO action endpoints — this only describes what the UI can do). */
   actionCapabilities: {
@@ -135,6 +191,7 @@ export function buildSummary(bundle: AgentDataBundle): AgentSummary {
     },
     vms: null,
     updatesAvailable: updateCount,
+    thermal: bundle.thermal,
     actionCapabilities: (() => {
       const enabled = areActionsEnabled();
       const reason = enabled

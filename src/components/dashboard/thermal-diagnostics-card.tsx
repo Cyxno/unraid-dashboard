@@ -57,7 +57,7 @@ export interface ThermalDiagnosticsPayload {
       peakPowerWatts: number | null;
       tempVsCpu?: number | null;
       tempVsPower?: number | null;
-      classification?: "load-correlated" | "power-correlated" | "weakly-correlated" | "unexplained";
+      classification?: "load-correlated" | "power-correlated" | "weakly-correlated" | "unexplained" | "idle-hot";
       topContainers?: Array<{ name: string; avgCpuPercent: number; peakCpuPercent: number }>;
     }>;
     correlation: {
@@ -375,7 +375,9 @@ export function ThermalDiagnosticsCard({
                           }
                           className="text-[10px]"
                         >
-                          {episode.classification ?? "—"}
+                          {episode.classification === "idle-hot"
+                            ? "elevated temp, low load"
+                            : episode.classification ?? "—"}
                         </Badge>
                       </td>
                     </tr>

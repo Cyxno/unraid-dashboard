@@ -26,8 +26,10 @@ describe("v07 episode classification (documented rules, no causality)", () => {
     assert.equal(classifyEpisode({ avgCpuPercent: 20, tempVsCpu: 0.35, tempVsPower: 0.1 }), "weakly-correlated");
   });
 
-  it("unexplained when both correlations < 0.3", () => {
-    assert.equal(classifyEpisode({ avgCpuPercent: 15, tempVsCpu: 0.1, tempVsPower: 0.2 }), "unexplained");
+  it("low-CPU flat-correlation cases classify as idle-hot (v0.9.11 refined taxonomy)", () => {
+    assert.equal(classifyEpisode({ avgCpuPercent: 15, tempVsCpu: 0.1, tempVsPower: 0.2 }), "idle-hot");
+    // Unexplained survives when CPU is NOT low.
+    assert.equal(classifyEpisode({ avgCpuPercent: 45, tempVsCpu: 0.1, tempVsPower: 0.2 }), "unexplained");
   });
 
   it("unexplained when correlations are missing entirely", () => {

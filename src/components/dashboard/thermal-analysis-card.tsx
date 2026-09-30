@@ -14,6 +14,17 @@ export interface ThermalAnalysisPayload {
     reason?: string;
     avg7dC: number | null;
     max7dC: number | null;
+    prev7dAvgC?: number | null;
+    deltaC?: number | null;
+    coverageRatio?: number;
+    recentEpisodes?: Array<{
+      startMs: number;
+      endMs: number | null;
+      durationSeconds: number;
+      avgC: number;
+      maxC: number;
+      ongoing: boolean;
+    }>;
     dailyMeanC: Array<{ day: string; avgC: number | null }>;
     daysWithObservations: number;
     slopeCPerDay: number | null;
@@ -118,6 +129,14 @@ export function ThermalAnalysisCard({
                     : "not enough data",
                 ],
                 ["Days observed", `${payload.context7d.daysWithObservations}/7`],
+                ["Prev 7d avg", formatTemp(payload.context7d.prev7dAvgC ?? null, prefs.tempUnit)],
+                [
+                  "WoW Δ",
+                  payload.context7d.deltaC != null
+                    ? `${payload.context7d.deltaC > 0 ? "+" : ""}${payload.context7d.deltaC} °C`
+                    : "—",
+                ],
+                ["Data coverage", `${Math.round((payload.context7d.coverageRatio ?? 0) * 100)}%`],
               ] as const
             ).map(([label, value]) => (
               <div key={label} className="flex justify-between gap-2">
@@ -149,6 +168,51 @@ export function ThermalAnalysisCard({
               : " · slope computed only from ≥5 observed days (no trend is claimed)"}
             .
           </p>
+
+          {(payload.context7d.recentEpisodes?.length ?? 0) > 0 && (
+            <div className="mt-2">
+              <p className="text-xs font-medium">
+                Recent hot episodes (7d)
+                <span className="ml-1.5 font-normal text-[10px] text-muted-foreground">
+                  ≥ {payload.warningC}°C for ≥ 15 min
+                </span>
+              </p>
+              <ul className="mt-1 space-y-1">
+                {payload.context7d.recentEpisodes!.map((episode) => (
+                  <li
+                    key={episode.startMs}
+                    className="flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border px-2 py-1.5 text-[11px]"
+                  >
+                    <span className="font-mono">
+                      {new Date(episode.startMs).toLocaleString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                    <span className="text-muted-foreground">
+                      {episode.ongoing
+                        ? "ongoing"
+                        : `${Math.max(1, Math.round(episode.durationSeconds / 60))} min`}
+                    </span>
+                    <span className="font-mono text-muted-foreground">
+                      avg {episode.avgC}°C → max {episode.maxC}°C
+                    </span>
+                    {episode.ongoing && (
+                      <Badge variant="warning" className="text-[10px]">
+                        ongoing
+                      </Badge>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1 text-[10px] text-muted-foreground">
+                What was happening during recent episodes: see the 24h thermal
+                diagnostics above for correlation and top CPU consumers.
+              </p>
+            </div>
+          )}
         </div>
       ) : (
         <p className="mt-3 border-t pt-2 text-[11px] text-muted-foreground">

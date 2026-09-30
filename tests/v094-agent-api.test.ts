@@ -103,7 +103,7 @@ describe("v0.9.4 agent failure modes", () => {
     const { loadBundle } = await import("../src/server/agent/snapshot");
     void loadBundle;
     const snapshot = await import("../src/server/agent/snapshot");
-    const emptyBundle = { overview: null, diagnostics: null, updates: null, automation: null, projects: null };
+    const emptyBundle = { overview: null, diagnostics: null, updates: null, automation: null, projects: null, thermal: null };
     const summary = snapshot.buildSummary(emptyBundle);
     assert.equal(summary.health.level, null);
     assert.equal(summary.cpu.percent, null);

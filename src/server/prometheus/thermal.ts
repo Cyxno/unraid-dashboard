@@ -374,6 +374,14 @@ export async function getThermalDiagnostics(
 
     const episodes = detectThermalEpisodes(tempRange);
 
+    // Window-median power: conservative idle-hot baseline (v0.9.11). Null
+    // when power data is missing — the idle-hot rule then needs the
+    // correlation path instead (never guessed).
+    const powerValues = powerRange.series.map((point) => point.v).filter((v): v is number => v !== null).sort((a, b) => a - b);
+    const medianPowerWatts = powerValues.length > 0
+      ? powerValues[Math.floor(powerValues.length / 2)]
+      : null;
+
     // Correlate aligned samples.
     const tempCpuPairs = alignSeries(tempRange, cpuRange);
     const tempPowerPairs = alignSeries(tempRange, powerRange.series);
@@ -446,6 +454,10 @@ export async function getThermalDiagnostics(
         avgCpuPercent: episode.avgCpuPercent,
         tempVsCpu: episodeTempCpu,
         tempVsPower: episodeTempPower,
+        // idle-hot context (v0.9.11): window power vs the window-median power
+        // as a conservative baseline (null-safe — rule applies only when known).
+        avgPowerWatts: episode.avgPowerWatts,
+        powerBaselineWatts: medianPowerWatts,
       });
       episode.topContainers = topContainersInRange(
         containerCpuSeries,
@@ -626,7 +638,21 @@ export interface Thermal7dContext {
    *  threshold lasting ≥ 15 min (3 consecutive 5-min samples). Uses the
    *  SAME warning/critical thresholds as health — no new definitions. */
   episodes: { aboveWarning: number; aboveCritical: number };
+  /** Latest sustained episodes (>=15 min), newest first, capped at 5. */
+  recentEpisodes: Array<{
+    startMs: number;
+    endMs: number | null;
+    durationSeconds: number;
+    avgC: number;
+    maxC: number;
+    ongoing: boolean;
+  }>;
   samples: number;
+  /** v0.9.11 week-over-week context (null when the prior window lacks data). */
+  prev7dAvgC: number | null;
+  deltaC: number | null;
+  /** Fraction of expected 5-min samples actually present (0-1). */
+  coverageRatio: number;
 }
 
 const EPISODE_MIN_SAMPLES = 3; // 3 × 5 min = 15 min sustained
@@ -646,6 +672,48 @@ export function countSustainedEpisodes(values: Array<number | null>, threshold: 
   if (run >= EPISODE_MIN_SAMPLES) episodes += 1;
   return episodes;
 }
+
+/**
+ * Detect sustained hot runs from an evenly-sampled series (v0.9.11).
+ * A run = >= minSamples consecutive samples at/above threshold. Pure:
+ * used by the 7-day episode list and unit-tested.
+ */
+export function detectSustainedRuns(
+  values: Array<number | null>,
+  stepSeconds: number,
+  threshold: number,
+  minSamples: number,
+): Array<{ startSec: number; endSec: number | null; samples: number; sum: number; max: number; ongoing: boolean }> {
+  const runs: Array<{ startSec: number; endSec: number | null; samples: number; sum: number; max: number; ongoing: boolean }> = [];
+  let startSec: number | null = null;
+  let samples = 0;
+  let sum = 0;
+  let max = -Infinity;
+  for (let index = 0; index < values.length; index += 1) {
+    const value: number | null = values[index] ?? null;
+    const t = index * stepSeconds;
+    const hot = value !== null && value >= threshold;
+    if (hot) {
+      if (startSec === null) startSec = t;
+      samples += 1;
+      sum += value as number;
+      max = Math.max(max, value as number);
+    } else if (startSec !== null) {
+      if (samples >= minSamples) {
+        runs.push({ startSec, endSec: t, samples, sum, max, ongoing: false });
+      }
+      startSec = null;
+      samples = 0;
+      sum = 0;
+      max = -Infinity;
+    }
+  }
+  if (startSec !== null && samples >= minSamples) {
+    runs.push({ startSec, endSec: null, samples, sum, max, ongoing: true });
+  }
+  return runs;
+}
+
 
 /** Least-squares slope (°C/day) over daily means; null below 5 days. */
 export function dailySlope(dailyMeans: Array<number | null>): number | null {
@@ -682,7 +750,12 @@ export async function getThermal7dContext(
     const end = Date.now() / 1000;
     const start = end - 7 * 24 * 3600;
     try {
-      const series = await client.range(base, start, end, 300);
+      const [seriesResult, prevResult] = await Promise.all([
+        client.range(base, start, end, 300),
+        // Prior 7-day window for the week-over-week comparison (v0.9.11).
+        client.range(base, start - 7 * 24 * 3600, start, 900).catch(() => []),
+      ]);
+      const series = seriesResult;
       const points = (series[0]?.points ?? []).map((point) => point.v);
       if (points.length === 0) {
         return {
@@ -691,12 +764,16 @@ export async function getThermal7dContext(
           sensor: { name: "Package id 0", chip: "coretemp" },
           avg7dC: null,
           max7dC: null,
+          prev7dAvgC: null,
+          deltaC: null,
+          coverageRatio: 0,
           dailyMeanC: [],
           daysWithObservations: 0,
           slopeCPerDay: null,
           slopeMethod: "least squares over local-day means, °C/day (needs ≥5 days)",
           episodes: { aboveWarning: 0, aboveCritical: 0 },
           samples: 0,
+        recentEpisodes: [],
         };
       }
 
@@ -730,11 +807,33 @@ export async function getThermal7dContext(
       const daysWithObservations = dailyMeans.filter((mean) => mean !== null).length;
       const slopeCPerDay = dailySlope(dailyMeans);
 
+      const prevValues = prevResult[0]?.points.map((point) => point.v).filter((v): v is number => v !== null) ?? [];
+      const prev7dAvgC = prevValues.length > 0
+        ? Math.round((prevValues.reduce((sum, value) => sum + value, 0) / prevValues.length) * 10) / 10
+        : null;
+      const expectedSamples = 7 * 24 * 12; // 5-min step over 7 days
+
+      const recentEpisodes = detectSustainedRuns(points, 300, warningC, 3)
+        .slice(0, 5)
+        .map((run) => ({
+          startMs: run.startSec * 1000,
+          endMs: run.endSec === null ? null : run.endSec * 1000,
+          durationSeconds: run.samples * 300,
+          avgC: Math.round((run.sum / run.samples) * 10) / 10,
+          maxC: Math.round(run.max * 10) / 10,
+          ongoing: run.ongoing,
+        }))
+        .reverse(); // newest first
+
       return {
         available: true,
         sensor: { name: "Package id 0", chip: "coretemp" },
         avg7dC,
         max7dC,
+        prev7dAvgC,
+        deltaC: prev7dAvgC !== null && avg7dC !== null ? Math.round((avg7dC - prev7dAvgC) * 10) / 10 : null,
+        coverageRatio: Math.min(1, Math.round((points.length / expectedSamples) * 100) / 100),
+        recentEpisodes,
         dailyMeanC,
         daysWithObservations,
         slopeCPerDay,
@@ -752,12 +851,16 @@ export async function getThermal7dContext(
         sensor: null,
         avg7dC: null,
         max7dC: null,
+        prev7dAvgC: null,
+        deltaC: null,
+        coverageRatio: 0,
         dailyMeanC: [],
         daysWithObservations: 0,
         slopeCPerDay: null,
         slopeMethod: "least squares over local-day means, °C/day (needs ≥5 days)",
         episodes: { aboveWarning: 0, aboveCritical: 0 },
         samples: 0,
+        recentEpisodes: [],
       };
     }
   });

@@ -112,8 +112,8 @@ export interface ThermalEpisode {
   /** Per-episode correlations (v0.7, associative only). */
   tempVsCpu?: number | null;
   tempVsPower?: number | null;
-  /** Documented-rule classification (v0.7, never causal). */
-  classification?: "load-correlated" | "power-correlated" | "weakly-correlated" | "unexplained";
+  /** Documented-rule classification (v0.7, never causal; idle-hot v0.9.11). */
+  classification?: "load-correlated" | "power-correlated" | "weakly-correlated" | "unexplained" | "idle-hot";
   /** Top CPU containers during the episode (v0.7; [] when data is missing). */
   topContainers?: Array<{ name: string; avgCpuPercent: number; peakCpuPercent: number }>;
 }
@@ -335,19 +335,37 @@ export type EpisodeClassification =
   | "load-correlated"
   | "power-correlated"
   | "weakly-correlated"
-  | "unexplained";
+  | "unexplained"
+  | "idle-hot";
 
 export function classifyEpisode(input: {
   avgCpuPercent: number | null;
   tempVsCpu: number | null;
   tempVsPower: number | null;
+  /** v0.9.11 idle-hot context (all optional — rule applies only when present). */
+  avgPowerWatts?: number | null;
+  powerBaselineWatts?: number | null;
 }): EpisodeClassification {
   if (input.avgCpuPercent !== null && input.avgCpuPercent >= 50) return "load-correlated";
   if (input.tempVsCpu !== null && input.tempVsCpu >= 0.5) return "load-correlated";
   if (input.tempVsPower !== null && input.tempVsPower >= 0.5) return "power-correlated";
   const cpuR = input.tempVsCpu ?? 0;
   const powerR = input.tempVsPower ?? 0;
-  if (Math.max(Math.abs(cpuR), Math.abs(powerR)) < 0.3) return "unexplained";
+  const noCorrelation = Math.max(Math.abs(cpuR), Math.abs(powerR)) < 0.3;
+  // Idle-hot (v0.9.11): elevated temperature with low observed load —
+  // CPU low, no correlation, and package power at/below ~baseline when
+  // known. Conservative by design; displayed as "elevated temperature
+  // with low observed load", never "cooling failure".
+  const cpuLow = input.avgCpuPercent !== null && input.avgCpuPercent < 30;
+  const powerKnownLow =
+    input.avgPowerWatts != null &&
+    input.powerBaselineWatts != null &&
+    input.avgPowerWatts <= input.powerBaselineWatts * 1.15;
+  const powerUnknownButFlat = input.avgPowerWatts == null && powerR < 0.3;
+  if (noCorrelation && cpuLow && (powerKnownLow || powerUnknownButFlat)) {
+    return "idle-hot";
+  }
+  if (noCorrelation) return "unexplained";
   return "weakly-correlated";
 }
 

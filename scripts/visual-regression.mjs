@@ -40,6 +40,8 @@ const MATRIX = [
   { path: "/storage", name: "storage", widths: [390, 1440], themes: ["dark", "light"] },
   { path: "/operations", name: "operations", widths: [1440], themes: THEMES },
   { path: "/settings", name: "settings", widths: [390, 1440], themes: ["dark", "light"] },
+  { path: "/automation", name: "automation", widths: [390, 1440], themes: ["dark"] },
+  { path: "/system", name: "system", widths: [390, 1440], themes: ["dark"] },
   { path: "/noc", name: "noc", widths: [1440], themes: ["dark", "midnight"] },
 ];
 
@@ -75,6 +77,8 @@ const WAIT_FOR = {
   "/storage": "text=Usable capacity",
   "/operations": "text=Release chain",
   "/settings": "text=Appearance",
+  "/automation": "text=Targets",
+  "/system": "text=History",
   "/noc": "text=ALL SYSTEMS NOMINAL",
 };
 
