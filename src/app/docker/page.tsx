@@ -79,22 +79,36 @@ const STATE_META = {
  * v0.9.9: optional collapsed-only summary line (e.g. cached update
  * count + check age) next to the label.
  */
+/**
+ * Controlled lazy section (v0.9.12): expansion state lives in the page so
+ * the anchor row can open a section in ONE action (expand -> mount ->
+ * scroll -> focus). Children still mount only while expanded, so page
+ * entry never starts the updates sweep / project / history polls.
+ */
 function LazySection({
+  sectionKey,
+  open,
+  onOpenChange,
   label,
   openHint,
   summary,
+  highlight,
   children,
 }: {
+  sectionKey: string;
+  open: boolean;
+  onOpenChange: (key: string, open: boolean) => void;
   label: string;
   openHint?: string;
   summary?: React.ReactNode;
+  highlight?: boolean;
   children: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
   return (
     <details
+      id={`docker-${sectionKey}-details`}
       open={open}
-      onToggle={(event) => setOpen((event.target as HTMLDetailsElement).open)}
+      onToggle={(event) => onOpenChange(sectionKey, (event.target as HTMLDetailsElement).open)}
     >
       <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         {label}
@@ -209,6 +223,28 @@ export default function DockerPage() {
   // confirm → request → transition → SSE confirmation → poll fallback →
   // timeout → toast. Identical semantics to the container detail page.
   const dockerAction = useDockerAction();
+
+  // Section navigation (v0.9.12): ONE handler for the anchor row —
+  // expands (and lazily mounts) the target section, scrolls it into view
+  // with the sticky-header offset, moves focus, and briefly highlights
+  // it. Page entry still mounts nothing beyond the container list.
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
+  const [highlightSection, setHighlightSection] = useState<string | null>(null);
+  const navigateToDockerSection = useCallback((key: "containers" | "updates" | "projects" | "history") => {
+    setOpenSections((current) => ({ ...current, [key]: true }));
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        const element = document.getElementById(`docker-${key}`);
+        if (!element) return;
+        const headerOffset = 64; // sticky header (56px) + breathing room
+        const top = element.getBoundingClientRect().top + window.scrollY - headerOffset;
+        window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+        element.focus({ preventScroll: true });
+        setHighlightSection(key);
+        setTimeout(() => setHighlightSection(null), 1_600);
+      }, key === "containers" ? 0 : 60);
+    });
+  }, []);
   const router = useRouter();
 
   // Lightweight update awareness (v0.9.9): cached count only — this poll
@@ -378,27 +414,41 @@ export default function DockerPage() {
       )}
 
       {/* Anchor navigation (v0.9.5) */}
-      <nav aria-label="Docker page sections" className="mb-3 flex flex-wrap items-center gap-1.5 text-xs">
-        {[
-          ["#docker-containers", "Containers"],
-          ["#docker-updates", updateCount != null && updateCount > 0 ? `Updates (${updateCount})` : "Updates"],
-          ["#docker-projects", "Projects"],
-          ["#docker-history", "History"],
-        ].map(([href, label]) => (
-          <a
-            key={href}
-            href={href}
+      <nav
+        aria-label="Docker page sections"
+        className="mb-3 flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1 text-xs md:flex-wrap md:overflow-visible md:pb-0"
+      >
+        {(
+          [
+            ["containers", "Containers"],
+            ["updates", updateCount != null && updateCount > 0 ? `Updates (${updateCount})` : "Updates"],
+            ["projects", "Projects"],
+            ["history", "History"],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            aria-expanded={key === "containers" ? undefined : Boolean(openSections[key])}
+            aria-current={highlightSection === key ? "true" : undefined}
+            onClick={() => navigateToDockerSection(key)}
             className={cn(
-              "rounded-full border px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground",
-              href === "#docker-updates" && updateCount != null && updateCount > 0 && "border-warning/50 text-warning",
+              "shrink-0 rounded-full border px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              key === "updates" && updateCount != null && updateCount > 0 && "border-warning/50 text-warning",
+              highlightSection === key && "border-primary/60 bg-primary/10 text-foreground",
             )}
           >
             {label}
-          </a>
+          </button>
         ))}
       </nav>
 
-      <section id="docker-containers" aria-label="Containers">
+      <section
+        id="docker-containers"
+        aria-label="Containers"
+        tabIndex={-1}
+        className={cn("outline-none", highlightSection === "containers" && "rounded-lg ring-2 ring-primary/40")}
+      >
       <div className="mb-3 flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
         <label className="relative md:w-56">
           <span className="sr-only">Search containers</span>
@@ -823,20 +873,57 @@ export default function DockerPage() {
         </>
       )}
       </section>
-      <section id="docker-updates" aria-label="Updates" className="mt-4">
-        <LazySection label="Updates" openHint="show" summary={updateSummaryText}>
+      <section
+        id="docker-updates"
+        aria-label="Updates"
+        tabIndex={-1}
+        className={cn("mt-4 scroll-mt-20 outline-none", highlightSection === "updates" && "rounded-lg ring-2 ring-primary/40")}
+      >
+        <LazySection
+          sectionKey="updates"
+          open={Boolean(openSections.updates)}
+          onOpenChange={(key, value) => setOpenSections((current) => ({ ...current, [key]: value }))}
+          label="Updates"
+          openHint="show"
+          summary={updateSummaryText}
+          highlight={highlightSection === "updates"}
+        >
           <DockerUpdatesPanel />
         </LazySection>
       </section>
 
-      <section id="docker-projects" aria-label="Projects" className="mt-4">
-        <LazySection label="Projects" openHint="show">
+      <section
+        id="docker-projects"
+        aria-label="Projects"
+        tabIndex={-1}
+        className={cn("mt-4 scroll-mt-20 outline-none", highlightSection === "projects" && "rounded-lg ring-2 ring-primary/40")}
+      >
+        <LazySection
+          sectionKey="projects"
+          open={Boolean(openSections.projects)}
+          onOpenChange={(key, value) => setOpenSections((current) => ({ ...current, [key]: value }))}
+          label="Projects"
+          openHint="show"
+          highlight={highlightSection === "projects"}
+        >
           <ComposeProjectsPanel />
         </LazySection>
       </section>
 
-      <section id="docker-history" aria-label="History" className="mt-4">
-        <LazySection label="History" openHint="show">
+      <section
+        id="docker-history"
+        aria-label="History"
+        tabIndex={-1}
+        className={cn("mt-4 scroll-mt-20 outline-none", highlightSection === "history" && "rounded-lg ring-2 ring-primary/40")}
+      >
+        <LazySection
+          sectionKey="history"
+          open={Boolean(openSections.history)}
+          onOpenChange={(key, value) => setOpenSections((current) => ({ ...current, [key]: value }))}
+          label="History"
+          openHint="show"
+          highlight={highlightSection === "history"}
+        >
           <UpdateHistoryPanel />
         </LazySection>
       </section>

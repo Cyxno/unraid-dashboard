@@ -639,6 +639,10 @@ export default function SettingsPage() {
 
             <SecuritySection />
 
+            {/* Diagnostics lives left (v0.9.12): keeps both columns meaningfully
+                populated to near-equal heights — no half-page empty column. */}
+            <AboutAndDiagnostics />
+
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -741,8 +745,6 @@ export default function SettingsPage() {
             <DashboardsSection />
 
             <AgentApiSection />
-
-            <AboutAndDiagnostics />
           </>
         }
       />

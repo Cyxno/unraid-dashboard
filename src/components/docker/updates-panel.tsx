@@ -303,7 +303,15 @@ export function DockerUpdatesPanel() {
     );
   }
 
-  const s = data.summary;
+  // Demo/failed payloads may lack a summary block — degrade, never crash.
+  const s = data.summary ?? {
+    total: 0,
+    updatesAvailable: 0,
+    highRisk: 0,
+    manualPolicy: 0,
+    pinned: 0,
+    localBuilds: 0,
+  };
 
   return (
     <Card className="mb-4">

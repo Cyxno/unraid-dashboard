@@ -36,11 +36,11 @@ describe("v0.9.7 layout system + spacing correctness + PWA identity", () => {
     assert.match(primitives, /grid items-start gap-card md:grid-cols-2/);
   });
 
-  it("overview uses PageStack and items-start two-column grids", () => {
+  it("overview uses PageStack and independent column stacks (v0.9.12 flow model)", () => {
     const overview = read("src/app/page.tsx");
     assert.match(overview, /<PageStack>/);
-    assert.match(overview, /aria-label="Resource history and storage"[\s\S]*?grid items-start gap-card xl:grid-cols-2/);
-    assert.match(overview, /aria-label="Containers and events"[\s\S]*?grid items-start gap-card xl:grid-cols-2/);
+    assert.match(overview, /aria-label="Server detail"[\s\S]*?grid items-start gap-card xl:grid-cols-2/);
+    assert.match(overview, /<SectionStack className="min-w-0">/);
   });
 
   it("settings uses independent stacks with balanced content", () => {

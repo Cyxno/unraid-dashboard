@@ -197,3 +197,29 @@ path; the disable command is documented in `/boot/config/go`.
   computed and displayed, but nothing schedules or executes automatic
   updates, and a future pilot mode would be allowlist-gated to LOW-risk
   containers with a proven rollback record.
+
+## Machine API (Agent API, v0.9.4+)
+
+The optional Agent API under `/api/agent/v1` is **read-only by construction**:
+it exposes health, system, Docker inventory, issues, projects, storage,
+operations and event-stream endpoints. There are no POST/PUT/DELETE handlers
+in the entire route tree (enforced by test). It requires its own bearer
+token (`AGENT_API_TOKEN`, min 32 chars, constant-time compared, never logged)
+and is rate-limited per endpoint. It may report capability *facts* (e.g.
+"docker start available") but can never perform one.
+
+## Action key (v0.9.9+)
+
+Lifecycle actions (container start/stop) require a dedicated
+`UNRAID_ACTION_API_KEY` with only `DOCKER: UPDATE_ANY`. The key is validated
+server-side, never echoed, never included in audit payloads, and its presence
+alone enables the capability — validity is proven at action time. Capabilities
+are recomputed live everywhere (Docker page, container detail, Automation
+eligibility, Operations, Settings, Agent API context), so a removed or
+invalidated key disables the surface everywhere with no stale "Ready" state.
+
+## Demo mode
+
+Running Beacon against an unreachable Unraid API renders synthetic data
+(badged **Demo data**). Mutations require a live Unraid API plus the action
+key, so a demo instance is read-only by construction.

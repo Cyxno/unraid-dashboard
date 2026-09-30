@@ -48,10 +48,10 @@ describe("v0.9.5 mobile UX + docker operations", () => {
   });
 
   it("docker secondary sections are lazy: their polls never start on page load", () => {
-    assert.match(dockerPage, /<LazySection label="Updates"[^>]*>\s*<DockerUpdatesPanel \/>\s*<\/LazySection>/);
-    assert.match(dockerPage, /<LazySection label="Projects"[^>]*>\s*<ComposeProjectsPanel \/>\s*<\/LazySection>/);
-    assert.match(dockerPage, /<LazySection label="History"[^>]*>\s*<UpdateHistoryPanel \/>\s*<\/LazySection>/);
-    assert.match(dockerPage, /const \[open, setOpen\] = useState\(false\);/);
+    assert.match(dockerPage, /sectionKey="updates"[\s\S]*?<DockerUpdatesPanel \/>/);
+    assert.match(dockerPage, /sectionKey="projects"[\s\S]*?<ComposeProjectsPanel \/>/);
+    assert.match(dockerPage, /sectionKey="history"[\s\S]*?<UpdateHistoryPanel \/>/);
+    assert.match(dockerPage, /useState<Record<string, boolean>>\(\{\}\)/);
   });
 
   it("docker defaults to the operational sort (unhealthy → running → stopped → unknown)", () => {

@@ -1,0 +1,13 @@
+# GitHub release notes assembly: groups PRs by label.
+changelog:
+  exclude:
+    labels: [chore, docs]
+  categories:
+    - title: Highlights
+      labels: [enhancement, feature]
+    - title: Fixes
+      labels: [bug]
+    - title: Security
+      labels: [security]
+    - title: Other changes
+      labels: ["*"]

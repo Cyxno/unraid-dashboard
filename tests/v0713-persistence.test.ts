@@ -124,7 +124,7 @@ describe("v0.7.13 reboot-persistence configuration (dry-run audit)", () => {
   });
 
   it("SECURITY.md states the pipeline-owned trust model and no-PAT-leak rule", async () => {
-    const security = await readFile(path.join(repoRoot, "SECURITY.md"), "utf8");
+    const security = await readFile(path.join(repoRoot, "docs", "SECURITY.md"), "utf8");
     assert.match(security, /pipeline_owned|pipeline-owned/i);
     assert.match(security, /read:packages/);
     assert.ok(!security.includes("<<<<<<<") && !security.includes(">>>>>>>"));

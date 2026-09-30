@@ -22,7 +22,7 @@ import { StorageOverview } from "@/components/dashboard/storage-overview";
 import { DockerOverviewList } from "@/components/dashboard/docker-overview-list";
 import { NotificationsCard } from "@/components/dashboard/notifications-card";
 import { MetricStatus } from "@/components/dashboard/section-status";
-import { PageStack } from "@/components/dashboard/layout-primitives";
+import { PageStack, SectionStack } from "@/components/dashboard/layout-primitives";
 import { Button } from "@/components/ui/button";
 import { usePrefs, DEFAULT_OVERVIEW_ORDER, OVERVIEW_PRESETS, type HistoryWindowPref } from "@/lib/prefs";
 import {
@@ -350,69 +350,60 @@ export default function OverviewPage() {
             })()}
       </section>
 
+      {/* Overview flow model (v0.9.12): TWO INDEPENDENT COLUMN STACKS instead
+          of row-paired grids. Row pairing reserved the taller sibling's height
+          across both columns, leaving a blank band under every shorter card.
+          Independent stacks pack continuously: the next card moves up. */}
       {payload && (
-        <section
-          aria-label="Resource history and storage"
-          className="grid items-start gap-card xl:grid-cols-2"
-        >
-          <div className="min-w-0 xl:col-span-1">
-            <SeriesChart
-              series={[
-                {
-                  name: "CPU %",
-                  points: payload.history.samples.map((sample) => ({
-                    t: sample.time,
-                    v: Number.isFinite(sample.cpu) ? sample.cpu : null,
-                  })),
-                },
-                {
-                  name: "RAM %",
-                  points: payload.history.samples.map((sample) => ({
-                    t: sample.time,
-                    v: Number.isFinite(sample.memory) ? sample.memory : null,
-                  })),
-                },
-              ]}
-              unit="percent"
-              unavailable={
-                payload.history.status === "unavailable" &&
-                payload.history.samples.length === 0
-              }
-              unavailableReason={
-                payload.history.source !== "prometheus"
-                  ? "History unavailable — Prometheus unreachable and the in-memory buffer is still filling."
-                  : undefined
-              }
-            />
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <WindowPicker
-                value={prefs.historyWindow}
-                onChange={(value: HistoryWindowPref) => setPref("historyWindow", value)}
+        <section aria-label="Server detail" className="grid items-start gap-card xl:grid-cols-2">
+          <SectionStack className="min-w-0">
+            <div className="min-w-0">
+              <SeriesChart
+                series={[
+                  {
+                    name: "CPU %",
+                    points: payload.history.samples.map((sample) => ({
+                      t: sample.time,
+                      v: Number.isFinite(sample.cpu) ? sample.cpu : null,
+                    })),
+                  },
+                  {
+                    name: "RAM %",
+                    points: payload.history.samples.map((sample) => ({
+                      t: sample.time,
+                      v: Number.isFinite(sample.memory) ? sample.memory : null,
+                    })),
+                  },
+                ]}
+                unit="percent"
+                unavailable={
+                  payload.history.status === "unavailable" &&
+                  payload.history.samples.length === 0
+                }
+                unavailableReason={
+                  payload.history.source !== "prometheus"
+                    ? "History unavailable — Prometheus unreachable and the in-memory buffer is still filling."
+                    : undefined
+                }
               />
-              <p className="text-[11px] text-muted-foreground">
-                {payload.history.source === "prometheus"
-                  ? `source: Prometheus · ${payload.history.status}`
-                  : "source: in-memory buffer (Prometheus unavailable)"}
-                {payload.history.status === "stale" && " · stale"}
-              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <WindowPicker
+                  value={prefs.historyWindow}
+                  onChange={(value: HistoryWindowPref) => setPref("historyWindow", value)}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  {payload.history.source === "prometheus"
+                    ? `source: Prometheus · ${payload.history.status}`
+                    : "source: in-memory buffer (Prometheus unavailable)"}
+                  {payload.history.status === "stale" && " · stale"}
+                </p>
+              </div>
             </div>
-          </div>
-          <div className="min-w-0">
-            <StorageOverview storage={payload.storage} />
-          </div>
-        </section>
-      )}
-
-      {payload && (
-        <section
-          aria-label="Containers and events"
-          className="grid items-start gap-card xl:grid-cols-2"
-        >
-          <div className="min-w-0 space-y-3">
             <TopConsumersCard consumers={extras?.topConsumers ?? null} />
             <DockerOverviewList docker={payload.docker} />
-          </div>
-          <div className="min-w-0 space-y-3">
+          </SectionStack>
+          <SectionStack className="min-w-0">
+            <StorageOverview storage={payload.storage} />
             <NotificationsCard notifications={payload.notifications} />
             {extras && !extras.prometheus.configured && (
               <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
@@ -435,7 +426,7 @@ export default function OverviewPage() {
                 </p>
               </div>
             )}
-          </div>
+          </SectionStack>
         </section>
       )}
     </PageStack>

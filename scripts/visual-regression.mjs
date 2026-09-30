@@ -159,12 +159,21 @@ async function assertLayout(browser) {
             return rects.some((slack) => slack > 64);
           })
           .length;
-        return { gaps, stretchedGrids };
+        // v0.9.12: two-column page stacks must stay balanced (no dead half).
+        const columnImbalances = [...main.querySelectorAll("main [class*='grid-cols-2']")]
+          .filter((grid) => grid.children.length === 2)
+          .map((grid) => {
+            const heights = [...grid.children].map((child) => child.getBoundingClientRect().height);
+            return Math.round(Math.max(...heights) - Math.min(...heights));
+          });
+        const worstColumnImbalance = Math.max(0, ...columnImbalances);
+        return { gaps, stretchedGrids, worstColumnImbalance };
       });
       if (desktop.error) fail("overview-1440", desktop.error);
       else {
         if (desktop.gaps.length > 0) fail("overview-1440", `gaps between sibling sections > 48px: ${desktop.gaps.join(", ")}px`);
         if (desktop.stretchedGrids > 0) fail("overview-1440", `${desktop.stretchedGrids} grid(s) stretch children > 64px past content (items-start missing)`);
+        if (desktop.worstColumnImbalance > 400) fail("overview-1440", `column imbalance ${desktop.worstColumnImbalance}px > 400px — dead band under a shorter column`);
       }
     } catch (error) {
       fail("overview-1440", error.message.slice(0, 90));
@@ -190,9 +199,16 @@ async function assertLayout(browser) {
           const bottoms = [...grid.children].map((child) => child.getBoundingClientRect().bottom);
           return Math.max(...bottoms) - Math.min(...bottoms) > 64;
         }).length;
-        return { grids: grids.length, stretched };
+        // v0.9.12: independent stacks must stay meaningfully balanced — a
+        // column ending >400px before its sibling is the dead-half-page defect.
+        const imbalances = grids.map((grid) => {
+          const heights = [...grid.children].map((child) => child.getBoundingClientRect().height);
+          return Math.round(Math.max(...heights) - Math.min(...heights));
+        });
+        return { stretched, worstImbalance: Math.max(0, ...imbalances) };
       });
       if (settings.stretched > 0) fail("settings-1440", `${settings.stretched} column grid(s) stretch the shorter stack (dead space)`);
+      if (settings.worstImbalance > 400) fail("settings-1440", `column imbalance ${settings.worstImbalance}px > 400px — redistribute content`);
     } catch (error) {
       fail("settings-1440", error.message.slice(0, 90));
     } finally {
