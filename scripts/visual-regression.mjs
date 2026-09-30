@@ -206,8 +206,16 @@ async function assertLayout(browser) {
     try {
       await page.goto(`${BASE_URL}/`, { waitUntil: "domcontentloaded", timeout: 30000 });
       await page.waitForTimeout(3_000);
-      await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-      await page.waitForTimeout(500);
+      // Scroll to the bottom and wait until the position actually settles —
+      // late-loading charts grow the page while scrollTo is in flight.
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+        await page.waitForTimeout(350);
+        const settled = await page.evaluate(
+          () => window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2,
+        );
+        if (settled) break;
+      }
       const mobile = await page.evaluate(() => {
         const main = document.querySelector("main");
         const nav = document.querySelector('nav[aria-label="Primary"]');
@@ -217,8 +225,11 @@ async function assertLayout(browser) {
         const navTransparent = navBackground.includes("rgba") && parseFloat(navBackground.split(",")[3]) < 0.99;
         const navTop = nav.getBoundingClientRect().top;
         const footer = document.querySelector("footer");
-        const lastBottom = footer
-          ? footer.getBoundingClientRect().bottom
+        // Measure the footer's CONTENT edge, not its box: the clearance
+        // padding itself legitimately extends under the nav as empty space.
+        const lastContent = footer?.lastElementChild ?? footer;
+        const lastBottom = lastContent
+          ? lastContent.getBoundingClientRect().bottom
           : Math.max(...[...document.querySelectorAll("main *")].map((el) => el.getBoundingClientRect().bottom));
         return {
           pad,
