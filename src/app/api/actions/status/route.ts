@@ -32,6 +32,21 @@ export async function GET(request: NextRequest) {
       notification: enabled ? [...NOTIFICATION_ACTIONS] : [],
       cooldownMs: env.ACTION_COOLDOWN_MS,
       ratePerMinute: env.ACTION_RATE_PER_MINUTE,
+      // v0.9.10: normalized per-action model (restart/pause always false —
+      // the Unraid API exposes no such mutations). Consumers should prefer
+      // this; the flat lists stay for backward compatibility.
+      capabilities: {
+        enabled,
+        reason,
+        docker: {
+          enabled,
+          start: enabled && DOCKER_ACTIONS.includes("start"),
+          stop: enabled && DOCKER_ACTIONS.includes("stop"),
+          restart: false,
+          pause: false,
+          unpause: false,
+        },
+      },
     },
     { headers: { "cache-control": "no-store" } },
   );

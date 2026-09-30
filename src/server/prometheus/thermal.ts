@@ -603,3 +603,162 @@ export async function getThermalAnalysis(
     };
   });
 }
+
+/* ---- 7-day thermal context (v0.9.10) -------------------------------------- */
+
+export interface Thermal7dContext {
+  available: boolean;
+  reason?: string;
+  sensor: { name: string; chip: string } | null;
+  avg7dC: number | null;
+  max7dC: number | null;
+  /** Local-day buckets, oldest first; null where a day has no samples. */
+  dailyMeanC: Array<{ day: string; avgC: number | null }>;
+  /** Days (0-7) that contributed a mean — the slope needs ≥ 5. */
+  daysWithObservations: number;
+  /**
+   * Least-squares slope over the daily means, °C/day. Only computed when
+   * ≥ 5 days have data; otherwise null (no trend is claimed).
+   */
+  slopeCPerDay: number | null;
+  slopeMethod: string;
+  /** Sustained hot episodes over 7d: contiguous samples above the
+   *  threshold lasting ≥ 15 min (3 consecutive 5-min samples). Uses the
+   *  SAME warning/critical thresholds as health — no new definitions. */
+  episodes: { aboveWarning: number; aboveCritical: number };
+  samples: number;
+}
+
+const EPISODE_MIN_SAMPLES = 3; // 3 × 5 min = 15 min sustained
+
+/** Count sustained episodes: contiguous runs of samples above a threshold. */
+export function countSustainedEpisodes(values: Array<number | null>, threshold: number): number {
+  let episodes = 0;
+  let run = 0;
+  for (const value of values) {
+    if (value !== null && value >= threshold) {
+      run += 1;
+    } else {
+      if (run >= EPISODE_MIN_SAMPLES) episodes += 1;
+      run = 0;
+    }
+  }
+  if (run >= EPISODE_MIN_SAMPLES) episodes += 1;
+  return episodes;
+}
+
+/** Least-squares slope (°C/day) over daily means; null below 5 days. */
+export function dailySlope(dailyMeans: Array<number | null>): number | null {
+  const points = dailyMeans
+    .map((mean, index) => ({ x: index, y: mean }))
+    .filter((point): point is { x: number; y: number } => point.y !== null);
+  if (points.length < 5) return null;
+  const n = points.length;
+  const meanX = points.reduce((sum, p) => sum + p.x, 0) / n;
+  const meanY = points.reduce((sum, p) => sum + p.y, 0) / n;
+  let num = 0;
+  let den = 0;
+  for (const point of points) {
+    num += (point.x - meanX) * (point.y - meanY);
+    den += (point.x - meanX) ** 2;
+  }
+  if (den === 0) return null;
+  return Math.round((num / den) * 100) / 100;
+}
+
+/**
+ * 7-day thermal context (v0.9.10): answers "is the server consistently
+ * hot, or was today unusual?" from the SAME classified package sensor as
+ * the 24h analysis. Facts only: averages, max, sustained episodes and a
+ * clearly-defined daily slope — never a verdict like "getting hotter".
+ */
+export async function getThermal7dContext(
+  client: PromClient,
+  warningC: number,
+  criticalC: number,
+): Promise<Thermal7dContext> {
+  return withCache("thermal:7d", 300_000, async () => {
+    const base = `${PACKAGE_SENSOR_LABEL} or ${PACKAGE_FALLBACK_LABEL}`;
+    const end = Date.now() / 1000;
+    const start = end - 7 * 24 * 3600;
+    try {
+      const series = await client.range(base, start, end, 300);
+      const points = (series[0]?.points ?? []).map((point) => point.v);
+      if (points.length === 0) {
+        return {
+          available: false,
+          reason: "No package-temperature samples in the last 7 days.",
+          sensor: { name: "Package id 0", chip: "coretemp" },
+          avg7dC: null,
+          max7dC: null,
+          dailyMeanC: [],
+          daysWithObservations: 0,
+          slopeCPerDay: null,
+          slopeMethod: "least squares over local-day means, °C/day (needs ≥5 days)",
+          episodes: { aboveWarning: 0, aboveCritical: 0 },
+          samples: 0,
+        };
+      }
+
+      const numeric = points.filter((value): value is number => value !== null);
+      const avg7dC = numeric.length > 0
+        ? Math.round((numeric.reduce((sum, value) => sum + value, 0) / numeric.length) * 10) / 10
+        : null;
+      const max7dC = numeric.length > 0 ? Math.round(Math.max(...numeric) * 10) / 10 : null;
+
+      // Local-day buckets (server TZ), oldest first, 7 entries.
+      const dailyMeans: Array<number | null> = [];
+      const dailyMeanC: Array<{ day: string; avgC: number | null }> = [];
+      for (let dayOffset = 6; dayOffset >= 0; dayOffset -= 1) {
+        const dayStart = new Date();
+        dayStart.setHours(0, 0, 0, 0);
+        dayStart.setDate(dayStart.getDate() - dayOffset);
+        const dayEnd = new Date(dayStart);
+        dayEnd.setDate(dayEnd.getDate() + 1);
+        const startSec = dayStart.getTime() / 1000;
+        const endSec = dayEnd.getTime() / 1000;
+        const dayValues = points.filter((value, index) => {
+          const t = start + index * 300;
+          return t >= startSec && t < endSec && value !== null;
+        }) as number[];
+        const mean = dayValues.length > 0
+          ? Math.round((dayValues.reduce((sum, value) => sum + value, 0) / dayValues.length) * 10) / 10
+          : null;
+        dailyMeans.push(mean);
+        dailyMeanC.push({ day: dayStart.toISOString().slice(0, 10), avgC: mean });
+      }
+      const daysWithObservations = dailyMeans.filter((mean) => mean !== null).length;
+      const slopeCPerDay = dailySlope(dailyMeans);
+
+      return {
+        available: true,
+        sensor: { name: "Package id 0", chip: "coretemp" },
+        avg7dC,
+        max7dC,
+        dailyMeanC,
+        daysWithObservations,
+        slopeCPerDay,
+        slopeMethod: "least squares over local-day means, °C/day (needs ≥5 days)",
+        episodes: {
+          aboveWarning: countSustainedEpisodes(points, warningC),
+          aboveCritical: countSustainedEpisodes(points, criticalC),
+        },
+        samples: points.length,
+      };
+    } catch (error) {
+      return {
+        available: false,
+        reason: error instanceof Error ? error.message : "7-day thermal query failed.",
+        sensor: null,
+        avg7dC: null,
+        max7dC: null,
+        dailyMeanC: [],
+        daysWithObservations: 0,
+        slopeCPerDay: null,
+        slopeMethod: "least squares over local-day means, °C/day (needs ≥5 days)",
+        episodes: { aboveWarning: 0, aboveCritical: 0 },
+        samples: 0,
+      };
+    }
+  });
+}

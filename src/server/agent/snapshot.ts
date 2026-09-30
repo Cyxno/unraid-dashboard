@@ -73,6 +73,9 @@ export async function loadBundle(): Promise<AgentDataBundle> {
 
 /* ---- summary -------------------------------------------------------------- */
 
+import { areActionsEnabled } from "@/server/env";
+import { DOCKER_ACTIONS } from "@/server/actions/action-client";
+
 export interface AgentSummary {
   health: { level: string | null; reasons: string[] };
   cpu: { percent: number | null; load5: number | null };
@@ -81,6 +84,13 @@ export interface AgentSummary {
   docker: { running: number | null; total: number | null; unhealthy: number | null };
   vms: { total: number; running: number } | null;
   updatesAvailable: number | null;
+  /** v0.9.10: read-only capability context (normalized model; the Agent
+   *  API has NO action endpoints — this only describes what the UI can do). */
+  actionCapabilities: {
+    enabled: boolean;
+    reason: string | null;
+    docker: { start: boolean; stop: boolean; restart: false; pause: false; unpause: false };
+  };
   automation: { enabled: boolean; paused: boolean; queueLength: number; eligible: number; cooldown: number; intervention: number } | null;
   dependencies: {
     unraid: boolean | null;
@@ -125,6 +135,23 @@ export function buildSummary(bundle: AgentDataBundle): AgentSummary {
     },
     vms: null,
     updatesAvailable: updateCount,
+    actionCapabilities: (() => {
+      const enabled = areActionsEnabled();
+      const reason = enabled
+        ? null
+        : "Action key is not configured (UNRAID_ACTION_API_KEY missing).";
+      return {
+        enabled,
+        reason,
+        docker: {
+          start: enabled && DOCKER_ACTIONS.includes("start"),
+          stop: enabled && DOCKER_ACTIONS.includes("stop"),
+          restart: false as const,
+          pause: false as const,
+          unpause: false as const,
+        },
+      };
+    })(),
     automation: bundle.automation
       ? {
           enabled: bundle.automation.enabled,

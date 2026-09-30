@@ -89,6 +89,14 @@ const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default function AutomationPage() {
   const status = usePoll<AutomationStatus>("/api/automation", 15_000);
+  // Capability awareness (v0.9.10): automation performs helper-driven
+  // updates (independent of the lifecycle action key). If a lifecycle
+  // capability is unavailable, surface it instead of implying targets
+  // are fully actionable.
+  const caps = usePoll<{ enabled: boolean; reason: string | null; docker: string[] }>(
+    "/api/actions/status",
+    30_000,
+  );
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showAllTargets, setShowAllTargets] = useState(false);
@@ -311,6 +319,13 @@ export default function AutomationPage() {
               )}
             </CardHeader>
             <CardContent className="space-y-2 pt-0">
+              {caps.data && !caps.data.enabled && (
+                <p role="status" className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+                  Action capability unavailable — Docker lifecycle actions (start/stop) are disabled on this host
+                  {caps.data.reason ? ` (${caps.data.reason.toLowerCase()})` : ""}. Update automation is helper-driven and unaffected;
+                  any future workflow that needs lifecycle actions will stay blocked until the capability is enabled.
+                </p>
+              )}
               {visible.length === 0 && <p className="text-sm text-muted-foreground">No opt-in targets yet — opt in below once a container has a proven track record.</p>}
               {visible.map((target) => (
                 <div key={target.name} className="rounded-lg border p-3">

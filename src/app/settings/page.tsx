@@ -20,6 +20,7 @@ import {
   formatUptime,
 } from "@/lib/utils";
 import { PageHeader, LoadingPanel } from "@/components/dashboard/page-primitives";
+import { describeDockerCapabilities, normalizeActionCapabilities } from "@/lib/action-capabilities";
 import { AdaptiveColumns, PageStack, SectionRule } from "@/components/dashboard/layout-primitives";
 import { SectionStatus } from "@/components/dashboard/section-status";
 import { Badge } from "@/components/ui/badge";
@@ -515,7 +516,11 @@ function SecuritySection() {
               <dt className="text-muted-foreground">Docker actions</dt>
               <dd className="text-xs">
                 {actionsData?.enabled
-                  ? `supported: ${(actionsData.docker ?? []).join(", ") || "none"} · restart unsupported (Unraid API)`
+                  ? (() => {
+                      const caps = normalizeActionCapabilities({ enabled: true, docker: actionsData.docker });
+                      const described = describeDockerCapabilities(caps.docker);
+                      return `enabled — Available: ${described.available} · Unavailable: ${described.unavailable}`;
+                    })()
                   : "disabled — start/stop appear once the action key is configured"}
               </dd>
             </div>

@@ -415,7 +415,9 @@ export default function SystemPage() {
                   unavailable={chartUnavailable}
                   unavailableReason="History unavailable — Prometheus is unreachable. Unraid state pages remain live."
                 />
-                {tab === "temps" && <ThermalAnalysisCard payload={thermalAnalysis.data} />}
+                <div id="thermal" className="scroll-mt-20">
+                  {tab === "temps" && <ThermalAnalysisCard payload={thermalAnalysis.data} />}
+                </div>
                 {tab === "temps" && (
                   <ThermalDiagnosticsCard
                     payload={thermalDiagnostics.data}

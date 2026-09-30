@@ -15,6 +15,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { usePoll } from "@/hooks/use-poll";
+import { describeDockerCapabilities, normalizeActionCapabilities } from "@/lib/action-capabilities";
 import { PageHeader, LoadingPanel, ErrorPanel } from "@/components/dashboard/page-primitives";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -469,8 +470,8 @@ export default function OperationsPage() {
                 ok={caps.data?.enabled ?? false}
                 detail={
                   caps.data?.enabled
-                    ? `enabled · capabilities: ${caps.data.docker.join(", ") || "none"} (restart unsupported by the Unraid API)`
-                    : (caps.data?.reason ?? "disabled — UNRAID_ACTION_API_KEY not configured")
+                    ? `enabled — Available: ${describeDockerCapabilities(normalizeActionCapabilities(caps.data).docker).available} · Unavailable: ${describeDockerCapabilities(normalizeActionCapabilities(caps.data).docker).unavailable}`
+                    : (caps.data?.reason ?? "disabled — the action key is not configured")
                 }
               />
             </CardContent>

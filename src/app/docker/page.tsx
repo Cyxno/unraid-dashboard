@@ -21,7 +21,7 @@ import {
 } from "@/lib/prefs";
 import { PageHeader, LoadingPanel } from "@/components/dashboard/page-primitives";
 import { DockerUpdatesPanel } from "@/components/docker/updates-panel";
-import { useActionCapabilities, useActionRunner } from "@/components/actions/use-actions";
+import { useDockerAction } from "@/components/actions/use-docker-action";
 import { ConfirmDialog } from "@/components/actions/confirm-dialog";
 import { useToast } from "@/components/layout/toast";
 import { useDashboardEvents } from "@/hooks/use-dashboard-events";
@@ -205,123 +205,10 @@ export default function DockerPage() {
   const [sortKey, setSortKey] = useState<SortKey>("operational");
   const [sortAsc, setSortAsc] = useState(true);
   const [groupMode, setGroupMode] = useState<GroupMode>("flat");
-  // Quick actions (v0.9.5/v0.9.9): verified start/stop surfaced directly on
-  // the container list (mobile cards). Restart is intentionally absent —
-  // the live Unraid API exposes no docker restart (DockerMutations: start,
-  // stop, pause, unpause only) and only verified actions ship.
-  // v0.9.9 action state machine: confirming → requested → stopping/starting
-  // → verifying → success | failed | timeout. Completion is observed via
-  // the docker state-transition SSE event with a bounded /api/docker poll
-  // as fallback — never a fixed sleep.
-  const { capabilities: actionCaps } = useActionCapabilities();
-  const { runAction: runContainerAction, pending: actionPending } = useActionRunner();
-  const { toast } = useToast();
-  const [pendingAction, setPendingAction] = useState<{
-    id: string;
-    name: string;
-    action: "start" | "stop";
-  } | null>(null);
-  const [actionPhase, setActionPhase] = useState<{
-    id: string;
-    name: string;
-    label: string;
-    timedOut: boolean;
-  } | null>(null);
-  const transitionWaiters = useRef(
-    new Map<string, { expected: string; resolve: (ok: boolean) => void }>(),
-  );
-  const actionsEnabled = actionCaps?.enabled ?? false;
-  const canQuickAction = useCallback(
-    (action: "start" | "stop") =>
-      actionsEnabled && (actionCaps?.docker ?? []).includes(action),
-    [actionsEnabled, actionCaps],
-  );
-
-  const sseStatus = useDashboardEvents((eventName, data) => {
-    if (eventName !== "state-transition") return;
-    const event = data as { name: string; to: string };
-    const waiter = transitionWaiters.current.get(event.name);
-    if (waiter && event.to === waiter.expected) {
-      transitionWaiters.current.delete(event.name);
-      waiter.resolve(true);
-    }
-  });
-  void sseStatus;
-
-  const waitForTransition = useCallback(
-    (containerName: string, expected: string, timeoutMs: number): Promise<boolean> =>
-      new Promise<boolean>((resolve) => {
-        let settled = false;
-        const deadline = Date.now() + timeoutMs;
-        const done = (ok: boolean) => {
-          if (settled) return;
-          settled = true;
-          clearInterval(timer);
-          transitionWaiters.current.delete(containerName);
-          resolve(ok);
-        };
-        const timer = setInterval(async () => {
-          // Polling fallback: the SSE transition event usually wins.
-          if (Date.now() >= deadline) return done(false);
-          try {
-            const response = await fetch("/api/docker", { cache: "no-store" });
-            const body = (await response.json()) as {
-              data?: { containers?: Array<{ name: string; state: string }> };
-            };
-            const container = body.data?.containers?.find((c) => c.name === containerName);
-            if (container?.state === expected) done(true);
-          } catch {
-            // transient — retry until the deadline
-          }
-        }, 2_000);
-        transitionWaiters.current.set(containerName, { expected, resolve: done });
-      }),
-    [],
-  );
-
-  const executeQuickAction = useCallback(
-    async (request: { id: string; name: string; action: "start" | "stop" }) => {
-      setPendingAction(null);
-      const expected = request.action === "stop" ? "EXITED" : "RUNNING";
-      const timeoutMs = request.action === "stop" ? 45_000 : 90_000;
-      setActionPhase({
-        id: request.id,
-        name: request.name,
-        label: request.action === "stop" ? "stopping…" : "starting…",
-        timedOut: false,
-      });
-      const result = await runContainerAction({
-        kind: "docker",
-        action: request.action,
-        id: request.id,
-      });
-      if (!result?.ok) {
-        setActionPhase(null);
-        toast("error", result?.message ?? `${request.name}: ${request.action} failed`);
-        return;
-      }
-      // Request accepted — verify the actual Docker transition within a
-      // bounded window (SSE event accelerates, poll verifies authoritatively).
-      const verified = await waitForTransition(request.name, expected, timeoutMs);
-      if (verified) {
-        setActionPhase(null);
-        toast("success", `${request.name}: ${request.action} verified (${expected.toLowerCase()})`);
-      } else {
-        setActionPhase({
-          id: request.id,
-          name: request.name,
-          label: `no ${expected.toLowerCase()} within ${Math.round(timeoutMs / 1000)}s`,
-          timedOut: true,
-        });
-        toast(
-          "error",
-          `${request.name}: ${request.action} accepted but not verified within ${Math.round(timeoutMs / 1000)}s — check the container`,
-        );
-        setTimeout(() => setActionPhase(null), 10_000);
-      }
-    },
-    [runContainerAction, toast, waitForTransition],
-  );
+  // Quick actions (v0.9.10): the shared verified-action controller —
+  // confirm → request → transition → SSE confirmation → poll fallback →
+  // timeout → toast. Identical semantics to the container detail page.
+  const dockerAction = useDockerAction();
   const router = useRouter();
 
   // Lightweight update awareness (v0.9.9): cached count only — this poll
@@ -715,36 +602,36 @@ export default function DockerPage() {
                     </span>
                   )}
                 </button>
-                {(actionsEnabled && (canQuickAction("start") || canQuickAction("stop")) && (
+                {((dockerAction.caps?.docker.enabled && (dockerAction.caps.docker.start || dockerAction.caps.docker.stop)) && (
                   <div className="mt-2 flex items-center gap-2 border-t pt-2">
-                    {actionPhase?.id === container.id ? (
+                    {dockerAction.phase?.id === container.id ? (
                       // Concise in-progress/timeout state replaces the buttons
                       // while a verified transition is pending (v0.9.9).
                       <span
                         className={cn(
                           "inline-flex items-center gap-1.5 text-xs",
-                          actionPhase.timedOut ? "text-warning" : "text-muted-foreground",
+                          dockerAction.phase.timedOut ? "text-warning" : "text-muted-foreground",
                         )}
                         role="status"
                       >
-                        {actionPhase.timedOut ? (
+                        {dockerAction.phase.timedOut ? (
                           <TriangleAlert className="size-3.5" aria-hidden="true" />
                         ) : (
                           <span className="size-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden="true" />
                         )}
-                        {actionPhase.label}
+                        {dockerAction.phase.label}
                       </span>
                     ) : (
                       <>
-                        {container.state === "RUNNING" && canQuickAction("stop") && (
+                        {container.state === "RUNNING" && dockerAction.caps.docker.stop && (
                           <Button
                             size="sm"
                             variant="outline"
                             className="h-7 gap-1.5 text-xs"
-                            disabled={actionPending?.id === container.id}
+                            disabled={dockerAction.posting}
                             aria-label={`Stop ${container.name}`}
                             onClick={() =>
-                              setPendingAction({ id: container.id, name: container.name, action: "stop" })
+                              dockerAction.begin({ id: container.id, name: container.name, action: "stop" })
                             }
                           >
                             <StopCircle className="size-3.5" aria-hidden="true" />
@@ -752,15 +639,15 @@ export default function DockerPage() {
                           </Button>
                         )}
                         {(container.state === "EXITED" || container.state === "PAUSED") &&
-                          canQuickAction("start") && (
+                          dockerAction.caps.docker.start && (
                             <Button
                               size="sm"
                               variant="outline"
                               className="h-7 gap-1.5 text-xs"
-                              disabled={actionPending?.id === container.id}
+                              disabled={dockerAction.posting}
                               aria-label={`Start ${container.name}`}
                               onClick={() =>
-                                setPendingAction({ id: container.id, name: container.name, action: "start" })
+                                dockerAction.begin({ id: container.id, name: container.name, action: "start" })
                               }
                             >
                               <PlayCircle className="size-3.5" aria-hidden="true" />
@@ -955,18 +842,22 @@ export default function DockerPage() {
       </section>
 
       <ConfirmDialog
-        open={pendingAction !== null}
-        title={pendingAction ? `${pendingAction.action === "stop" ? "Stop" : "Start"} ${pendingAction.name}?` : ""}
-        severity={pendingAction?.action === "stop" ? "destructive" : "info"}
-        confirmLabel={pendingAction?.action === "stop" ? "Stop container" : "Start container"}
-        busy={actionPending !== null}
-        onCancel={() => setPendingAction(null)}
-        onConfirm={() => pendingAction && executeQuickAction(pendingAction)}
+        open={dockerAction.pendingConfirm !== null}
+        title={
+          dockerAction.pendingConfirm
+            ? `${dockerAction.pendingConfirm.action === "stop" ? "Stop" : "Start"} ${dockerAction.pendingConfirm.name}?`
+            : ""
+        }
+        severity={dockerAction.pendingConfirm?.action === "stop" ? "destructive" : "info"}
+        confirmLabel={dockerAction.pendingConfirm?.action === "stop" ? "Stop container" : "Start container"}
+        busy={dockerAction.posting}
+        onCancel={dockerAction.cancel}
+        onConfirm={() => dockerAction.confirm()}
       >
-        {pendingAction?.action === "stop" ? (
+        {dockerAction.pendingConfirm?.action === "stop" ? (
           <>
             <p>
-              The container <strong>{pendingAction.name}</strong> is currently running.
+              The container <strong>{dockerAction.pendingConfirm.name}</strong> is currently running.
             </p>
             <p>Stopping makes its service unavailable until started again.</p>
           </>

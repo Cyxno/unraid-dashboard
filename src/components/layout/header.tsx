@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, RefreshCw } from "lucide-react";
+import { ExternalLink, Menu, RefreshCw } from "lucide-react";
 import { ViewsMenu } from "./views-menu";
 import { AuthIndicator } from "./auth-indicator";
 import { Button } from "@/components/ui/button";
@@ -101,6 +102,16 @@ function HealthBadge({ health, hasData }: { health: HealthSummary | undefined; h
               </li>
             ))}
           </ul>
+          {reasons.some((reason) => /cpu package|temperature sensor/i.test(reason)) && (
+            <Link
+              href="/system#thermal"
+              className="mt-2 inline-flex items-center gap-1 border-t pt-2 text-primary hover:underline"
+              onClick={() => setOpen(false)}
+            >
+              View thermal history
+              <ExternalLink className="size-3" aria-hidden="true" />
+            </Link>
+          )}
         </div>
       )}
     </span>

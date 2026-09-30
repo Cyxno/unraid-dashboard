@@ -62,16 +62,21 @@ describe("v0.9.5 mobile UX + docker operations", () => {
 
   it("docker quick actions are start/stop only — restart is never offered", () => {
     // The Unraid API exposes no verified docker restart; only start/stop ship.
-    assert.match(dockerPage, /canQuickAction/);
+    assert.match(dockerPage, /useDockerAction/);
+    assert.match(dockerPage, /dockerAction\.caps\.docker\.stop/);
+    assert.match(dockerPage, /dockerAction\.caps\.docker\.start/);
     assert.doesNotMatch(dockerPage, /"restart"/);
   });
 
-  it("docker quick actions run confirm-then-post through the guarded action runner with toast feedback", () => {
+  it("docker quick actions run confirm-then-post through the shared controller with toast feedback", () => {
     assert.match(dockerPage, /<ConfirmDialog/);
-    assert.match(dockerPage, /runContainerAction\(\{\s*kind: "docker",\s*action: request\.action,\s*id: request\.id,\s*\}\)/);
-    assert.match(dockerPage, /toast\("success"/);
-    assert.match(dockerPage, /toast\("error"/);
-    assert.match(dockerPage, /disabled=\{actionPending\?\.id === container\.id\}/);
+    assert.match(dockerPage, /onConfirm=\{\(\) => dockerAction\.confirm\(\)\}/);
+    assert.match(dockerPage, /onCancel=\{dockerAction\.cancel\}/);
+    // The state machine + toast semantics live in the shared controller.
+    const controller = read("src/components/actions/use-docker-action.ts");
+    assert.match(controller, /toast\("success"/);
+    assert.match(controller, /toast\("error"/);
+    assert.match(controller, /kind: "docker", action: request\.action, id: request\.id/);
   });
 
   it("overlay z-index ladder stays ordered (header < drawer < sheet < palette < toast < auth)", () => {

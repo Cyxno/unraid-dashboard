@@ -24,12 +24,25 @@ describe("v0.9.9 live docker actions + update awareness", () => {
   });
 
   it("action state machine: bounded transition verification, no fixed sleeps", () => {
-    assert.match(dockerPage, /waitForTransition/);
-    assert.match(dockerPage, /45_000/); // stop deadline
-    assert.match(dockerPage, /90_000/); // start deadline
-    assert.match(dockerPage, /state-transition/); // SSE completion signal
-    assert.match(dockerPage, /actionPhase/); // idle/verifying/timeout surfaced
-    assert.match(dockerPage, /not verified within/); // visible timeout error
+    // The machine lives in the shared controller (v0.9.10); the list page
+    // and the detail page both consume it.
+    const controller = read("src/components/actions/use-docker-action.ts");
+    assert.match(controller, /waitForTransition/);
+    assert.match(controller, /STOP_TIMEOUT_MS = 45_000/);
+    assert.match(controller, /START_TIMEOUT_MS = 90_000/);
+    assert.match(controller, /state-transition/); // SSE completion signal
+    assert.match(controller, /actionTimeoutMs/);
+    assert.match(dockerPage, /dockerAction\.phase/); // surfaced on cards
+    assert.match(dockerPage, /useDockerAction\(\)/);
+    assert.match(controller, /not verified within/); // visible timeout error
+  });
+
+  it("container detail page shares the same action controller (no duplicate semantics)", () => {
+    const detail = read("src/app/docker/[name]/page.tsx");
+    assert.match(detail, /useDockerAction\(\)/);
+    assert.match(detail, /onConfirm=\{\(\) => dockerAction\.confirm\(\)\}/);
+    assert.doesNotMatch(detail, /useActionRunner/);
+    assert.doesNotMatch(detail, /"restart"/);
   });
 
   it("docker page polls the cached summary endpoint, never the sweep endpoint at load", () => {
@@ -73,10 +86,11 @@ describe("v0.9.9 live docker actions + update awareness", () => {
 
   it("capability status surfaces in Settings and Operations without key material", () => {
     const settings = read("src/app/settings/page.tsx");
-    assert.match(settings, /restart unsupported/);
+    assert.match(settings, /normalizeActionCapabilities/);
+    assert.match(settings, /Unavailable: /);
     const ops = read("src/components/operations/operations-view.tsx");
     assert.match(ops, /Docker actions/);
-    assert.match(ops, /restart unsupported/);
+    assert.match(ops, /describeDockerCapabilities/);
   });
 
   it("agent API stays read-only: no action endpoints, no write methods", () => {

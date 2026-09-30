@@ -8,7 +8,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
-  CircleAlert,
   ExternalLink,
   PlayCircle,
   ScrollText,
@@ -19,7 +18,6 @@ import { usePoll } from "@/hooks/use-poll";
 import {
   HISTORY_INTERVAL_MS,
   PAGE_INTERVAL_MS,
-  usePrefs,
   type HistoryWindowPref,
 } from "@/lib/prefs";
 import { SectionStatus, MetricStatus } from "@/components/dashboard/section-status";
@@ -30,18 +28,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/actions/confirm-dialog";
-import { useActionCapabilities, useActionRunner } from "@/components/actions/use-actions";
-import { cn, formatBytes, formatDateTimeIso, formatPercent, formatRate, formatTemp } from "@/lib/utils";
+import { useDockerAction } from "@/components/actions/use-docker-action";
+import { cn, formatBytes, formatDateTimeIso, formatPercent, formatRate } from "@/lib/utils";
 import type {
-  ActionResponseBody,
   ContainerDetailPayload,
   ContainerHistoryPayload,
   DockerSummary,
   HistoryPoint,
   Section,
 } from "@/lib/api-types";
-
-type PendingDialog = "start" | "stop" | null;
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -62,10 +57,8 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 export default function ContainerDetailPage() {
   const params = useParams<{ name: string }>();
   const name = decodeURIComponent(params.name);
-  const { prefs } = usePrefs();
   const [historyWindow, setHistoryWindow] = useState<HistoryWindowPref>("1h");
   const [showLabels, setShowLabels] = useState(false);
-  const [pendingDialog, setPendingDialog] = useState<PendingDialog>(null);
 
   const detail = usePoll<Section<ContainerDetailPayload | null>>(
     `/api/docker/detail?name=${encodeURIComponent(name)}`,
@@ -76,9 +69,9 @@ export default function ContainerDetailPage() {
     `/api/docker/history?name=${encodeURIComponent(name)}&window=${historyWindow}`,
     HISTORY_INTERVAL_MS[historyWindow],
   );
-  const { capabilities } = useActionCapabilities();
-  const [lastResult, setLastResult] = useState<ActionResponseBody | null>(null);
-  const { runAction, pending } = useActionRunner();
+  // v0.9.10: the shared verified-action controller — identical semantics
+  // to the Docker list cards (confirm → request → SSE/poll → timeout).
+  const dockerAction = useDockerAction();
 
   const summary = useMemo(
     () => docker.data?.data?.containers.find((container) => container.name === name) ?? null,
@@ -86,7 +79,7 @@ export default function ContainerDetailPage() {
   );
   const detailData = detail.data?.data ?? null;
   const metrics = summary?.metrics ?? null;
-  const actionsEnabled = capabilities?.enabled ?? false;
+  const actionsEnabled = dockerAction.caps?.docker.enabled ?? false;
 
   const state = summary?.state ?? detailData?.state ?? null;
   const isRunning = state === "RUNNING";
@@ -94,12 +87,6 @@ export default function ContainerDetailPage() {
   const historySeries = (points: HistoryPoint[]) =>
     points.length > 0 ? [{ name, points }] : [];
 
-  const execute = async (action: "start" | "stop") => {
-    if (!summary) return;
-    setPendingDialog(null);
-    const result = await runAction({ kind: "docker", action, id: summary.id });
-    setLastResult(result);
-  };
 
   return (
     <div className="space-y-4">
@@ -395,8 +382,8 @@ export default function ContainerDetailPage() {
         <Card className={cn(!actionsEnabled && "opacity-80")}>
           <CardHeader>
             <CardTitle className="text-base">Actions</CardTitle>
-            {!actionsEnabled && capabilities && (
-              <p className="text-xs text-muted-foreground">{capabilities.reason}</p>
+            {!actionsEnabled && dockerAction.caps?.reason && (
+              <p className="text-xs text-muted-foreground">{dockerAction.caps.reason}</p>
             )}
           </CardHeader>
           <CardContent>
@@ -404,8 +391,8 @@ export default function ContainerDetailPage() {
               <Button
                 variant="secondary"
                 size="sm"
-                disabled={!actionsEnabled || isRunning || pending !== null || !summary}
-                onClick={() => setPendingDialog("start")}
+                disabled={!actionsEnabled || isRunning || dockerAction.posting || !summary}
+                onClick={() => summary && dockerAction.begin({ id: summary.id, name: summary.name, action: "start" })}
               >
                 <PlayCircle aria-hidden="true" /> Start
               </Button>
@@ -414,32 +401,41 @@ export default function ContainerDetailPage() {
               <Button
                 variant="destructive"
                 size="sm"
-                disabled={!actionsEnabled || !isRunning || pending !== null || !summary}
-                onClick={() => setPendingDialog("stop")}
+                disabled={!actionsEnabled || !isRunning || dockerAction.posting || !summary}
+                onClick={() => summary && dockerAction.begin({ id: summary.id, name: summary.name, action: "stop" })}
               >
                 <Square aria-hidden="true" /> Stop
               </Button>
-              {pending && (
-                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              {dockerAction.phase && (
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1.5 text-xs",
+                    dockerAction.phase.timedOut ? "text-warning" : "text-muted-foreground",
+                  )}
+                  role="status"
+                >
                   <span className="size-2 animate-pulse rounded-full bg-warning" aria-hidden="true" />
-                  {pending.action} in progress…
+                  {dockerAction.phase.label}
                 </span>
               )}
             </div>
-            {lastResult && (
+            {dockerAction.result && (
               <p
-                role={lastResult.ok ? "status" : "alert"}
+                role={dockerAction.result.ok ? "status" : "alert"}
                 className={cn(
                   "mt-3 flex items-start gap-1.5 text-xs",
-                  lastResult.ok ? "text-success" : "text-destructive",
+                  dockerAction.result.ok ? "text-success" : "text-destructive",
                 )}
               >
-                {lastResult.ok ? (
+                {dockerAction.result.ok ? (
                   <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
                 ) : (
                   <XCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
                 )}
-                {lastResult.message}
+                {dockerAction.result.message}
+                {dockerAction.result.ok && dockerAction.result.via
+                  ? ` (confirmed via ${dockerAction.result.via === "sse" ? "live event" : "state poll"})`
+                  : ""}
               </p>
             )}
             <p className="mt-3 text-[11px] text-muted-foreground">
@@ -452,38 +448,37 @@ export default function ContainerDetailPage() {
       </section>
 
       {/* Confirmations ---------------------------------------------------- */}
+      {/* Shared confirmation (v0.9.10): one controller, same semantics as
+          the Docker list cards. Restart intentionally absent — the live
+          Unraid API exposes start/stop/pause/unpause only. */}
       <ConfirmDialog
-        open={pendingDialog === "start"}
-        title={`Start ${name}?`}
-        severity="info"
-        confirmLabel="Start container"
-        busy={pending !== null}
-        onCancel={() => setPendingDialog(null)}
-        onConfirm={() => execute("start")}
+        open={dockerAction.pendingConfirm !== null}
+        title={
+          dockerAction.pendingConfirm
+            ? `${dockerAction.pendingConfirm.action === "stop" ? "Stop" : "Start"} ${dockerAction.pendingConfirm.name}?`
+            : ""
+        }
+        severity={dockerAction.pendingConfirm?.action === "stop" ? "destructive" : "info"}
+        confirmLabel={dockerAction.pendingConfirm?.action === "stop" ? "Stop container" : "Start container"}
+        busy={dockerAction.posting}
+        onCancel={dockerAction.cancel}
+        onConfirm={() => dockerAction.confirm()}
       >
-        <p>Will bring the container from stopped to running state.</p>
+        {dockerAction.pendingConfirm?.action === "stop" ? (
+          <>
+            <p>
+              The container <strong>{name}</strong> is currently running.
+            </p>
+            <p>
+              Stopping makes its service <strong>unavailable</strong> until started again. Anything that depends on it (including
+              other containers in the same compose project) may fail.
+            </p>
+          </>
+        ) : (
+          <p>Will bring the container from stopped to running state.</p>
+        )}
       </ConfirmDialog>
 
-
-
-      <ConfirmDialog
-        open={pendingDialog === "stop"}
-        title={`Stop ${name}?`}
-        severity="destructive"
-        confirmLabel="Stop container"
-        busy={pending !== null}
-        onCancel={() => setPendingDialog(null)}
-        onConfirm={() => execute("stop")}
-      >
-        <p>
-          The container <strong>{name}</strong> is currently running.
-        </p>
-        <p>
-          Stopping makes its service <strong>unavailable</strong> until started again. Anything that depends on it (including
-          other containers in the same compose project) may fail.
-        </p>
-        <p>Use restart instead if you only need to apply an update.</p>
-      </ConfirmDialog>
     </div>
   );
 }
