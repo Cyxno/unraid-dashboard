@@ -196,14 +196,18 @@ async function assertLayout(browser) {
     }
   }
 
-  // Mobile 390: main's bottom padding must equal the clearance token and
-  // the nav must be opaque (content must not ghost through it).
+  // Mobile 390: main's bottom padding must equal the clearance token, the
+  // nav must be opaque (content must not ghost through it), and at max
+  // scroll the page's last content must clear the nav — everything that
+  // scrolls (main AND footer) needs the clearance, not just main.
   {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const page = await context.newPage();
     try {
       await page.goto(`${BASE_URL}/`, { waitUntil: "domcontentloaded", timeout: 30000 });
       await page.waitForTimeout(3_000);
+      await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+      await page.waitForTimeout(500);
       const mobile = await page.evaluate(() => {
         const main = document.querySelector("main");
         const nav = document.querySelector('nav[aria-label="Primary"]');
@@ -211,18 +215,23 @@ async function assertLayout(browser) {
         const pad = parseFloat(getComputedStyle(main).paddingBottom);
         const navBackground = getComputedStyle(nav).backgroundColor; // rgba()
         const navTransparent = navBackground.includes("rgba") && parseFloat(navBackground.split(",")[3]) < 0.99;
-        const scrollAfterBottom = document.documentElement.scrollHeight - window.innerHeight - (window.scrollY || 0);
+        const navTop = nav.getBoundingClientRect().top;
+        const footer = document.querySelector("footer");
+        const lastBottom = footer
+          ? footer.getBoundingClientRect().bottom
+          : Math.max(...[...document.querySelectorAll("main *")].map((el) => el.getBoundingClientRect().bottom));
         return {
           pad,
           expectedMin: 56,
           navTransparent,
-          scrollAfterBottom: Math.round(scrollAfterBottom),
+          occludedPx: Math.round(lastBottom - navTop), // >0 → content under the nav at max scroll
         };
       });
       if (mobile.error) fail("overview-390", mobile.error);
       else {
         if (!(mobile.pad >= mobile.expectedMin)) fail("overview-390", `main bottom padding ${mobile.pad}px < nav height`);
         if (mobile.navTransparent) fail("overview-390", "bottom nav background is translucent — content ghosts through");
+        if (mobile.occludedPx > 2) fail("overview-390", `${mobile.occludedPx}px of last content sits under the nav at max scroll (clearance missing on footer?)`);
       }
     } catch (error) {
       fail("overview-390", error.message.slice(0, 90));

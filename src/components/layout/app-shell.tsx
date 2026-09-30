@@ -93,7 +93,9 @@ function Shell({ children }: { children: React.ReactNode }) {
         {/* Bottom clearance comes from the one authoritative token
             (--mobile-bottom-clearance in globals.css); no page sets its own. */}
         <main className="mx-auto w-full max-w-7xl p-3 pb-[var(--mobile-bottom-clearance)] sm:p-6 md:pb-6">{children}</main>
-        <footer className="mx-auto w-full max-w-7xl px-4 pb-6 sm:px-6">
+        {/* The footer scrolls past main, so it carries the same clearance
+            token — otherwise its last lines hide under the fixed nav. */}
+        <footer className="mx-auto w-full max-w-7xl px-4 pb-[var(--mobile-bottom-clearance)] sm:px-6 md:pb-6">
           <p className="text-[11px] text-muted-foreground">
             History is served from Prometheus (7-day retention on this host);
             during Prometheus outages the overview chart falls back to an

@@ -19,10 +19,12 @@ describe("v0.9.7 layout system + spacing correctness + PWA identity", () => {
 
   it("one authoritative mobile bottom-clearance variable exists", () => {
     assert.match(css, /--mobile-bottom-clearance: calc\(env\(safe-area-inset-bottom, 0px\) \+ 4\.75rem\)/);
-    // No component duplicates the calculation: the only other place the
-    // raw nav geometry may appear is the More sheet's own padding.
+    // Everything that scrolls carries the token — main AND the footer
+    // after it (the footer without clearance hid under the nav once).
     const appShell = read("src/components/layout/app-shell.tsx");
-    assert.match(appShell, /pb-\[var\(--mobile-bottom-clearance\)\]/);
+    const pbVar = /pb-\[var\(--mobile-bottom-clearance\)\]/;
+    assert.match(appShell, pbVar);
+    assert.match(appShell, /footer[^>]*className="[^"]*pb-\[var\(--mobile-bottom-clearance\)\]/);
     assert.doesNotMatch(appShell, /env\(safe-area-inset-bottom\)\+4\.75rem/);
   });
 
