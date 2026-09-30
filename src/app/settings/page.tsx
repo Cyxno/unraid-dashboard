@@ -429,6 +429,7 @@ interface AuthStatusPayload {
 interface ActionsCapabilitiesPayload {
   enabled: boolean;
   reason: string | null;
+  docker: string[];
   cooldownMs: number;
   ratePerMinute: number;
 }
@@ -508,6 +509,16 @@ function SecuritySection() {
             {actionsData && !actionsData.enabled && actionsData.reason && (
               <p className="text-[11px] text-muted-foreground">{actionsData.reason}</p>
             )}
+            {/* v0.9.9: explicit capability surface — what is supported and
+                what is not, without exposing any key material. */}
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted-foreground">Docker actions</dt>
+              <dd className="text-xs">
+                {actionsData?.enabled
+                  ? `supported: ${(actionsData.docker ?? []).join(", ") || "none"} · restart unsupported (Unraid API)`
+                  : "disabled — start/stop appear once the action key is configured"}
+              </dd>
+            </div>
             {actionsData?.enabled && (
               <div className="flex justify-between gap-4">
                 <dt className="text-muted-foreground">Guards</dt>

@@ -298,3 +298,67 @@ export function resetUpdateDetection(): void {
   globalStore.__dockerInventoryCache = undefined;
   globalStore.__dockerRefreshInFlight = null;
 }
+
+/**
+ * Cached-only update summary (v0.9.9): reads the already-known inventory
+ * and per-image check caches. NEVER fetches inventory, NEVER starts a
+ * sweep, NEVER touches the registry — the Docker page anchor badge and
+ * collapsed Updates summary consume this instead of updatesOverview().
+ */
+export function updatesSummaryFromCache(): {
+  available: boolean;
+  lastCheckAt: string | null;
+  ageSeconds: number | null;
+  stale: boolean;
+  checking: boolean;
+  knownUpdatesCount: number | null;
+  containersChecked: number;
+  containersTotal: number | null;
+} {
+  const checking = globalStore.__dockerRefreshInFlight != null;
+  const inventory = globalStore.__dockerInventoryCache ?? null;
+  if (!inventory) {
+    return {
+      available: false,
+      lastCheckAt: null,
+      ageSeconds: null,
+      stale: false,
+      checking,
+      knownUpdatesCount: null,
+      containersChecked: 0,
+      containersTotal: null,
+    };
+  }
+
+  // Check recency comes from the newest per-image check entry (a completed
+  // sweep stamps its entries); the inventory timestamp is the fallback.
+  let newestCheckAt: number | null = null;
+  for (const entry of checkCache().values()) {
+    if (newestCheckAt == null || entry.at > newestCheckAt) newestCheckAt = entry.at;
+  }
+  const referenceAt = newestCheckAt ?? inventory.at;
+  const ageSeconds = Math.max(0, Math.round((Date.now() - referenceAt) / 1000));
+  const stale = checkCache().size === 0 || ageSeconds * 1000 >= CHECK_TTL_MS;
+
+  let knownUpdatesCount = 0;
+  let containersChecked = 0;
+  for (const facts of inventory.containers) {
+    if (facts.repoDigests.length === 0) continue; // not sweep-eligible
+    const raw = rawCheckFor(facts.image);
+    if (!raw || raw.kind !== "digest") continue; // pinned/auth/failed carry no verdict
+    containersChecked += 1;
+    const localDigest = localDigestOf(facts);
+    if (localDigest !== null && localDigest !== raw.remoteDigest) knownUpdatesCount += 1;
+  }
+
+  return {
+    available: true,
+    lastCheckAt: new Date(referenceAt).toISOString(),
+    ageSeconds,
+    stale,
+    checking,
+    knownUpdatesCount,
+    containersChecked,
+    containersTotal: inventory.containers.length,
+  };
+}

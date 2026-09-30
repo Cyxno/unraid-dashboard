@@ -17,6 +17,20 @@ import {
 /**
  * Derives a coarse health level from real conditions only.
  * No invented score: every non-healthy level comes with concrete reasons.
+ *
+ * Thermal severity model (v0.9.9 audit — rules, do not downgrade real
+ * hardware risk):
+ *   normal    package < 80 °C and no Unraid-side critical sensors
+ *   elevated  package 5m average 80–90 °C  → attention ("warning" band)
+ *   hot       instantaneous ≥ 90 °C with sustained average below →
+ *             attention immediately, critical only once the 5m average
+ *             confirms (hysteresis, v0.6)
+ *   critical  package 5m average ≥ 90 °C, OR any Unraid sensor past its
+ *             configured critical threshold (owner-controlled)
+ *   throttling NEVER claimed — the exposed Unraid/node-exporter metrics
+ *             carry no throttle counters (see thermal-diagnostics.ts);
+ *             episodes are classified load/power-correlated instead.
+ * Reasons are returned ranked: critical causes first, then attention.
  */
 
 export interface HealthInputs {
@@ -42,12 +56,14 @@ const ARRAY_OK_STATES = new Set(["STARTED"]);
 const DISK_OK_STATES = new Set(["DISK_OK", "DISK_NP", "DISK_DSBL_NP"]);
 
 export function deriveHealth(inputs: HealthInputs): HealthSummary {
-  const reasons: string[] = [];
+  const ranked: Array<{ rank: number; reason: string }> = [];
   let level: Exclude<HealthLevel, null> = "healthy";
 
   const escalate = (next: Exclude<HealthLevel, null>, reason: string) => {
-    reasons.push(reason);
+    // Rank causes (v0.9.9): critical reasons surface before attention in
+    // the reasons list so the health explanation leads with what matters.
     const rank = { healthy: 0, attention: 1, critical: 2 } as const;
+    ranked.push({ rank: rank[next], reason });
     if (rank[next] > rank[level]) level = next;
   };
 
@@ -182,5 +198,11 @@ export function deriveHealth(inputs: HealthInputs): HealthSummary {
     escalate("attention", "Prometheus unavailable — live metrics degraded");
   }
 
-  return { level, reasons };
+  return {
+    level,
+    reasons: ranked
+      .slice()
+      .sort((a, b) => b.rank - a.rank) // stable: critical causes first
+      .map((entry) => entry.reason),
+  };
 }

@@ -151,6 +151,11 @@ function short(digest: string | null | undefined): string {
 
 export default function OperationsPage() {
   const status = usePoll<OperationsStatus>("/api/operations", 15_000);
+  // Capability row (v0.9.9): aids diagnostics without exposing key material.
+  const caps = usePoll<{ enabled: boolean; docker: string[]; reason: string | null }>(
+    "/api/actions/status",
+    30_000,
+  );
   const [busyAction, setBusyAction] = useState<ActionName | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<ActionResult | null>(null);
@@ -459,6 +464,15 @@ export default function OperationsPage() {
                   detail={`phase ${candidate.phase} · started ${candidate.startedAt ? formatDateTimeIso(candidate.startedAt) : "?"}`}
                 />
               ))}
+              <StatusRow
+                label="Docker actions"
+                ok={caps.data?.enabled ?? false}
+                detail={
+                  caps.data?.enabled
+                    ? `enabled · capabilities: ${caps.data.docker.join(", ") || "none"} (restart unsupported by the Unraid API)`
+                    : (caps.data?.reason ?? "disabled — UNRAID_ACTION_API_KEY not configured")
+                }
+              />
             </CardContent>
           </Card>
 

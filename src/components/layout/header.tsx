@@ -31,31 +31,78 @@ const HEALTH_META: Record<
   critical: { label: "Critical", className: "border-destructive/30 bg-destructive/10 text-destructive" },
 };
 
-function healthBadge(health: HealthSummary | undefined, hasData: boolean) {
+/** Health badge with an explanation popover (v0.9.9): tapping explains
+ *  WHY (ranked reasons) instead of leaving users to hunt across pages. */
+function HealthBadge({ health, hasData }: { health: HealthSummary | undefined; hasData: boolean }) {
+  const [open, setOpen] = useState(false);
   if (!hasData) return null;
   const level = health?.level ?? null;
   if (!level) {
     return <Badge variant="muted">Unknown state</Badge>;
   }
   const meta = HEALTH_META[level];
+  const reasons = health?.reasons ?? [];
+  // v0.9.9: the badge is a button — tapping it explains WHY (ranked
+  // reasons) instead of leaving users to hunt across pages. Desktop
+  // keeps the hover title.
   return (
-    <span
-      title={health?.reasons.join(" · ") || undefined}
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium",
-        meta.className,
-      )}
-    >
-      <span
-        aria-hidden="true"
+    <span className="relative">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-label={`${meta.label} — show reasons`}
+        title={reasons.join(" · ") || undefined}
+        onClick={() => setOpen((value) => !value)}
+        onBlur={(event) => {
+          if (!event.currentTarget.closest("span")?.contains(event.relatedTarget as Node)) setOpen(false);
+        }}
         className={cn(
-          "size-1.5 rounded-full",
-          level === "healthy" && "bg-success",
-          level === "attention" && "bg-warning animate-pulse",
-          level === "critical" && "bg-destructive animate-pulse",
+          "inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium",
+          meta.className,
         )}
-      />
-      {meta.label}
+      >
+        <span
+          aria-hidden="true"
+          className={cn(
+            "size-1.5 rounded-full",
+            level === "healthy" && "bg-success",
+            level === "attention" && "bg-warning animate-pulse",
+            level === "critical" && "bg-destructive animate-pulse",
+          )}
+        />
+        {meta.label}
+      </button>
+      {open && reasons.length > 0 && (
+        <div
+          role="dialog"
+          aria-label={`Health: ${meta.label}`}
+          className="absolute right-0 top-8 z-50 max-h-[70vh] w-72 overflow-y-auto rounded-lg border bg-card p-3 text-xs shadow-xl"
+        >
+          <p className="mb-1.5 flex items-center gap-1.5 font-semibold">
+            <span
+              aria-hidden="true"
+              className={cn(
+                "size-1.5 rounded-full",
+                level === "healthy" && "bg-success",
+                level === "attention" && "bg-warning",
+                level === "critical" && "bg-destructive",
+              )}
+            />
+            {meta.label}
+            {level !== "healthy" && " — why:"}
+          </p>
+          <ul className="space-y-1 text-muted-foreground">
+            {reasons.map((reason) => (
+              <li key={reason} className="flex gap-1.5">
+                <span aria-hidden="true" className="text-muted-foreground/60">
+                  •
+                </span>
+                <span>{reason}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </span>
   );
 }
@@ -136,7 +183,7 @@ export function Header({ overview, onMenuClick }: HeaderProps) {
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
-        {healthBadge(payload?.health, Boolean(payload))}
+        <HealthBadge health={payload?.health} hasData={Boolean(payload)} />
         {/* Data status is redundant with the health badge on phones; the
             health badge stays visible at every width (v0.9.5 topbar rule). */}
         <span className="hidden sm:inline-flex">{dataStatusBadge(overview)}</span>

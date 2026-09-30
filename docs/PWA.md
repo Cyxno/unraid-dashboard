@@ -50,10 +50,43 @@ With `apple-mobile-web-app-capable` + the opaque apple touch icon +
 `background_color`, iOS generates the standalone launch screen from the
 Beacon mark automatically — no splash asset is shipped.
 
-## Verifying a deploy
+## iOS real-device checklist (v0.9.9)
+
+Server-side identity is verified correct; what remains is on-device
+behavior. Run this once after each icon release:
+
+1. Remove any existing Beacon home-screen shortcut (delete the icon).
+2. Close Safari completely (swipe away).
+3. Reopen Safari → Beacon (warm cache from the old install must go).
+4. Share → **Add to Home Screen** → Add.
+5. Verify the home-screen icon shows the **lighthouse mark** (not a letter).
+6. Launch Beacon from the home screen.
+7. Verify **standalone mode** (no Safari URL/status bar chrome).
+8. Verify the top bar respects the notch (safe-area top padding).
+9. Verify the bottom nav: opaque, clear of content, safe-area bottom.
+10. Open **More** (bottom nav) → sheet fits, scrolls, closes.
+11. Open the **sidebar** from the hamburger → fits, closes.
+12. Switch a page and a theme → still standalone, no Safari takeover.
+
+Record pass/fail per step. A generic-letter icon at step 5 means the
+cache steps (1–3) were skipped or the auth proxy intercepted the icon
+fetch (see caveat above).
+
+## iOS install & refresh procedure
+
+- **First install**: open Beacon in Safari → Add to Home Screen.
+- **Icon refresh after an icon release**: the `?v=` URL bump only helps
+  NEW fetches; an installed shortcut keeps its snapshot. Remove the
+  shortcut, force-quit Safari, reopen, re-add. There is no supported
+  in-place refresh on iOS.
+- **Standalone expectations**: launches full-screen with the Beacon mark
+  as the (iOS-generated) launch image on the theme background; status bar
+  style black-translucent; safe areas consumed by the shell.
 
 ```sh
 curl -sI https://<host>/icons/apple-touch-icon.png | head -3   # 200, image/png
 curl -s https://<host>/ | grep -o 'apple-touch-icon[^>]*'      # head link with ?v=
 curl -s https://<host>/manifest.webmanifest | grep -o '"name"[^,]*'  # "Beacon — ..."
 ```
+
+## Verifying a deploy
