@@ -241,22 +241,24 @@ export default function DockerPage() {
         window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
         element.focus({ preventScroll: true });
         setHighlightSection(key);
-        // Corrective re-scroll: the lazily mounted panel grows as its data
-        // lands, which would otherwise leave the section above the viewport.
-        // Follow size changes for ~2s, then stop (bounded).
-        const target = document.getElementById(`docker-${key}`);
-        if (target && typeof ResizeObserver !== "undefined") {
-          let last = 0;
-          const observer = new ResizeObserver(() => {
-            const now = Date.now();
-            if (now - last < 300) return; // throttle smooth scrolls
-            last = now;
-            const corrected = target.getBoundingClientRect().top + window.scrollY - 64;
-            window.scrollTo({ top: Math.max(0, corrected), behavior: "smooth" });
+        // Settled-position follow (v0.9.15): ANY growth shifts the target —
+        // the mounted panel below, poll-filled cards above — so keep
+        // correcting until the section sits at the header offset (or ~3s
+        // elapsed). Bounded, throttled by the smooth scroll itself.
+        const follow = setInterval(() => {
+          const element = document.getElementById(`docker-${key}`);
+          if (!element) return;
+          const top = element.getBoundingClientRect().top;
+          if (Math.abs(top - 64) <= 8) {
+            clearInterval(follow);
+            return;
+          }
+          window.scrollTo({
+            top: Math.max(0, top + window.scrollY - 64),
+            behavior: "smooth",
           });
-          observer.observe(target);
-          setTimeout(() => observer.disconnect(), 2_000);
-        }
+        }, 400);
+        setTimeout(() => clearInterval(follow), 3_200);
         setTimeout(() => setHighlightSection(null), 1_600);
       }, key === "containers" ? 0 : 60);
     });
