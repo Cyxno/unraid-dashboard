@@ -17,8 +17,9 @@ container verifies the **registry digest matches the repository digest**.
 3. Progress streams live (SSE) in the Updates card; history is persisted to
    `/app/data/update-history.jsonl` and shown in Docker → History.
 
-GHCR is private: the host needs `read:packages` once via
+If the GHCR package is private, the host needs `read:packages` once via
 `sh scripts/login-ghcr.sh` (a PAT, input hidden, never stored in Beacon).
+For a public package no login is needed.
 
 ## Option B — host-side script
 
