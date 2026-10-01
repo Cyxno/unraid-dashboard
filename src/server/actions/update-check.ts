@@ -4,9 +4,11 @@ import { getBuildInfo } from "@/server/version";
 /**
  * Server-side image update status against GHCR (read-only).
  *
- * Only runs when a token with read:packages is configured (GHCR_TOKEN);
- * otherwise every field degrades to "unknown" instead of failing. The
- * token never leaves the server and is never logged.
+ * Works out of the box for the public package: GHCR serves anonymous pull
+ * tokens, so without GHCR_TOKEN the check runs with one of those. A 401/403
+ * on the anonymous path means the package is (no longer) public and really
+ * needs a read:packages GHCR_TOKEN. The token never leaves the server and
+ * is never logged.
  *
  * What is compared:
  * - running version (build provenance) vs latest semver tag on GHCR
@@ -171,54 +173,16 @@ export async function checkForUpdate(): Promise<UpdateStatus> {
     }
   })();
 
-  if (!env?.GHCR_TOKEN) {
-    const value = unknownStatus(
-      "Update check not configured (GHCR_TOKEN missing) — the package is private.",
-      checkedAt,
-      false,
-    );
+  const token = env?.GHCR_TOKEN ?? null;
+  const image = env?.GHCR_IMAGE ?? "cyxno/unraid-dashboard";
+  if (!token) {
+    const value = await checkAnonymously(checkedAt, build, image);
     globalStore.__dashboardUpdateCheck = { at: Date.now(), value };
     return value;
   }
 
   try {
-    const { latestTag, manifestDigest, revisionSha } = await fetchLatestFromRegistry(
-      env.GHCR_TOKEN,
-      env.GHCR_IMAGE,
-    );
-    const runningVersion = parseVersion(build.version);
-    const remoteVersion = parseVersion(latestTag);
-
-    let value: UpdateStatus;
-    if (!runningVersion || !remoteVersion) {
-      value = {
-        ...unknownStatus("No comparable semver versions.", checkedAt, true),
-        latestTag,
-        latestManifestDigest: manifestDigest,
-        latestRevisionSha: revisionSha,
-        registry: { tokenConfigured: true, reachable: true, authorized: true, reason: null },
-        checkedAt,
-      };
-    } else {
-      const versionNewer = compareVersions(remoteVersion, runningVersion) > 0;
-      // Same version but different revision → registry holds a newer
-      // build of the same tag. SHAs may differ in length (short vs full).
-      const revisionDiffers =
-        !versionNewer &&
-        build.gitSha !== null &&
-        revisionSha !== null &&
-        !revisionSha.startsWith(build.gitSha) &&
-        !build.gitSha.startsWith(revisionSha);
-      value = {
-        status: versionNewer || revisionDiffers ? "available" : "up-to-date",
-        reason: revisionDiffers ? "Same version, newer build on the registry." : undefined,
-        latestTag,
-        latestManifestDigest: manifestDigest,
-        latestRevisionSha: revisionSha,
-        registry: { tokenConfigured: true, reachable: true, authorized: true, reason: null },
-        checkedAt,
-      };
-    }
+    const value = await computeFromRegistry(token, checkedAt, build, true, image);
     globalStore.__dashboardUpdateCheck = { at: Date.now(), value };
     return value;
   } catch (error) {
@@ -236,6 +200,114 @@ export async function checkForUpdate(): Promise<UpdateStatus> {
     globalStore.__dashboardUpdateCheck = { at: Date.now(), value };
     return value;
   }
+}
+
+/** Anonymous registry check for the public package: GHCR hands out pull
+ *  tokens without credentials, so update checks need no configuration.
+ *  Degrades with distinct, accurate reasons for offline vs private. */
+async function checkAnonymously(
+  checkedAt: string,
+  build: ReturnType<typeof getBuildInfo>,
+  image: string,
+): Promise<UpdateStatus> {
+  let anonymous: string | null = null;
+  let reachable = false;
+  try {
+    const response = await fetch(`${REGISTRY}/token?scope=repository:${image}:pull`, {
+      signal: AbortSignal.timeout(10_000),
+      cache: "no-store",
+    });
+    reachable = response.ok;
+    if (response.ok) {
+      anonymous = ((await response.json()) as { token?: string }).token ?? null;
+    }
+  } catch {
+    // Network down / DNS failure — degrade below with the offline reason.
+  }
+  if (!anonymous) {
+    return {
+      ...unknownStatus(
+        "Update check unavailable — the registry is unreachable and no GHCR_TOKEN is configured. Public packages check anonymously; a private package needs a read:packages token.",
+        checkedAt,
+        false,
+      ),
+      registry: {
+        tokenConfigured: false,
+        reachable: reachable ? true : null,
+        authorized: null,
+        reason: "registry unreachable (anonymous check)",
+      },
+    };
+  }
+  try {
+    return await computeFromRegistry(anonymous, checkedAt, build, false, image);
+  } catch (error) {
+    const status = (error as RegistryError).status;
+    if (status === 401 || status === 403) {
+      return {
+        ...unknownStatus(
+          "Update check unavailable — the package is private and no GHCR_TOKEN (read:packages) is configured.",
+          checkedAt,
+          false,
+        ),
+        registry: {
+          tokenConfigured: false,
+          reachable: true,
+          authorized: false,
+          reason: "registry rejected the anonymous check (private package)",
+        },
+      };
+    }
+    const message = error instanceof Error ? error.message : "Update check failed.";
+    return {
+      ...unknownStatus(message, checkedAt, false),
+      registry: { tokenConfigured: false, reachable: true, authorized: null, reason: message },
+    };
+  }
+}
+
+/** Shared registry walk: latest semver tag → manifest digest → revision
+ *  label. `tokenConfigured` only describes whether the operator configured
+ *  GHCR_TOKEN — the anonymous path reports false and still succeeds. */
+async function computeFromRegistry(
+  token: string,
+  checkedAt: string,
+  build: ReturnType<typeof getBuildInfo>,
+  tokenConfigured: boolean,
+  image: string,
+): Promise<UpdateStatus> {
+  const { latestTag, manifestDigest, revisionSha } = await fetchLatestFromRegistry(token, image);
+  const runningVersion = parseVersion(build.version);
+  const remoteVersion = parseVersion(latestTag);
+
+  if (!runningVersion || !remoteVersion) {
+    return {
+      ...unknownStatus("No comparable semver versions.", checkedAt, tokenConfigured),
+      latestTag,
+      latestManifestDigest: manifestDigest,
+      latestRevisionSha: revisionSha,
+      registry: { tokenConfigured, reachable: true, authorized: true, reason: null },
+      checkedAt,
+    };
+  }
+  const versionNewer = compareVersions(remoteVersion, runningVersion) > 0;
+  // Same version but different revision → registry holds a newer
+  // build of the same tag. SHAs may differ in length (short vs full).
+  const revisionDiffers =
+    !versionNewer &&
+    build.gitSha !== null &&
+    revisionSha !== null &&
+    !revisionSha.startsWith(build.gitSha) &&
+    !build.gitSha.startsWith(revisionSha);
+  return {
+    status: versionNewer || revisionDiffers ? "available" : "up-to-date",
+    reason: revisionDiffers ? "Same version, newer build on the registry." : undefined,
+    latestTag,
+    latestManifestDigest: manifestDigest,
+    latestRevisionSha: revisionSha,
+    registry: { tokenConfigured, reachable: true, authorized: true, reason: null },
+    checkedAt,
+  };
 }
 
 /** Test hook. */

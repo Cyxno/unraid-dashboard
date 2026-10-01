@@ -374,14 +374,14 @@ function AboutAndDiagnostics() {
               <div className="flex justify-between gap-4">
                 <dt className="text-muted-foreground">GHCR check</dt>
                 <dd className="text-xs">
-                  {!update?.registry.tokenConfigured ? (
-                    <span title="Set GHCR_TOKEN (read:packages) on the container to enable registry checks.">
-                      not configured
-                    </span>
-                  ) : update.registry.authorized ? (
-                    <Badge variant="success">registry reachable</Badge>
+                  {update?.registry.authorized ? (
+                    <Badge variant="success">
+                      registry reachable{update.registry.tokenConfigured ? "" : " (anonymous)"}
+                    </Badge>
+                  ) : update?.registry.reachable === false ? (
+                    <span title={update.registry.reason ?? undefined}>registry unreachable</span>
                   ) : (
-                    <span title={update.registry.reason ?? undefined}>registry auth failed</span>
+                    <span title={update?.registry.reason ?? undefined}>registry check failed</span>
                   )}
                 </dd>
               </div>
@@ -407,13 +407,12 @@ function AboutAndDiagnostics() {
                 and rolls back automatically on failure. The dashboard container itself never
                 touches the Docker socket, so it cannot update itself.
               </p>
-              {!update?.registry.tokenConfigured && (
+              {update && !update.registry.authorized && (
                 <p>
-                  Registry status needs a server-side <code className="rounded bg-secondary px-1">GHCR_TOKEN</code>{" "}
-                  (read:packages). Host pulls need a one-time{" "}
-                  <code className="rounded bg-secondary px-1">scripts/login-ghcr.sh</code> login —
-                  without it <code className="rounded bg-secondary px-1">docker pull</code> of new
-                  releases fails with <em>unauthorized</em>.
+                  Registry checks are unavailable: {update.registry.reason ?? "unknown reason"}.
+                  Public packages check anonymously with no configuration; a private package needs a
+                  server-side <code className="rounded bg-secondary px-1">GHCR_TOKEN</code>{" "}
+                  (read:packages).
                 </p>
               )}
             </div>
