@@ -24,11 +24,16 @@ const BASE = process.argv[2] ?? "http://127.0.0.1:3200";
 const CDP = process.env.CDP ?? "http://127.0.0.1:9223";
 
 const SHOTS = [
+  // README hero + curated set: overview and mobile captures are viewport
+  // shots (no full-page scrolls) so desktop and mobile keep realistic,
+  // GitHub-readable aspect ratios. Demo mode runs without Prometheus, so
+  // history widgets show their designed "metrics unavailable" state — the
+  // README showcases the pages that demo fully (Docker, Storage, mobile).
   { file: "overview-desktop.png", path: "/", width: 1440, height: 900, fullPage: true },
-  { file: "overview-mobile.png", path: "/", width: 390, height: 844, fullPage: true, mobile: true },
+  { file: "overview-mobile.png", path: "/", width: 390, height: 844, fullPage: false, mobile: true },
   { file: "docker-desktop.png", path: "/docker", width: 1440, height: 900, fullPage: true },
-  { file: "docker-mobile.png", path: "/docker", width: 390, height: 844, fullPage: true, mobile: true },
-  { file: "storage.png", path: "/storage", width: 1440, height: 900, fullPage: true },
+  { file: "docker-mobile.png", path: "/docker", width: 390, height: 844, fullPage: false, mobile: true },
+  { file: "storage.png", path: "/storage", width: 1440, height: 900, fullPage: false },
   { file: "system-thermal.png", path: "/system", width: 1440, height: 900, fullPage: true },
   { file: "automation.png", path: "/automation", width: 1440, height: 900, fullPage: true },
   { file: "settings.png", path: "/settings", width: 1440, height: 900, fullPage: true },
