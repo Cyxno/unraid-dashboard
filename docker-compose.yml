@@ -1,21 +1,24 @@
+# Quick-start Compose file for Beacon (image/repo name: unraid-dashboard).
+# See docs/INSTALL.md for the full walkthrough (API key, Prometheus, proxy auth).
+#
+# Host networking lets the container reach the Unraid GraphQL API and
+# Prometheus on localhost, matching docs/INSTALL.md. The UI listens on $PORT
+# (default 8090), so Beacon is served at http://<server>:8090.
+
 services:
   unraid-dashboard:
-    build: .
-    image: unraid-dashboard:latest
+    image: ghcr.io/cyxno/unraid-dashboard:latest
     container_name: unraid-dashboard
     restart: unless-stopped
-    ports:
-      # Host port is configurable; the container always listens on 3000.
-      - "${DASHBOARD_PORT:-3080}:3000"
+    network_mode: host
     environment:
       # Where the Unraid GraphQL API lives.
-      UNRAID_URL: ${UNRAID_URL:?set UNRAID_URL in .env or your environment}
+      UNRAID_URL: ${UNRAID_URL:-http://127.0.0.1:442}
       UNRAID_API_KEY: ${UNRAID_API_KEY:?set UNRAID_API_KEY in .env or your environment}
-      # Optional: Prometheus server for time-series metrics and history.
-      # Without it the dashboard still serves all Unraid state.
+      PORT: ${PORT:-8090}
+      # Optional: Prometheus server for time-series metrics, history, thermals.
       # PROMETHEUS_URL: http://127.0.0.1:9090
-      # PROMETHEUS_TIMEOUT_MS: "5000"
-      # UNRAID_TIMEOUT_MS: "10000"
-      # UNRAID_GRAPHQL_PATH: /graphql
-      # On Unraid, replace the published port with host networking if needed:
-      # network_mode: host
+    volumes:
+      # Dashboards, update history and audit log — keep on appdata so they
+      # survive container replacement.
+      - ${APPDATA_PATH:-/mnt/user/appdata/unraid-dashboard}:/app/data

@@ -1,10 +1,10 @@
 # Roadmap
 
-Beacon is in a mature 0.9 series: the feature set is complete for its scope
-and the focus is on real-device validation, hardening and documentation
-quality. No dates are promised; items land when they are verified.
+Beacon's core feature set is stable on the 1.x series. The focus is
+real-device validation, hardening and documentation quality. No dates are
+promised; items land when they are verified.
 
-## In progress / known limitations
+## Known limitations
 
 - **Docker restart** — the verified Unraid API exposes no restart mutation.
   Restart will ship only when the API gains it, or as an explicitly designed
@@ -21,4 +21,3 @@ quality. No dates are promised; items land when they are verified.
 - Broader thermal attribution (per-process/per-VM attribution where the
   metrics allow it, clearly labeled as estimates).
 - Static hosted demo (currently: local demo mode via placeholder credentials).
-- v1.0 stabilization: API/UX freeze, extended soak, packaging polish.

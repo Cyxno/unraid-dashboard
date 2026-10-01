@@ -1,38 +1,74 @@
-# Beacon — a modern operational dashboard for Unraid
+# Beacon
+
+A modern, self-hosted operations dashboard for Unraid — Docker, storage,
+VMs, network and system health in one dark-first, installable web app.
+
+[![Latest release](https://img.shields.io/github/v/release/Cyxno/unraid-dashboard)](https://github.com/Cyxno/unraid-dashboard/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/Cyxno/unraid-dashboard/ci.yml?branch=main)](https://github.com/Cyxno/unraid-dashboard/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/Cyxno/unraid-dashboard)](LICENSE)
+![Unraid](https://img.shields.io/badge/Unraid-7.x-f15a2c)
 
 <p align="center">
-  <img src="public/icon-source.svg" alt="Beacon" width="72" />
+  <img src="docs/screenshots/docker-desktop.png" alt="Beacon Docker operations page: container fleet with live state, health badges and update awareness" width="840" />
 </p>
+<p align="center"><em>Docker operations — the whole fleet at a glance, with confirmed start/stop and update awareness.</em></p>
 
-**Beacon** is a self-hosted, dark-first operations dashboard for Unraid servers.
-One installable app for Docker operations, storage, thermal intelligence,
-automation and machine-readable monitoring — with a strict security model:
-your Unraid API key never leaves the server.
+## What is Beacon?
 
-- **Current stable:** v0.9.12
-- **Requires:** Unraid 7.x (GraphQL API), Docker
-- **Installable PWA:** yes (iOS/Android/desktop)
-- **License:** MIT (see [LICENSE](LICENSE))
+Beacon is a modern web interface and operations dashboard for Unraid 7.x
+servers, focused on observability and safe operational workflows: container
+visibility, storage and thermal health, verified updates and a read-only
+machine API — behind a backend that keeps your Unraid API key on the server
+and never sends it to the browser.
+
+> The app is called **Beacon**. The repository, container image and package
+> keep the original project name `unraid-dashboard`
+> (`ghcr.io/cyxno/unraid-dashboard`).
+
+## Highlights
+
+- **System overview** — metric cards, resource history, storage summary and derived health with explained reasons
+- **Docker visibility** — searchable, filterable fleet with live CPU/memory, compose grouping and confirmed start/stop
+- **Storage monitoring** — array and cache usage, per-disk status and temperatures, parity state
+- **VMs and network** — at-a-glance visibility, read-only by design
+- **System and thermal health** — load/CPU history, package-temperature analysis, hot-episode correlation with top consumers
+- **Notifications, incidents and logs** — one place for what needs attention, backed by an audit trail of every mutation
+- **Operations** — verified updates (registry digest match, automatic rollback) and opt-in pilot auto-update
+- **NOC mode** — read-only wallboard for always-on displays
+- **Mobile and PWA** — installable app with mobile-first shells and live SSE updates
+- **Demo mode** — explore a full synthetic dataset without an Unraid server
+
+## Screenshots
+
+All screenshots use Beacon's built-in synthetic demo data — no real server
+data is included.
+
+### Desktop
 
 <p align="center">
-  <img src="docs/screenshots/overview-desktop.png" alt="Beacon overview" width="820" />
+  <img src="docs/screenshots/storage.png" alt="Beacon storage page: array and cache usage, per-disk status and temperatures" width="720" />
 </p>
+<p align="center"><em>Storage — array and cache usage, per-disk status and temperatures, parity state.</em></p>
 
----
+### Mobile
 
-## Why Beacon
+<p align="center">
+  <img src="docs/screenshots/overview-mobile.png" alt="Beacon overview page on a phone: metric cards, health and recent events" width="300" hspace="12" />
+  <img src="docs/screenshots/docker-mobile.png" alt="Beacon Docker page on a phone: container cards with state and actions" width="300" hspace="12" />
+</p>
+<p align="center"><em>Overview and Docker at phone width (390&nbsp;px viewport).</em></p>
 
-Unraid's built-in dashboards answer *what is the array doing*. Beacon answers
-*what is the server doing* — container-level CPU and memory, thermal episodes
-with load correlation, update provenance down to the registry digest, and a
-read-only machine API — behind a BFF that keeps credentials server-side.
+More screenshots — overview, system, automation, settings, changelog and the
+NOC wallboard — are available in [docs/screenshots/](docs/screenshots/).
 
 ## Quick start
 
+You need an Unraid 7.x server, Docker and one read-only API key.
+
 ```sh
-# 1. Create an Unraid API key (Settings → Management Access → API Keys)
-#    with at minimum DOCKER: READ_ANY and INFO: READ_ANY (read-only).
-# 2. Install the container (Unraid Docker tab) or run:
+# 1. Create an Unraid API key with read-only access
+#    (Unraid → Settings → Management Access → API Keys).
+# 2. Run the container (the Unraid Docker tab → Add Container works too):
 docker run -d --name unraid-dashboard \
   --network host \
   --restart unless-stopped \
@@ -44,50 +80,17 @@ docker run -d --name unraid-dashboard \
 # 3. Open http://<server>:8090
 ```
 
-Full walkthrough — including Prometheus, the update helper, the action key
-and reverse-proxy auth: **[docs/INSTALL.md](docs/INSTALL.md)**.
-
-## Features
-
-| Area | Highlights |
-| --- | --- |
-| **Overview** | Metric cards, resource history chart, storage summary, top CPU/memory consumers, recent events, derived health with explained reasons |
-| **Docker operations** | Operations-first page: searchable/filterable list, live CPU/memory, compose grouping, **Start/Stop with confirmed, SSE-verified transitions**, per-container detail, update awareness from cache (registry sweep only on demand) |
-| **Storage** | Array/cache usage, per-disk status and temperatures, parity state |
-| **System + thermal intelligence** | Load/CPU history, package-temperature analysis (24h + 7-day), sustained hot episodes with load/power correlation and top consumers, idle-hot detection, week-over-week trend |
-| **Automation** | Opt-in pilot auto-update with proven rollback, capability-aware workflow eligibility |
-| **Operations** | Update manager with **strict remote pulls and digest verification**, rollback, release provenance ("Registry verified"), helper status |
-| **Observability** | Notifications, Logs, Audit trail (every mutation: actor, target, result), NOC wallboard mode |
-| **Machine API** | Read-only Agent API v1 (see [docs/AGENT_API.md](docs/AGENT_API.md)) |
-| **Experience** | 8 themes + accents, installable PWA, mobile-first shells, SSE live updates |
-
-### Capability matrix
-
-| Feature | Status | Notes |
-| --- | --- | --- |
-| Docker Start/Stop | supported | confirmed, SSE-verified, audit-logged |
-| Docker Restart | not supported | the verified Unraid API exposes no restart mutation |
-| Container updates | supported | helper-driven, policy-gated, proven rollback |
-| Auto-update | opt-in pilot | allowlist + track-record + proven snapshot required |
-| Agent API | read-only v1 | no write endpoints, bearer auth, rate-limited |
-| Pipeline-owned projects | protected | never mutated by Beacon automation |
-| iOS PWA | supported | real-device QA is operator-dependent (checklist in docs) |
-| VM power actions | read-only | VM manipulation intentionally out of scope |
-
-## Screenshots
-
-More in [docs/screenshots/](docs/screenshots/) — captured from the built-in
-demo dataset (synthetic hosts, no real data).
-
-| | |
-| --- | --- |
-| ![Docker](docs/screenshots/docker-desktop.png) | ![Mobile](docs/screenshots/overview-mobile.png) |
+Prefer Docker Compose? The [docker-compose.yml](docker-compose.yml) in the
+repository root is a ready-to-use starting point. Prometheus, in-app
+updates, lifecycle actions and reverse-proxy auth are optional — the full
+walkthrough is in [docs/INSTALL.md](docs/INSTALL.md).
 
 ## Demo mode
 
-Beacon ships a built-in demo fallback: when the Unraid API is unreachable the
-UI renders a synthetic dataset clearly badged **Demo data** — no real
-hostnames, no metrics, and every mutation path disabled. Run it locally:
+Beacon ships a built-in demo fallback: when the Unraid API is unreachable,
+the UI renders a synthetic dataset clearly badged **Demo data** — no real
+hostnames, no real metrics, and every mutation path disabled. Run it
+locally:
 
 ```sh
 docker run -d -p 3200:8090 \
@@ -96,8 +99,40 @@ docker run -d -p 3200:8090 \
   ghcr.io/cyxno/unraid-dashboard:latest
 ```
 
-Mutations require a separate action key plus a reachable Unraid API, so a demo
-instance is read-only by construction.
+Mutations require a separate action key plus a reachable Unraid API, so a
+demo instance is read-only by construction.
+
+## Safety and permissions
+
+Beacon is deliberately read-first:
+
+- All dashboards run on a **read-only Unraid API key**. The key lives in the
+  container environment and is never sent to the browser.
+- Container **Start/Stop is opt-in**: it needs a second, narrowly scoped
+  action key (`DOCKER: UPDATE_ANY` only) and stays disabled until you
+  configure it.
+- Every mutation is **confirmed in the UI, cooldown- and rate-limited, and
+  audit-logged** (actor, target, result).
+- **Docker restart is not offered** — the verified Unraid API exposes no
+  restart mutation, and Beacon does not emulate one.
+- **VM manipulation is intentionally out of scope**; VMs are read-only.
+- The app container has **no Docker socket** — the isolated update helper is
+  the only component with Docker access.
+
+### Capability matrix
+
+| Capability | Access | Notes |
+| --- | --- | --- |
+| Docker Start/Stop | opt-in | confirmed, SSE-verified, audit-logged |
+| Docker Restart | not supported | the verified Unraid API exposes no restart mutation |
+| Container updates | supported | helper-driven, policy-gated, proven rollback |
+| Auto-update | opt-in pilot | allowlist + track-record + proven snapshot required |
+| VM power actions | read-only | VM manipulation intentionally out of scope |
+| Agent API | read-only v1 | no write endpoints, bearer auth, rate-limited |
+| Pipeline-owned projects | protected | never mutated by Beacon automation |
+| iOS PWA | supported | real-device QA is operator-dependent (checklist in docs) |
+
+Full trust model and boundaries: [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Architecture
 
@@ -111,7 +146,8 @@ Browser ──▶ Beacon (Next.js BFF) ──▶ Unraid GraphQL API
 
 - The main app **never touches the Docker socket** — container facts flow
   through a tiny isolated helper.
-- The browser never sees API keys; writes go through guarded, audited endpoints.
+- The browser never sees API keys; writes go through guarded, audited
+  endpoints.
 - Full diagrams and trust boundaries: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Documentation
@@ -121,51 +157,34 @@ Browser ──▶ Beacon (Next.js BFF) ──▶ Unraid GraphQL API
 | [docs/INSTALL.md](docs/INSTALL.md) | prerequisites, container install, keys, Prometheus, proxy auth |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | every environment variable: required, default, secret? |
 | [docs/UPDATING.md](docs/UPDATING.md) | strict remote updates, digest verification, rollback |
-| [docs/SECURITY.md](docs/SECURITY.md) | trust model, key isolation, write boundaries |
+| [docs/SECURITY.md](docs/SECURITY.md) | threat model, key isolation, write boundaries, vulnerability reporting |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | components, data flows, SSE, boundaries |
 | [docs/AGENT_API.md](docs/AGENT_API.md) | read-only machine API v1 |
 | [docs/PWA.md](docs/PWA.md) | installation, icons, iOS specifics |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | common failures and fixes |
-| [CHANGELOG.md](CHANGELOG.md) | release history (also in-app at /changelog) |
+| [docs/V1_UPGRADE.md](docs/V1_UPGRADE.md) | upgrading from the 0.9.x series |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | direction and known limitations |
-| [docs/V1_UPGRADE.md](docs/V1_UPGRADE.md) | upgrading from 0.9.x to the 1.0 line |
-| [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) | release-blocker definition |
-| [docs/RELEASE_NOTES_v1.md](docs/RELEASE_NOTES_v1.md) | v1.0 release notes |
-
-## Security model (summary)
-
-- Read-only VIEWER key for all dashboards; a **separate** action key (DOCKER
-  UPDATE_ANY only) is required for Start/Stop, and only when you configure it.
-- The update helper is the only component with Docker-socket access.
-- Reverse-proxy auth (e.g. Authelia) with a shared secret header; direct LAN
-  access is treated as trusted-local with identity headers ignored.
-- Every mutation is confirmed, cooldown- and rate-limited, and audit-logged.
-- Updates verify the registry digest before replacing the container and roll
-  back automatically on failed health checks.
-
-Details: [docs/SECURITY.md](docs/SECURITY.md).
+| [CHANGELOG.md](CHANGELOG.md) | release history (also in-app at `/changelog`) |
 
 ## Development
 
 ```sh
 npm install
-npm run dev        # http://localhost:3000
-npm test           # 600+ tests (node:test)
+npm run dev        # http://localhost:3000 (demo data without an Unraid server)
+npm test           # node:test suite
 npm run lint       # eslint
 npm run typecheck  # tsc --noEmit
 npm run build      # production build
-node scripts/visual-regression.mjs   # visual + layout gates (needs local chrome)
+node scripts/visual-regression.mjs   # visual + layout gates (needs local Chrome)
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the expectations and the visual
-harness.
+Expectations, gates and the screenshot workflow: [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Roadmap & limitations
+## Roadmap and limitations
 
-Current known limits (tracked in [docs/ROADMAP.md](docs/ROADMAP.md)):
-Docker restart awaits a verified Unraid API mutation; VM power actions are
-intentionally out of scope; iOS PWA validation is operator-dependent. No dates
-are promised.
+Known limits (tracked in [docs/ROADMAP.md](docs/ROADMAP.md)): Docker restart
+awaits a verified Unraid API mutation; VM power actions are intentionally out
+of scope; iOS PWA validation is operator-dependent. No dates are promised.
 
 ## License
 
