@@ -6,7 +6,7 @@ VMs, network and system health in one dark-first, installable web app.
 [![Latest release](https://img.shields.io/github/v/release/Cyxno/unraid-dashboard)](https://github.com/Cyxno/unraid-dashboard/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/Cyxno/unraid-dashboard/ci.yml?branch=main)](https://github.com/Cyxno/unraid-dashboard/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/github/license/Cyxno/unraid-dashboard)](LICENSE)
-![Unraid](https://img.shields.io/badge/Unraid-7.x-f15a2c)
+[![Requires Unraid 7.x](https://img.shields.io/badge/Unraid-7.x-blue)](https://docs.unraid.net)
 
 <p align="center">
   <img src="docs/screenshots/docker-desktop.png" alt="Beacon Docker operations page: container fleet with live state, health badges and update awareness" width="840" />
