@@ -47,13 +47,18 @@ describe("v0.9.7 layout system + spacing correctness + PWA identity", () => {
     const settings = read("src/app/settings/page.tsx");
     assert.match(settings, /<PageStack>/);
     assert.match(settings, /<AdaptiveColumns/);
-    // The dense content is split across both stacks now: Security model
-    // moved left of the columns boundary, Agent API card rendered at all.
+    // Balanced distribution (v0.9.13, production-measured): Diagnostics in
+    // the left stack; the Security-model explainer in the right (provenance)
+    // column; Agent API card rendered at all.
     const leftIdx = settings.indexOf("left={");
-    const securityModelIdx = settings.indexOf("Security model");
     const rightIdx = settings.indexOf("right={");
-    assert.ok(leftIdx > -1 && rightIdx > -1 && leftIdx < securityModelIdx && securityModelIdx < rightIdx);
-    assert.match(settings, /<AgentApiSection \/>/);
+    const diagnosticsIdx = settings.indexOf("<AboutAndDiagnostics />");
+    const agentIdx = settings.indexOf("<AgentApiSection />");
+    const securityModelIdx = settings.indexOf("Security model");
+    assert.ok(leftIdx > -1 && rightIdx > -1);
+    assert.ok(leftIdx < diagnosticsIdx && diagnosticsIdx < rightIdx, "Diagnostics belongs to the left stack");
+    assert.ok(rightIdx < agentIdx, "Agent API belongs to the right stack");
+    assert.ok(securityModelIdx > rightIdx, "Security model belongs to the right stack");
     // No dead col-span headers inside a column div.
     assert.doesNotMatch(settings, /lg:col-span-2/);
   });

@@ -55,12 +55,13 @@ const DASHBOARD_URL = process.env.DASHBOARD_URL || `http://127.0.0.1:${process.e
 const DASHBOARD_AUTH_SECRET = process.env.DASHBOARD_AUTH_SECRET || "";
 /** Provenance env keys excluded from preservation so the new image's own values win. */
 const PROVENANCE_ENV = /^(PATH|NODE_VERSION|YARN_VERSION|NODE_ENV|HOSTNAME|HOME|NEXT_TELEMETRY_DISABLED|APP_VERSION|GIT_SHA|BUILD_TIME|IMAGE_REF)=/;
-const TAG_RE = /^v?\d+\.\d+\.\d+$/;
+// Semver with optional prerelease (v1.0.0-rc.1) — the RC train requires it.
+const TAG_RE = /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$/;
 const HEALTH_TIMEOUT_MS = 150_000;
 const VERIFY_TIMEOUT_MS = 30_000;
 const STEP_TIMEOUT_MS = { inspect: 15_000, pull: 300_000, replace: 30_000 };
 
-const HELPER_VERSION = "0.8.0";
+const HELPER_VERSION = "0.9.5";
 
 /** Strict remote mode (v0.7.14): when UPDATE_REQUIRE_REMOTE=true, a
  * self-update pull failure aborts BEFORE any mutation — the local-image
@@ -322,12 +323,46 @@ async function runUpdate(tag, options = {}) {
   try {
     // Rollback may target an older validated release; normal updates may not.
     if (!options.forceOlder && state.currentVersion) {
-      const parse = (v) => String(v).replace(/^v/, "").split(".").map(Number);
+      const parse = (v) => {
+        const [core, pre] = String(v).replace(/^v/, "").split("-");
+        const numbers = core.split(".").map(Number);
+        // Semver rule: a prerelease binds to its own triple and sorts BELOW
+        // that triple's release (1.0.0-rc.1 < 1.0.0), and prerelease
+        // identifiers compare numerically when numeric (rc.1 < rc.2).
+        return {
+          numbers,
+          pre: pre ?? null,
+        };
+      };
       const a = parse(tag);
       const b = parse(state.currentVersion);
       let comparison = 0;
       for (let i = 0; i < 3; i++) {
-        if ((a[i] ?? 0) !== (b[i] ?? 0)) { comparison = (a[i] ?? 0) > (b[i] ?? 0) ? 1 : -1; break; }
+        const ai = a.numbers[i] ?? 0;
+        const bi = b.numbers[i] ?? 0;
+        if (ai !== bi) { comparison = ai > bi ? 1 : -1; break; }
+      }
+      if (comparison === 0) {
+        const aPre = a.pre;
+        const bPre = b.pre;
+        if (aPre && !bPre) comparison = -1;
+        else if (!aPre && bPre) comparison = 1;
+        else if (aPre && bPre && aPre !== bPre) {
+          const aParts = aPre.split(".");
+          const bParts = bPre.split(".");
+          for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+            const av = aParts[i];
+            const bv = bParts[i];
+            if (av === bv) continue;
+            if (av === undefined) { comparison = -1; break; }
+            if (bv === undefined) { comparison = 1; break; }
+            const an = Number(av);
+            const bn = Number(bv);
+            if (!Number.isNaN(an) && !Number.isNaN(bn)) { comparison = an > bn ? 1 : -1; break; }
+            comparison = av > bv ? 1 : -1;
+            break;
+          }
+        }
       }
       if (comparison < 0) {
         throw new Error(`refusing non-update: requested ${tag} is older than running ${state.currentVersion} (use /rollback)`);

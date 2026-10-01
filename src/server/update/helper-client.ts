@@ -248,7 +248,7 @@ export async function requestRollback(tag: string): Promise<UpdateRequestResult>
   if (!config) return { accepted: false, status: 503, reason: "Update helper not configured." };
   if (!config.token) return { accepted: false, status: 503, reason: "UPDATE_HELPER_TOKEN not configured." };
   const clean = tag.trim().replace(/^v/, "");
-  if (!/^\d+\.\d+\.\d+$/.test(clean)) {
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$/.test(clean)) {
     return { accepted: false, status: 400, reason: "Invalid tag — semantic version required." };
   }
   try {
@@ -355,11 +355,23 @@ export async function getContainerJob(name: string): Promise<ContainerJob | null
 
 /** Explicit same-version validation transition (helper-level smoke test). */
 export function compareSemver(a: string, b: string): number {
-  const pa = a.replace(/^v/, "").split(".").map(Number);
-  const pb = b.replace(/^v/, "").split(".").map(Number);
+  // Prerelease-aware (v0.9.x -> 1.0.0-rc.1 -> 1.0.0 must all order correctly):
+  // equal triples compare by semver prerelease rules (rc < release).
+  const parse = (v: string) => {
+    const [core, pre] = v.replace(/^v/, "").split("-");
+    return { numbers: (core ?? "0").split(".").map(Number), pre: pre ?? null };
+  };
+  const pa = parse(a);
+  const pb = parse(b);
   for (let index = 0; index < 3; index++) {
-    const diff = (pa[index] ?? 0) - (pb[index] ?? 0);
+    const diff = (pa.numbers[index] ?? 0) - (pb.numbers[index] ?? 0);
     if (diff !== 0) return diff;
+  }
+  if (pa.pre && !pb.pre) return -1;
+  if (!pa.pre && pb.pre) return 1;
+  if (pa.pre && pb.pre) {
+    if (pa.pre < pb.pre) return -1;
+    if (pa.pre > pb.pre) return 1;
   }
   return 0;
 }
