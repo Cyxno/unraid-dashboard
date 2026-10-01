@@ -37,6 +37,8 @@ export function ChangelogReleases({
     if (!hash) return;
     const match = releases.find((release) => versionAnchor(release.version) === hash);
     if (match) {
+      // One-shot deep-link expansion on mount; the sync call is the point.
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- expand-on-mount for hash deep links
       setForcedOpen((current) => [...current, match.version]);
       requestAnimationFrame(() => {
         document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -72,7 +72,7 @@ describe("v0.9.10 shared action controller + capability model + thermal context"
     const agentDir = path.join(repoRoot, "src/app/api/agent/v1");
     const walk = (dir: string): string[] => {
       const out: string[] = [];
-      for (const entry of require("node:fs").readdirSync(dir, { withFileTypes: true })) {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) out.push(...walk(full));
         else if (entry.name === "route.ts") out.push(full);

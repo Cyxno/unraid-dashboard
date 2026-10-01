@@ -208,7 +208,7 @@ function AboutAndDiagnostics() {
                 </DiagnosticsRow>
                 <DiagnosticsRow label="Changelog">
                   <Link href="/changelog" className="text-primary hover:underline">
-                    What's changed in Beacon
+                    What&apos;s changed in Beacon
                   </Link>
                 </DiagnosticsRow>
                 <DiagnosticsRow label="App mode">
