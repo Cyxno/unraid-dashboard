@@ -144,9 +144,13 @@ describe("v0.9.11 thermal intelligence + capability-aware automation + PWA", () 
       assert.match(layout, /appleWebApp: \{[\s\S]*?capable: true/);
     });
 
-    it("service worker version tracks the package version", () => {
-      const pkg = JSON.parse(read("package.json"));
+    it("service worker version tracks the deployed version source", () => {
       const sw = read("public/sw.js");
+      // The sync script prefers APP_VERSION (CI/tag builds) over package.json
+      // — promotion of an RC commit must still stamp the deployed version.
+      const sync = read("scripts/sync-sw-version.mjs");
+      assert.match(sync, /APP_VERSION/);
+      const pkg = JSON.parse(read("package.json"));
       assert.match(sw, new RegExp(`VERSION = "v${pkg.version}"`));
     });
 

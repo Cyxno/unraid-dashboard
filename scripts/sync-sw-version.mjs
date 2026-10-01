@@ -4,7 +4,11 @@
 import { readFileSync, writeFileSync } from "node:fs";
 
 const pkg = JSON.parse(readFileSync("package.json", "utf8"));
-const version = `v${pkg.version}`;
+// CI/strict-remote builds pass APP_VERSION (from the git tag) — it wins so
+// the service worker version always matches the DEPLOYED version, even when
+// package.json on the tagged source was not bumped (e.g. promotion of an RC
+// commit whose package.json predates the tag).
+const version = `v${process.env.APP_VERSION && /^(\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?)$/ .test(process.env.APP_VERSION) ? process.env.APP_VERSION : pkg.version}`;
 const swPath = new URL("../public/sw.js", import.meta.url);
 const sw = readFileSync(swPath, "utf8");
 if (!sw.includes("const VERSION")) {
