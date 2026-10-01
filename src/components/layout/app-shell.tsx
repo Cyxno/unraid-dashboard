@@ -12,6 +12,7 @@ import { BottomNav } from "./bottom-nav";
 import { PwaProvider } from "./pwa-provider";
 import { PwaStatusBanner, UpdateMaintenanceBanner } from "./pwa-status-banner";
 import { AuthExpiredOverlay } from "./auth-expired-overlay";
+import { DemoBanner } from "./demo-banner";
 import { cn } from "@/lib/utils";
 import { CommandPalette } from "./command-palette";
 
@@ -87,6 +88,9 @@ function Shell({ children }: { children: React.ReactNode }) {
         {/* Offline / version-mismatch / SW-update banners, then the
             maintenance banner while an in-app update machine runs. */}
         <PwaStatusBanner />
+        {/* Why the dashboard is demo data (rejected key vs unreachable API)
+            — never let a demo dashboard look like a healthy server. */}
+        <DemoBanner overview={overview} />
         <UpdateMaintenanceBanner />
         {/* Full-screen sign-in state when the proxy session expires. */}
         <AuthExpiredOverlay />
