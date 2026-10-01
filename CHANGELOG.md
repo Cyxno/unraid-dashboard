@@ -85,3 +85,19 @@ each entry summarizes user-visible changes.
 
 - Product naming, design tokens, 8 themes + accents, appearance system, PWA
   foundation.
+
+## 1.x policy (effective v1.0.0)
+
+From v1.0.0 onward the changelog documents, per release: **breaking changes**
+(any change requiring configuration/data/action), **security changes**,
+**deprecations** (with removal timelines), and **migration notes**. Minor
+versions add features backward-compatibly; patch versions are fixes only.
+The Agent API is additive-only: existing endpoints and response fields are
+never removed or repurposed within a major version.
+
+## v0.9.16 — v0.9.12 line completion
+
+See the v0.9.12 entry above (layout flow, Docker section navigation, docs
+overhaul) plus follow-up fixes: settings balance from production
+measurements, anchor settled-position scrolling, docs screenshot
+regeneration.
