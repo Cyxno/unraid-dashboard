@@ -427,7 +427,7 @@ export default function OperationsPage() {
                     detail={
                       data.releaseChain.bootPersistence.verifiedAt
                         ? `${data.releaseChain.bootPersistence.passed ? "verified" : "FAILED"} ${formatDateTimeIso(data.releaseChain.bootPersistence.verifiedAt)}${data.releaseChain.bootPersistence.warnings ? ` · ${data.releaseChain.bootPersistence.warnings} warning(s)` : ""}`
-                        : "not verified — run scripts/boot-persistence-audit.sh"
+                        : "not verified — no boot persistence audit has run since the last reboot"
                     }
                   />
                 </>

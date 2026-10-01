@@ -1,16 +1,35 @@
 # Security
 
-This document describes the security model, boundaries, and audits behind
-the Unraid Dashboard. It is written for the operator of this deployment;
-nothing here assumes other trust relationships.
+This document describes the security model, boundaries, and guarantees
+behind Beacon. It is written for anyone running or evaluating the
+project: nothing here assumes a specific deployment beyond what the
+documentation describes.
+
+## Reporting a vulnerability
+
+Please report security issues privately rather than opening a public
+issue:
+
+- Use **GitHub → Security → Report a vulnerability** (private advisory)
+  on this repository, or
+- open a GitHub issue **without details** to request a private channel.
+
+Include the Beacon version (`/api/version`), the affected surface
+(page, API route or helper) and a minimal reproduction. Please do not
+include real API keys, tokens or server addresses in any report.
+
+See [README.md](../README.md#safety-and-permissions) for what Beacon
+can and cannot do, and [docs/ROADMAP.md](ROADMAP.md) for known
+limitations.
 
 ## Threat model
 
-Self-hosted dashboard on an Unraid home server. Trusted zone: the LAN
-(192.168.1.0/24), Tailscale peers, and the Unraid host itself. Untrusted:
-everything else (WAN, other VLANs, the public internet). Two credentials
-exist server-side (a VIEWER read key and a narrowly-scoped GUEST action
-key); neither ever reaches the browser.
+Self-hosted dashboard on an Unraid home server. Trusted zone: the local
+network (e.g. `192.168.1.0/24`), the Unraid host itself, and any
+private VPN peers you include. Untrusted: everything else (WAN, other
+VLANs, the public internet). Two credentials exist server-side (a
+VIEWER read key and a narrowly-scoped action key); neither ever reaches
+the browser.
 
 ## Security boundaries
 
@@ -18,42 +37,32 @@ key); neither ever reaches the browser.
    own routes. It can never run arbitrary PromQL, never sees API keys,
    and never talks to the Unraid API or Prometheus directly.
 2. **Dashboard ↔ Unraid API**: read-only VIEWER key for all state;
-   lifecycle mutations use a physically separate action key restricted to
-   `DOCKER:UPDATE_ANY,VMS:UPDATE_ANY` (reads denied to that key).
+   lifecycle mutations use a physically separate action key restricted
+   to `DOCKER:UPDATE_ANY` (the only write permission Beacon needs).
 3. **Dashboard ↔ host**: the container runs unprivileged (non-root),
-   host-networked, with **no Docker socket, no privileged mode, and no
-   host shell access**. Its only host filesystem access is the narrow
-   `/app/data` bind mount.
-4. **Helper ↔ Docker (v0.7+)**: the update helper is the ONLY component
-   with Docker access (see Update helper below).
+   with **no Docker socket, no privileged mode, and no host shell
+   access**. Its only host filesystem access is the narrow `/app/data`
+   bind mount.
+4. **Helper ↔ Docker**: the update helper is the ONLY component with
+   Docker access (see Update management below).
 
 ## Authentication
 
 `AUTH_MODE` drives identity handling:
 
 - `disabled`: trusted-LAN behavior — every request is anonymous-local.
-- `proxy` (production setting since v0.7): the trust boundary is a
-  **proxy-injected shared secret** (`AUTH_PROXY_SECRET` arriving as
-  `X-Dashboard-Auth-Token` from NPM alongside the Authelia identity
-  header). The API layer compares it in constant time and the page
-  middleware enforces the same rule; **fail-closed** when unset. Forged
-  `X-Forwarded-For` / identity headers from the LAN are worthless without
-  the secret — the header-spoofing caveat of plain proxy auth is closed.
-  NPM additionally overwrites (never appends) the identity headers.
-- Recovery: SSH to the host and recreate the container without
-  `AUTH_MODE` (see /boot/config/plugins/dockerMan/templates-user/
-  my-unraid-dashboard.xml for the current env); direct-LAN HTTP remains
-  reachable at the firewall level for that path.
-- **Kiosk path exception (v0.7.2):** `kiosk-dashboard.familievalk.com`
-  skips Authelia forward-auth and injects a fixed `kiosk` identity. The
-  trust comes from the network allow-list at the proxy (LAN + named
-  Tailscale peers, deny all; CF-proxied traffic refused) plus the shared
-  secret — anyone on those networks acts as the auditable `kiosk`
-  identity. This is a deliberate, documented trade-off for unattended
-  wallboards; it grants no broader rights than a trusted-LAN user and
-  every action is audited as `kiosk`.
+- `proxy`: the trust boundary is a **proxy-injected shared secret**
+  (`AUTH_PROXY_SECRET` arriving as `X-Dashboard-Auth-Token` from your
+  reverse proxy — e.g. Nginx Proxy Manager + Authelia — alongside the
+  identity header). The API layer compares it in constant time and the
+  page middleware enforces the same rule; **fail-closed** when unset.
+  Forged `X-Forwarded-For` / identity headers from the LAN are
+  worthless without the secret — the header-spoofing caveat of plain
+  proxy auth is closed.
 
 The dashboard never performs password auth and holds no user store.
+Direct LAN access is treated as trusted-local: requests are accepted as
+a fixed identity and client-supplied identity headers are ignored.
 
 ## CSRF and write protection
 
@@ -102,11 +111,8 @@ Static-only caching by design (`public/sw.js`, asserted by tests):
   minimum scope `read:packages`; the token is never committed, printed,
   stored in DockerMan templates, or exposed via the UI/API. Server-side
   update *checks* use `GHCR_TOKEN` which never leaves the process.
-  v0.7.13: the credential store is persisted to the flash drive (0600)
-  with a `/boot/config/go` boot-restore block, and bind-mounted read-only
-  into the helper — one login covers host + helper pulls across reboots.
-- **Update helper (shipped v0.7):** a dedicated single-purpose container
-  — the only component with Docker access. Hard guarantees:
+- **Update helper:** a dedicated single-purpose container — the only
+  component with Docker access. Hard guarantees:
   * binds 127.0.0.1 only (verified by the deploy script against the host IP)
   * bearer-token auth with a constant-time compare (32+ char secret)
   * self-update requests can choose ONLY a semver tag
@@ -126,12 +132,12 @@ Static-only caching by design (`public/sw.js`, asserted by tests):
   * all attempted updates audited on the dashboard side (actor, versions,
     result, duration); the helper's /status exposes phases and results,
     never tokens
-- **Compose service updates (v0.7.11):** paths come only from the
-  container's own compose labels, validated against deploy-time
-  read-only root mounts (`COMPOSE_ALLOWED_ROOTS`); every invocation is a
-  scoped argv array (`compose pull`/`up -d --no-deps <service>`).
-- **Project updates (v0.7.13):** the request names ONLY the project.
-  Members, order and paths derive server-side from live labels plus
+- **Compose service updates:** paths come only from the container's own
+  compose labels, validated against deploy-time read-only root mounts
+  (`COMPOSE_ALLOWED_ROOTS`); every invocation is a scoped argv array
+  (`compose pull`/`up -d --no-deps <service>`).
+- **Project updates:** the request names ONLY the project. Members,
+  order and paths derive server-side from live labels plus
   `docker compose config`. Refused entirely for pipeline-owned projects,
   any HIGH-risk member (databases/auth/proxy/DNS), AIO/externally
   managed or non-recreatable members, and ambiguous dependency graphs
@@ -140,37 +146,37 @@ Static-only caching by design (`public/sw.js`, asserted by tests):
   first failure with the failed service rolled back. Project-level
   automation can therefore never bypass per-service risk policy — the
   helper re-derives every refusal even if the dashboard were bypassed.
-- **Rollback readiness (v0.7.13):** mutation requires a resolvable
-  running image; a stored pre-update snapshot makes rollback *proven*
-  (surfaces as rollback level `ready` vs `unproven`). Snapshots contain
-  env values and are stored 0600 in the helper state dir; no endpoint
-  ever returns their contents — only presence metadata.
-- **Recovery actions (v0.7.13):** the Operations page exposes only:
+- **Rollback readiness:** mutation requires a resolvable running image; a
+  stored pre-update snapshot makes rollback *proven* (surfaces as
+  rollback level `ready` vs `unproven`). Snapshots contain env values
+  and are stored 0600 in the helper state dir; no endpoint ever returns
+  their contents — only presence metadata.
+- **Recovery actions:** the Operations page exposes only:
   create/validate resilience backup, restore dry-run, dependency-check
   retry, and clearing a stale PRE-mutation operation (the helper refuses
   post-mutation clears and verifies the target container is running).
   No generic shell, no arbitrary restore, no arbitrary image rollback.
 
-## Pipeline-owned projects (v0.7.13)
+## Pipeline-owned projects
 
-Compose projects listed in `PIPELINE_OWNED_PROJECTS` (default
-`tornscope`) or labeled `com.cyxno.management=pipeline` are classified
-`pipeline_owned`: the dashboard detects their update state for display
-but refuses every mutation, at both the dashboard gate and the helper.
-Optional declarative metadata (`com.cyxno.pipeline.repo/deployer/sha/
-ref`) is display-only. `com.cyxno.update.policy`/`risk` labels are
-declarative metadata that can only TIGHTEN policy (toward manual /
-higher risk) — labels never loosen server-side classification.
+Compose projects listed in `PIPELINE_OWNED_PROJECTS` or labeled
+`com.cyxno.management=pipeline` are classified `pipeline_owned`: the
+dashboard detects their update state for display but refuses every
+mutation, at both the dashboard gate and the helper. Optional
+declarative metadata (`com.cyxno.pipeline.repo/deployer/sha/ref`) is
+display-only. `com.cyxno.update.policy`/`risk` labels are declarative
+metadata that can only TIGHTEN policy (toward manual / higher risk) —
+labels never loosen server-side classification.
 
-## Port isolation (live on this host)
+## Network exposure
 
-Direct access to the dashboard port (8090) is restricted by iptables
-(persisted in `/boot/config/go`) to loopback, the LAN, Docker bridges
-(the NPM proxy hop), Tailscale and Unraid WireGuard ranges. Everything
-else is dropped. The reverse-proxy path adds Authelia two-factor
-authentication and strips/overwrites client identity headers. Recovery:
-SSH to the host (unaffected), then remove the rules or use the direct LAN
-path; the disable command is documented in `/boot/config/go`.
+Beacon serves plain HTTP on its listen port. Recommendations:
+
+- Keep direct access LAN-only (Unraid's default) and use a reverse
+  proxy with SSO (`AUTH_MODE=proxy`) for anything beyond the LAN.
+- Firewall the dashboard port to the networks you trust; the app's
+  trusted-local model assumes the network is the boundary.
+- Do not forward the dashboard port to the WAN.
 
 ## Data handling
 
@@ -185,41 +191,39 @@ path; the disable command is documented in `/boot/config/go`.
 
 ## Known limitations
 
-- With `AUTH_MODE=disabled` (not current production), identity is not
-  asserted on the direct-LAN path by design; the Authelia-protected proxy
-  path is the identity-bearing path.
-- The proxy path's allow-list blocks cloud IPs; remote access requires
-  Tailscale (deliberate).
+- With `AUTH_MODE=disabled`, identity is not asserted on the direct-LAN
+  path by design; the proxy path is the identity-bearing path.
 - Prometheus queries are built server-side from validated windows only;
   the browser cannot inject PromQL. Prometheus itself is unauthenticated
   on the LAN — out of scope for this app.
-- Broad auto-update stays disabled in v0.7.13: the eligibility model is
-  computed and displayed, but nothing schedules or executes automatic
-  updates, and a future pilot mode would be allowlist-gated to LOW-risk
-  containers with a proven rollback record.
+- Auto-update is an opt-in pilot: eligibility is computed and displayed,
+  but nothing schedules updates on its own; the pilot is allowlist-gated
+  to LOW-risk containers with a proven rollback record.
 
-## Machine API (Agent API, v0.9.4+)
+## Machine API (Agent API)
 
-The optional Agent API under `/api/agent/v1` is **read-only by construction**:
-it exposes health, system, Docker inventory, issues, projects, storage,
-operations and event-stream endpoints. There are no POST/PUT/DELETE handlers
-in the entire route tree (enforced by test). It requires its own bearer
-token (`AGENT_API_TOKEN`, min 32 chars, constant-time compared, never logged)
-and is rate-limited per endpoint. It may report capability *facts* (e.g.
-"docker start available") but can never perform one.
+The optional Agent API under `/api/agent/v1` is **read-only by
+construction**: it exposes health, system, Docker inventory, issues,
+projects, storage, operations and event-stream endpoints. There are no
+POST/PUT/DELETE handlers in the entire route tree (enforced by test).
+It requires its own bearer token (`AGENT_API_TOKEN`, min 32 chars,
+constant-time compared, never logged) and is rate-limited per endpoint.
+It may report capability *facts* (e.g. "docker start available") but
+can never perform one.
 
-## Action key (v0.9.9+)
+## Action key
 
 Lifecycle actions (container start/stop) require a dedicated
-`UNRAID_ACTION_API_KEY` with only `DOCKER: UPDATE_ANY`. The key is validated
-server-side, never echoed, never included in audit payloads, and its presence
-alone enables the capability — validity is proven at action time. Capabilities
-are recomputed live everywhere (Docker page, container detail, Automation
-eligibility, Operations, Settings, Agent API context), so a removed or
-invalidated key disables the surface everywhere with no stale "Ready" state.
+`UNRAID_ACTION_API_KEY` with only `DOCKER: UPDATE_ANY`. The key is
+validated server-side, never echoed, never included in audit payloads,
+and its presence alone enables the capability — validity is proven at
+action time. Capabilities are recomputed live everywhere (Docker page,
+container detail, Automation eligibility, Operations, Settings, Agent
+API context), so a removed or invalidated key disables the surface
+everywhere with no stale "Ready" state.
 
 ## Demo mode
 
 Running Beacon against an unreachable Unraid API renders synthetic data
-(badged **Demo data**). Mutations require a live Unraid API plus the action
-key, so a demo instance is read-only by construction.
+(badged **Demo data**). Mutations require a live Unraid API plus the
+action key, so a demo instance is read-only by construction.

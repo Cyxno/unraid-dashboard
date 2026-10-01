@@ -1,14 +1,14 @@
 /**
  * PromQL used by the dashboard. Every query here was verified against
- * the live Prometheus on this host (job names, label names and metric
- * names checked via /api/v1/label/__name__ and test queries) — do not
- * "fix" a selector without re-verifying. The browser never supplies
- * PromQL; routes only pass validated windows/names into these builders.
+ * a live Prometheus (job names, label names and metric names checked
+ * via /api/v1/label/__name__ and test queries) — do not "fix" a
+ * selector without re-verifying. The browser never supplies PromQL;
+ * routes only pass validated windows/names into these builders.
  *
- * Sources on this host:
- * - job="node"      node-exporter (192.168.1.2:9100) + textfile collector
+ * Expected sources:
+ * - job="node"      node-exporter + textfile collector
  *                     (docker_stats_* gauges, refreshed every 15s)
- * - job="homelab"   homelab-exporter (temperatures, power)
+ * - job="homelab"   host exporter (temperatures, power)
  * - job="cadvisor"  cAdvisor — cgroup-id labels only (no name/image),
  *                     intentionally NOT used for name-keyed metrics
  */

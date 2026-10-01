@@ -14,7 +14,6 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 
 describe("v0.7.13 reboot-persistence configuration (dry-run audit)", () => {
   let goCopy: string;
-  let auditCopy: string;
   let loginCopy: string;
   let deployCopy: string;
   let validateCopy: string;
@@ -27,7 +26,6 @@ describe("v0.7.13 reboot-persistence configuration (dry-run audit)", () => {
   before(async () => {
     dir = await mkdtemp(path.join(tmpdir(), "boot-persistence-test-"));
     goCopy = path.join(dir, "go");
-    auditCopy = path.join(dir, "boot-persistence-audit.sh");
     loginCopy = path.join(dir, "login-ghcr.sh");
     deployCopy = path.join(dir, "deploy-helper.sh");
     validateCopy = path.join(dir, "validate-release.sh");
@@ -43,7 +41,6 @@ describe("v0.7.13 reboot-persistence configuration (dry-run audit)", () => {
       );
     }
     for (const [copy, name] of [
-      [auditCopy, "boot-persistence-audit.sh"],
       [loginCopy, "login-ghcr.sh"],
       [deployCopy, "deploy-helper.sh"],
       [validateCopy, "validate-release.sh"],
@@ -99,16 +96,6 @@ describe("v0.7.13 reboot-persistence configuration (dry-run audit)", () => {
     assert.match(deploy, /UPDATE_HELPER_TOKEN/);
   });
 
-  it("boot-persistence audit script is read-only (no iptables mutations)", async () => {
-    const audit = await readFile(auditCopy, "utf8");
-    assert.match(audit, /DASH8090/);
-    assert.ok(!/-A INPUT/.test(audit));
-    assert.ok(!/-I INPUT/.test(audit));
-    assert.ok(!/-N DASH8090/.test(audit));
-    assert.ok(!/-F DASH8090/.test(audit));
-    assert.match(audit, /Read-only/);
-  });
-
   it("validate-release script asserts digest match without exposing tokens", async () => {
     const validate = await readFile(validateCopy, "utf8");
     assert.match(validate, /RepoDigest matches registry manifest digest/);
@@ -116,11 +103,11 @@ describe("v0.7.13 reboot-persistence configuration (dry-run audit)", () => {
     assert.ok(!/ghp_/.test(validate));
   });
 
-  it("RECOVERY.md documents the remote-pull requirement and the one-step login", async () => {
-    const recovery = await readFile(path.join(repoRoot, "RECOVERY.md"), "utf8");
-    assert.match(recovery, /login-ghcr\.sh/);
-    assert.match(recovery, /validate-release\.sh/);
-    assert.match(recovery, /Operations page|operations/i);
+  it("UPDATING.md documents the remote-pull requirement and the one-step login", async () => {
+    const updating = await readFile(path.join(repoRoot, "docs", "UPDATING.md"), "utf8");
+    assert.match(updating, /login-ghcr\.sh/);
+    assert.match(updating, /digest/i);
+    assert.match(updating, /roll ?back/i);
   });
 
   it("SECURITY.md states the pipeline-owned trust model and no-PAT-leak rule", async () => {

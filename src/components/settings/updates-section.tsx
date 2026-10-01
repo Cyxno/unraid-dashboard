@@ -420,7 +420,7 @@ export function UpdatesSection() {
                     boot persistence:{" "}
                     {data.releaseChain.bootPersistence.verifiedAt
                       ? `${data.releaseChain.bootPersistence.passed ? "verified" : "FAILED"} at ${formatDateTimeIso(data.releaseChain.bootPersistence.verifiedAt)} (audit script)`
-                      : "not verified yet — run scripts/boot-persistence-audit.sh after a reboot"}
+                      : "not verified yet — run the boot persistence audit after a reboot"}
                   </span>
                 </div>
               </div>

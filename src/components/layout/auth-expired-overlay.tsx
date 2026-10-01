@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { KeyRound, LogIn, RefreshCw } from "lucide-react";
+import { KeyRound, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { onAuthChange, isAuthExpired, probeAuthAlive } from "@/lib/auth-state";
 
 /**
- * Full-screen "Authentication required" state (v0.7.2).
+ * Full-screen "Authentication required" state.
  *
  * Rendered inside the app shell when the proxy session has expired:
  * polling loops are paused, the last-known UI is replaced by one clear
@@ -52,19 +52,13 @@ export function AuthExpiredOverlay() {
         <KeyRound className="mx-auto size-8 text-warning" aria-hidden="true" />
         <h1 className="mt-3 text-lg font-semibold">Authentication required</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Your dashboard session has expired. Sign in again through the
+          Your dashboard session has expired. Sign in again through your
           single sign-on portal — live data stays paused until then.
-          Kiosk boards resume automatically after sign-in.
+          Open boards resume automatically once the session is valid again.
         </p>
         <div className="mt-4 flex flex-col items-center gap-2">
-          <Button asChild size="sm">
-            <a href="https://auth.familievalk.com" target="_blank" rel="noreferrer">
-              <LogIn aria-hidden="true" /> Open sign-in portal
-            </a>
-          </Button>
           <Button
             size="sm"
-            variant="ghost"
             onClick={() => {
               void probeAuthAlive().then((alive) => {
                 if (alive) window.location.reload();
@@ -77,8 +71,8 @@ export function AuthExpiredOverlay() {
           </Button>
         </div>
         <p className="mt-3 text-[11px] text-muted-foreground">
-          Tip for always-on displays: sign in with “Remember me” checked — the
-          session then lasts one month (Authelia policy).
+          Tip for always-on displays: use “Remember me” on your sign-in
+          portal to stay signed in longer.
         </p>
       </div>
     </div>

@@ -49,12 +49,12 @@ const envSchema = z.object({
    */
   AUTH_TRUSTED_PROXIES: z.string().default(""),
 
-  /* ---- v0.4: write actions (default OFF; requires the action key) ---- */
+  /* ---- write actions (default OFF; requires the action key) ---- */
 
   /**
    * Separate, narrowly scoped Unraid key for lifecycle mutations
-   * (GUEST role + DOCKER:UPDATE_ANY,VMS:UPDATE_ANY only). Never the
-   * read key; never sent to the browser; never logged.
+   * (DOCKER:UPDATE_ANY only — the only write permission Beacon needs).
+   * Never the read key; never sent to the browser; never logged.
    */
   UNRAID_ACTION_API_KEY: z.string().min(1).optional(),
   /** Master switch for write actions; actions stay disabled without it. */
