@@ -130,6 +130,7 @@ Browser ──▶ Beacon (Next.js BFF) ──▶ Unraid GraphQL API
 | [docs/ROADMAP.md](docs/ROADMAP.md) | direction and known limitations |
 | [docs/V1_UPGRADE.md](docs/V1_UPGRADE.md) | upgrading from 0.9.x to the 1.0 line |
 | [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) | release-blocker definition |
+| [docs/RELEASE_NOTES_v1.md](docs/RELEASE_NOTES_v1.md) | v1.0 release notes |
 
 ## Security model (summary)
 
