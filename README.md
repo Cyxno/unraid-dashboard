@@ -61,29 +61,36 @@ data is included.
 More screenshots — overview, system, automation, settings, changelog and the
 NOC wallboard — are available in [docs/screenshots/](docs/screenshots/).
 
-## Quick start
+## Install Beacon
 
-You need an Unraid 7.x server, Docker and one read-only API key.
+Beacon is one product shipped as two containers: the **dashboard** (the web
+app) and an optional, localhost-only **update helper** — the only component
+with Docker-socket access, used for verified in-app updates and automatic
+rollback.
+
+The compose bundle installs both as one stack (amd64 images):
 
 ```sh
-# 1. Create an Unraid API key with read-only access
-#    (Unraid → Settings → Management Access → API Keys).
-# 2. Run the container (the Unraid Docker tab → Add Container works too):
-docker run -d --name unraid-dashboard \
-  --network host \
-  --restart unless-stopped \
-  -e UNRAID_URL="http://127.0.0.1:442" \
-  -e UNRAID_API_KEY="<your read-only key>" \
-  -e PORT=8090 \
-  -v /mnt/user/appdata/unraid-dashboard:/app/data \
-  ghcr.io/cyxno/unraid-dashboard:latest
-# 3. Open http://<server>:8090
+git clone https://github.com/Cyxno/unraid-dashboard.git
+cd unraid-dashboard
+cp .env.example .env
+# edit .env: set UNRAID_API_KEY (read-only is enough) and — for in-app
+# updates — UPDATE_HELPER_TOKEN (openssl rand -hex 32)
+docker compose up -d
 ```
 
-Prefer Docker Compose? The [docker-compose.yml](docker-compose.yml) in the
-repository root is a ready-to-use starting point. Prometheus, in-app
-updates, lifecycle actions and reverse-proxy auth are optional — the full
-walkthrough is in [docs/INSTALL.md](docs/INSTALL.md).
+Open `http://<server>:8090`. Full walkthrough, including the key setup:
+[docs/INSTALL.md](docs/INSTALL.md).
+
+Other supported paths:
+
+- **Unraid 7.2+** — Docker → Compose → Add New Stack, paste
+  [docker-compose.yml](docker-compose.yml).
+- **Unraid Community Applications** — install the **unraid-dashboard**
+  template (Apps-tab updates); see
+  [templates/README.md](templates/README.md) for the two-container story.
+- **Plain Docker** — a single `docker run` for the dashboard only
+  ([docs/INSTALL.md](docs/INSTALL.md), path D).
 
 ## Demo mode
 

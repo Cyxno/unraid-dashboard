@@ -14,6 +14,75 @@
   It is a separate, tiny container and the **only** component with access to
   the Docker socket.
 
+## Choose an install path
+
+Beacon is one product shipped as two containers: the **dashboard** (the web
+app) and the optional **update helper** (the only component with Docker
+access, used for verified in-app updates and automatic rollback).
+
+| Path | Gets you | Best for |
+| --- | --- | --- |
+| **A. Compose bundle** (recommended) | dashboard + helper as one stack | any Docker host, Unraid 7.2+ |
+| **B. Unraid Compose stack** | same bundle via the Docker tab UI | Unraid 7.2+ without git |
+| **C. Community Applications** | dashboard as a normal Unraid app | Apps-tab users; updates via Unraid |
+| **D. Plain `docker run`** | dashboard only | minimal/manual setups |
+
+## Path A — compose bundle (recommended)
+
+```sh
+git clone https://github.com/Cyxno/unraid-dashboard.git
+cd unraid-dashboard
+cp .env.example .env
+# edit .env: set UNRAID_API_KEY (read-only is enough) and, for in-app
+# updates, UPDATE_HELPER_TOKEN (generate once with: openssl rand -hex 32)
+docker compose up -d
+```
+
+The bundle starts both containers as one product:
+
+- `unraid-dashboard` — the web app on `http://<server>:8090` (host
+  networking, so it reaches the Unraid API and Prometheus on localhost).
+- `unraid-dashboard-helper` — localhost-only update helper. It is wired to
+  the dashboard automatically; you only provide the shared
+  `UPDATE_HELPER_TOKEN` in `.env` (never committed, never logged). Without a
+  valid token the helper runs fail-closed and Settings → Updates says so.
+- Both containers use `BEACON_TAG` (default `latest`) so the stack upgrades
+  in lockstep; pin a release in `.env` (e.g. `BEACON_TAG=1.1.1`) for
+  stability. Images are amd64.
+- Persistent state lives under `APPDATA_PATH`
+  (default `/mnt/user/appdata/unraid-dashboard`). The dashboard container
+  runs as uid 1001 — `chown 1001:1001` the directory if it cannot write.
+
+**Upgrading the stack:** `docker compose pull && docker compose up -d`, or
+pin `BEACON_TAG` to a release. In-app updates (via the helper) also work on
+a compose install: they recreate the container with identical configuration
+and roll back automatically on failure. To stop only the dashboard while
+keeping the helper: `docker compose stop unraid-dashboard` — and the other
+way around; each container is useful on its own.
+
+## Path B — Unraid 7.2+ Compose stack (no git)
+
+Unraid 7.2 and later manage compose stacks natively:
+
+1. **Docker → Compose → Add New Stack**, name it `beacon`.
+2. Paste [`docker-compose.yml`](../docker-compose.yml) as the compose file.
+3. Create the `.env` next to the stack with `UNRAID_API_KEY` (and
+   `UPDATE_HELPER_TOKEN` for in-app updates).
+4. Start the stack and open `http://<server>:8090`.
+
+## Path C — Community Applications
+
+The Apps tab installs one container per template, so Beacon ships two
+canonical templates in [`templates/`](../templates/README.md):
+
+- Install **unraid-dashboard** for the dashboard (image updates then flow
+  through Unraid's own Apps-tab mechanism).
+- Optionally install **unraid-dashboard-helper** for verified in-app
+  updates. It serves `127.0.0.1:8790` only by design, so it pairs with the
+  compose bundle or a host-network dashboard — see the template overview.
+- Create the read-only Unraid API key as described below and paste it into
+  the masked **Unraid API key** field.
+
 ## 1. Create the Unraid API key
 
 Unraid → **Settings → Management Access → API Keys** → create a key for Beacon.
@@ -25,10 +94,9 @@ dashboards.
 Keep this key secret — it is stored server-side by the Beacon container and
 never sent to the browser.
 
-## 2. Install the container
+## 2. Install the container (plain `docker run`)
 
-Unraid → Docker → Add Container using the Beacon template, or equivalent
-`docker run`:
+Path D — equivalent to the compose bundle for the dashboard alone:
 
 ```sh
 docker run -d --name unraid-dashboard \
@@ -45,6 +113,10 @@ docker run -d --name unraid-dashboard \
   localhost; the web UI listens on `PORT` (default 8090).
 - `/app/data` stores dashboards, update history and automation state — put it
   on appdata so it survives container replacement.
+- Unraid → Docker → Add Container with the
+  [`templates/unraid-dashboard.xml`](../templates/unraid-dashboard.xml)
+  template produces the same container (bridge network; point `UNRAID_URL`
+  at the tower's IP in that case).
 
 Open `http://<server>:8090`. Done — everything else is optional.
 
@@ -71,15 +143,25 @@ mutation.
 
 ## 5. Optional: in-app updates (helper)
 
-The update helper is a separate container with the Docker socket. Install it
-per its own README, then set on Beacon:
+With the compose bundle (paths A/B) the helper is already part of the stack —
+you only set `UPDATE_HELPER_TOKEN` in `.env`. For standalone installs
+(paths C/D), deploy it once:
+
+```sh
+UPDATE_HELPER_TOKEN=$(openssl rand -hex 32) scripts/deploy-helper.sh
+```
+
+then set on Beacon:
 
 - `UPDATE_HELPER_URL` (e.g. `http://127.0.0.1:8790`)
-- `UPDATE_HELPER_TOKEN` (shared secret, root-only file recommended)
+- `UPDATE_HELPER_TOKEN` (the same secret; stored server-side only)
 
-With the helper configured, Settings → Updates offers in-app updates with
-digest verification and automatic rollback. Without it, updates are performed
-host-side with `scripts/update-dashboard.sh`.
+The helper binds `127.0.0.1:8790` only, is the **only** component with
+Docker-socket access, and refuses every request (fail-closed) unless the
+token is set. It updates only the `unraid-dashboard` container, semver tags
+only. With the helper configured, Settings → Updates offers in-app updates
+with digest verification and automatic rollback. Without it, updates are
+performed host-side with `scripts/update-dashboard.sh`.
 
 ## 6. Optional: Agent API
 
