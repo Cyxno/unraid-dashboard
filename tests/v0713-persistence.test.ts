@@ -60,9 +60,12 @@ describe("v0.7.13 reboot-persistence configuration (dry-run audit)", () => {
     assert.ok(!/dport 22\b/.test(goSource));
   });
 
-  it("the go file installed on THIS host is syntactically valid bash", async () => {
+  it("the go file installed on THIS host is syntactically valid bash", async (t) => {
+    // Host-state smoke check: only meaningful where /boot exists (Unraid).
+    // Anywhere else this is a clean skip, not a failure — CI runs the
+    // fixture path above instead.
     await access(hostGo).catch(() => {
-      assert.fail("not running on the Unraid host — fixture path used in CI");
+      t.skip("only runs on the Unraid host (fixture path used in CI)");
     });
   });
 

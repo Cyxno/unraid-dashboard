@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
-import { mkdtemp, writeFile, rm, readFile, chmod } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, readFile, chmod, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -67,7 +67,17 @@ describe("v0.7.14 invalid-credential path (controlled, process level)", () => {
 
   // Uses an ISOLATED bogus Docker config — never touches the real
   // credential, never mutates anything (pull is read-only at the registry).
-  it("an invalid credential produces a clear auth failure and no fallback mutation", async () => {
+  // Live-external by nature (real registry, real docker CLI): skipped where
+  // docker is unavailable, generous timeout so a cold pull never flakes.
+  it("an invalid credential produces a clear auth failure and no fallback mutation", async (t) => {
+    const hasDocker = await access("/usr/bin/docker")
+      .then(() => true)
+      .catch(() =>
+        access("/usr/local/bin/docker")
+          .then(() => true)
+          .catch(() => false),
+      );
+    if (!hasDocker) t.skip("docker CLI required (GitHub Actions / Unraid host)");
     dir = await mkdtemp(path.join(tmpdir(), "bogus-docker-cred-"));
     await writeFile(
       path.join(dir, "config.json"),
@@ -75,7 +85,7 @@ describe("v0.7.14 invalid-credential path (controlled, process level)", () => {
     );
     await chmod(dir, 0o700);
     try {
-      await run("docker", ["--config", dir, "pull", "ghcr.io/cyxno/unraid-dashboard:0.7.13"], { timeout: 60_000 });
+      await run("docker", ["--config", dir, "pull", "ghcr.io/cyxno/unraid-dashboard:0.7.13"], { timeout: 180_000 });
       assert.fail("pull with an invalid credential must fail");
     } catch (error) {
       const message = String((error as { stderr?: string }).stderr ?? (error as Error).message);
