@@ -1,24 +1,86 @@
-# Quick-start Compose file for Beacon (image/repo name: unraid-dashboard).
-# See docs/INSTALL.md for the full walkthrough (API key, Prometheus, proxy auth).
+# =============================================================================
+# Beacon — official install bundle: dashboard + update helper in ONE stack.
 #
-# Host networking lets the container reach the Unraid GraphQL API and
-# Prometheus on localhost, matching docs/INSTALL.md. The UI listens on $PORT
-# (default 8090), so Beacon is served at http://<server>:8090.
+# Beacon is one product shipped as two cooperating containers:
+#
+#   unraid-dashboard          the web app (UI + API backend), http://<server>:8090
+#   unraid-dashboard-helper   localhost-only update helper — the ONLY component
+#                             with Docker-socket access (verified updates,
+#                             automatic rollback)
+#
+# Both images are released in lockstep; BEACON_TAG moves the whole stack as
+# one product (amd64 images — see docs/INSTALL.md for platform support).
+# Unraid 7.2+ alternative: Docker tab → Compose → Add New Stack and paste
+# this file. Full walkthrough: docs/INSTALL.md.
+#
+# Quick start:
+#   cp .env.example .env   # set UNRAID_API_KEY (and UPDATE_HELPER_TOKEN)
+#   docker compose up -d
+# =============================================================================
 
 services:
   unraid-dashboard:
-    image: ghcr.io/cyxno/unraid-dashboard:latest
+    image: ghcr.io/cyxno/unraid-dashboard:${BEACON_TAG:-latest}
+    # Fixed name: it is the helper's update target (TARGET_CONTAINER below).
     container_name: unraid-dashboard
     restart: unless-stopped
+    # Host networking lets the dashboard reach the Unraid GraphQL API,
+    # Prometheus and the helper on localhost, matching docs/INSTALL.md.
     network_mode: host
     environment:
       # Where the Unraid GraphQL API lives.
       UNRAID_URL: ${UNRAID_URL:-http://127.0.0.1:442}
-      UNRAID_API_KEY: ${UNRAID_API_KEY:?set UNRAID_API_KEY in .env or your environment}
+      UNRAID_API_KEY: ${UNRAID_API_KEY:?set UNRAID_API_KEY in .env (a read-only key is enough)}
       PORT: ${PORT:-8090}
-      # Optional: Prometheus server for time-series metrics, history, thermals.
+      # Optional: Prometheus for time-series metrics, history, thermals.
       # PROMETHEUS_URL: http://127.0.0.1:9090
+      # Update helper wiring (part of this stack).
+      UPDATE_HELPER_URL: http://127.0.0.1:8790
+      UPDATE_HELPER_TOKEN: ${UPDATE_HELPER_TOKEN:-}
+      # Reverse-proxy auth only (docs/INSTALL.md § proxy auth):
+      # AUTH_MODE: proxy
+      # AUTH_PROXY_SECRET: ${AUTH_PROXY_SECRET}
+      # AUTH_PROXY_SECRET_HEADER: X-Dashboard-Auth-Token
+      # AUTH_HEADER: X-Forwarded-User
     volumes:
-      # Dashboards, update history and audit log — keep on appdata so they
-      # survive container replacement.
+      # Dashboards, update history and audit log — survives container
+      # replacement. The container runs as uid 1001; chown the host directory
+      # to 1001:1001 if the dashboard cannot write it.
       - ${APPDATA_PATH:-/mnt/user/appdata/unraid-dashboard}:/app/data
+      # Read-only ownership note: nothing else is mounted.
+
+  unraid-dashboard-helper:
+    image: ghcr.io/cyxno/unraid-dashboard-helper:${BEACON_TAG:-latest}
+    container_name: unraid-dashboard-helper
+    restart: unless-stopped
+    # Host networking + in-app binding: the helper serves 127.0.0.1:8790
+    # ONLY — it is never reachable from other machines.
+    network_mode: host
+    environment:
+      # Shared secret, same value as the dashboard's. Fail-closed: without a
+      # valid 32+ char token the helper refuses every request. Generate once:
+      #   openssl rand -hex 32   → paste as UPDATE_HELPER_TOKEN in .env
+      UPDATE_HELPER_TOKEN: ${UPDATE_HELPER_TOKEN:-}
+      # Deployment constants — what the helper may update (semver tags only):
+      TARGET_CONTAINER: unraid-dashboard
+      TARGET_IMAGE_REPO: ghcr.io/cyxno/unraid-dashboard
+      DASHBOARD_PORT: ${PORT:-8090}
+      HELPER_PORT: 8790
+      STATE_DIR: /helper-state
+      # AUTH_MODE=proxy only — lets the helper verify dashboard health:
+      # DASHBOARD_AUTH_SECRET: ${DASHBOARD_AUTH_SECRET:-}
+      # Opt-in: allow compose-project updates for stacks whose working dir is
+      # mounted read-only below (container updates work without this).
+      # COMPOSE_ALLOWED_ROOTS: /mnt/user/appdata/compose-stacks
+    volumes:
+      # The helper is the ONLY component with Docker access.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Persistent update state (snapshots/jobs) — required for proven rollback.
+      - ${APPDATA_PATH:-/mnt/user/appdata/unraid-dashboard}/helper-state:/helper-state
+      # Optional: read-only compose working-dir mounts must match
+      # COMPOSE_ALLOWED_ROOTS one-to-one, e.g.:
+      # - /mnt/user/appdata/compose-stacks:/mnt/user/appdata/compose-stacks:ro
+
+# No depends_on: each container is useful on its own. The dashboard detects a
+# missing helper and degrades gracefully (Settings → Updates explains why);
+# stopping the helper never affects the running dashboard.
