@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Container version="2">
+  <Name>unraid-dashboard-helper</Name>
+  <Repository>ghcr.io/cyxno/unraid-dashboard-helper:latest</Repository>
+  <Registry>https://github.com/Cyxno/unraid-dashboard/pkgs/container/unraid-dashboard-helper</Registry>
+  <Network>host</Network>
+  <Shell>sh</Shell>
+  <Support>https://github.com/Cyxno/unraid-dashboard/issues</Support>
+  <Project>https://github.com/Cyxno/unraid-dashboard</Project>
+  <Overview>Beacon update helper — the optional second half of Beacon. It is the ONLY component with Docker-socket access and performs strict, verified dashboard updates: registry digest match, full config preservation, health checks and automatic rollback. It serves 127.0.0.1:8790 only (token-authenticated, fail-closed without a token) and has no web UI — it is managed from Beacon's Settings → Updates. Note: the helper listens on localhost only, so a bridge-network dashboard cannot reach it; pair it with the compose bundle (recommended, docs/INSTALL.md) or a host-network dashboard.</Overview>
+  <Category>Tools:Utilities</Category>
+  <WebUI></WebUI>
+  <Icon>https://raw.githubusercontent.com/Cyxno/unraid-dashboard/main/public/icon-source.svg</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/Cyxno/unraid-dashboard/main/templates/unraid-dashboard-helper.xml</TemplateURL>
+  <Requires>ghcr.io/cyxno/unraid-dashboard (the Beacon dashboard container)</Requires>
+  <Config Name="Docker socket" Target="/var/run/docker.sock" Default="/var/run/docker.sock" Mode="rw" Description="Container Path: /var/run/docker.sock — the helper is the only Beacon component with Docker access" Type="Path" Display="always" Required="true" Mask="false"/>
+  <Config Name="Helper state" Target="/helper-state" Default="/mnt/user/appdata/unraid-dashboard/helper-state" Mode="rw" Description="Container Path: /helper-state — persistent update snapshots and job state (required for proven rollback)" Type="Path" Display="always" Required="true" Mask="false"/>
+  <Config Name="Update helper token" Target="UPDATE_HELPER_TOKEN" Default="" Mode="" Description="Container Variable: UPDATE_HELPER_TOKEN — shared secret (min 32 chars, openssl rand -hex 32); set the SAME value in the dashboard container. Fail-closed without it." Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="Dashboard port" Target="DASHBOARD_PORT" Default="8090" Mode="" Description="Container Variable: DASHBOARD_PORT — port of the dashboard container on the host" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="Target container" Target="TARGET_CONTAINER" Default="unraid-dashboard" Mode="" Description="Container Variable: TARGET_CONTAINER — the only container this helper may update" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+</Container>

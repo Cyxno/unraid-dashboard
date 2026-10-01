@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Container version="2">
+  <Name>unraid-dashboard</Name>
+  <Repository>ghcr.io/cyxno/unraid-dashboard:latest</Repository>
+  <Registry>https://github.com/Cyxno/unraid-dashboard/pkgs/container/unraid-dashboard</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Support>https://github.com/Cyxno/unraid-dashboard/issues</Support>
+  <Project>https://github.com/Cyxno/unraid-dashboard</Project>
+  <Overview>Beacon — a modern, self-hosted operations dashboard for Unraid: Docker, storage, VMs, network and system health in one dark-first, installable web app (PWA). Read-only first: dashboards run on a read-only API key, the key never leaves the server, and every mutation is confirmed and audit-logged. This template installs the dashboard container; for the full one-stack install (dashboard + verified-update helper) use the compose bundle in the repository (docs/INSTALL.md) or Unraid 7.2+ Docker → Compose.</Overview>
+  <Category>Tools:Utilities</Category>
+  <WebUI>http://[IP]:[PORT:8090]/</WebUI>
+  <Icon>https://raw.githubusercontent.com/Cyxno/unraid-dashboard/main/public/icon-source.svg</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/Cyxno/unraid-dashboard/main/templates/unraid-dashboard.xml</TemplateURL>
+  <Config Name="Web UI port" Target="8090" Default="8090" Mode="tcp" Description="Host port for the Beacon web UI" Type="Port" Display="always" Required="true" Mask="false"/>
+  <Config Name="Unraid API URL" Target="UNRAID_URL" Default="" Description="Container Variable: UNRAID_URL — Unraid 7.2+ built-in API: http://tower.local (WebGUI host); standalone API plugin: http://tower.local:3005" Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="Unraid API key" Target="UNRAID_API_KEY" Default="" Description="Container Variable: UNRAID_API_KEY — read-only key from Unraid Settings → Management Access → API Keys. Stored server-side only." Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="Appdata" Target="/app/data" Default="/mnt/user/appdata/unraid-dashboard" Mode="rw" Description="Container Path: /app/data — dashboards, update history and audit log" Type="Path" Display="always" Required="true" Mask="false"/>
+  <Config Name="Prometheus URL" Target="PROMETHEUS_URL" Default="" Description="Container Variable: PROMETHEUS_URL — optional; enables history charts, per-container metrics and thermal intelligence" Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="Listen port (container)" Target="PORT" Default="8090" Mode="" Description="Container Variable: PORT — port the app listens on inside the container; keep equal to the Web UI port" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="Reverse proxy auth mode" Target="AUTH_MODE" Default="" Description="Container Variable: AUTH_MODE — set to proxy when Beacon runs behind an authenticating reverse proxy (docs/INSTALL.md)" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="Proxy auth secret" Target="AUTH_PROXY_SECRET" Default="" Description="Container Variable: AUTH_PROXY_SECRET — shared secret your reverse proxy injects (AUTH_MODE=proxy only)" Type="Variable" Display="advanced" Required="false" Mask="true"/>
+  <Config Name="Agent API token" Target="AGENT_API_TOKEN" Default="" Description="Container Variable: AGENT_API_TOKEN — optional; enables the read-only machine API under /api/agent/v1 (min 32 chars)" Type="Variable" Display="advanced" Required="false" Mask="true"/>
+</Container>
