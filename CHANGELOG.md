@@ -3,6 +3,20 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.1.1
+
+### Improved
+
+- Public-release polish: README restructured as a project landing page with a curated, correctly-proportioned screenshot showcase and a quick start
+- SECURITY.md rewritten for a public audience, with a vulnerability-reporting section and genericized trust model
+- Curated screenshots re-captured from the synthetic demo dataset (viewport aspect ratios, desktop and mobile presented separately)
+- Operator-specific files and references removed from the repository (recovery runbook, scratch scripts, stale example values)
+
+### Fixed
+
+- Auth-expired overlay no longer links to a hardcoded sign-in portal; re-authentication relies on your proxy's normal sign-in flow
+- Three pre-existing eslint errors resolved (changelog deep-link effect annotation, unescaped apostrophe, test import style)
+
 ## v1.1.0
 
 ### Added
