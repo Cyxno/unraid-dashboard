@@ -88,20 +88,11 @@ describe("v0.7.14 invalid-credential path (controlled, process level)", () => {
     }
   });
 
-  it("the anonymous path is also rejected (package stays private)", async () => {
-    dir = await mkdtemp(path.join(tmpdir(), "anon-docker-cred-"));
-    await writeFile(path.join(dir, "config.json"), JSON.stringify({ auths: {} }));
-    await chmod(dir, 0o700);
-    try {
-      await run("docker", ["--config", dir, "pull", "ghcr.io/cyxno/unraid-dashboard:0.7.13"], { timeout: 60_000 });
-      assert.fail("anonymous pull of a private package must fail");
-    } catch (error) {
-      const message = String((error as { stderr?: string }).stderr ?? (error as Error).message);
-      assert.match(message, /unauthorized|denied|403|401/i);
-    } finally {
-      await rm(dir, { recursive: true, force: true }).catch(() => {});
-    }
-  });
+  // Note: the former "anonymous pull is rejected (package stays private)"
+  // subtest is gone — the GHCR packages are public now, so an anonymous pull
+  // legitimately succeeds. The no-fallback invariant is covered above: an
+  // INVALID credential still fails the pull and the helper never substitutes
+  // a different image.
 });
 
 describe("v0.7.14 secret redaction in new surfaces", () => {
