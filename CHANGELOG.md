@@ -1,103 +1,195 @@
 # Changelog
 
-All notable changes to Beacon. Versions follow semver-ish 0.9.x increments;
-each entry summarizes user-visible changes.
+All notable Beacon releases, newest first. Groups are optional per release;
+only non-empty groups are shown. No dates — versions are ordered by semver.
 
-## v0.9.12 — layout flow + docs
+## v1.1.0
 
-- Overview rebuilt on independent column stacks: no more blank bands under
-  shorter cards; content packs continuously like an operations dashboard.
-- Settings rebalanced so both columns stay meaningfully populated; card order
-  leads with everyday settings.
-- Docker section anchors now expand, mount, scroll to and highlight the target
-  section in one click (secondary sections stay lazy — page entry still never
-  triggers a registry sweep).
-- Column-imbalance layout gates added to the visual harness; demo-mode payload
-  hardening (no crash on missing update summary).
-- Public-facing documentation overhaul: README, install/configuration/updating/
-  security/architecture/troubleshooting/roadmap docs, changelog, contributing
-  guide, issue templates, curated demo screenshots.
+### Added
 
-## v0.9.11 — thermal intelligence + capability-aware automation
+- In-app Changelog page (`/changelog`) with release history, current-version highlight and deep links
 
-- Idle-hot episode classification ("elevated temperature with low observed
-  load"), window-median power baseline.
-- 7-day thermal context: previous-week average + week-over-week delta, data
-  coverage ratio, recent sustained-episode list.
-- Automation: normalized per-workflow eligibility (update-helper,
-  lifecycle-start/stop, restart) with specific blockers; computed live so a
-  removed action key flips surfaces everywhere with no stale Ready.
-- Agent API: read-only thermal context block.
+## v1.0.1
 
-## v0.9.10 — unified actions + capability model
+### Fixed
 
-- One shared verified-action controller for the Docker list and the container
-  detail page (confirm → request → SSE/poll → timeout → feedback).
-- Normalized action capability model served by /api/actions/status and reused
-  everywhere; restart/pause permanently false.
-- PWA secret hygiene: env variable names removed from client bundles.
+- Service worker version now follows the deployed release version, preventing installed PWA clients from retaining an older shell
 
-## v0.9.9 — live actions readiness + update awareness
+## v1.0.0
 
-- Action state machine with bounded transition verification (SSE
-  state-transition event + polling fallback); visible timeout states.
-- Cached update summary endpoint (~3 ms): Docker page shows an Updates badge
-  and collapsed summary without triggering the registry sweep.
-- Health reasons ranked critical-first; header health badge opens an
-  explanation popover. Unraid API verified live: start/stop only, no restart.
+### Added
 
-## v0.9.8 / v0.9.7 — layout system + memory semantics + PWA identity
+- Operational Unraid dashboard: overview, Docker operations, storage, system, network, VMs, notifications, logs, audit and NOC wallboard
+- Docker lifecycle actions (start/stop) with confirmation, live verification and audit trail
+- Storage monitoring with per-disk status and temperatures
+- Thermal intelligence: 24h analysis, 7-day context, hot-episode correlation and idle-hot detection
+- Capability-aware Automation with opt-in pilot auto-updates and proven rollback
+- Strict verified updates: registry digest match, automatic rollback, provenance badge
+- Installable PWA with offline shell and mobile-first navigation
+- Read-only Agent API v1 for machine integrations
 
-- Spacing tokens, shared layout primitives (PageStack, AdaptiveColumns…),
-  items-start columns, Overview/Settings dead-space fixes.
-- One authoritative --mobile-bottom-clearance; opaque bottom nav.
-- Memory semantics fixed (used = total − available; percent derived) with an
-  enforced invariant — ended contradictory "78% / 60 of 62 GiB" displays.
-- PWA icon cache-busting, root apple-touch-icon, iOS documentation.
+### Security
 
-## v0.9.5 / v0.9.6 — mobile shell + operations-first Docker
+- Credentials stay server-side; the app has no Docker socket (isolated update helper)
+- Every mutation is confirmed, cooldown/rate-limited and audit-logged
+- Reverse-proxy auth with shared secret or trusted-LAN model
 
-- Mobile bottom nav + More sheet, safe-area system, scroll locks, drawer
-  semantics; Views control only where it applies.
-- Docker page rebuilt operations-first: containers first, Updates/Projects/
-  History lazy, anchor row, operational sort, mobile cards.
-- Visual harness with overflow + overlay fit + semantic layout gates.
+## v1.0.0-rc1
 
-## v0.9.4 — Agent API
+### Developer
 
-- Read-only machine API under /api/agent/v1 (bearer auth, rate limits, issue
-  engine, capability facts). No write endpoints, enforced by tests.
+- Release candidate: added semver prerelease support to the strict update train
+- Validated persistence migration and rollback against production data
+- Completed release-hardening, security and recovery audits
 
-## v0.9.3 — interaction safety + automation SSE
+## v0.9.16
 
-- Confirmation/cooldown/rate-limit surfaces, automation evaluations via SSE,
-  NOC per-widget customization.
+### Fixed
 
-## v0.9.2 — correctness
+- Finalized one-click Docker section navigation
+- Improved scroll settling on dynamically expanding sections
 
-- Health/banner fixes, update-awareness chips, stale-shell version handling.
+## v0.9.15
 
-## v0.9.1 — visual regression harness
+### Fixed
 
-- Screenshot + overflow gates across pages/themes/breakpoints.
+- Anchor sections now follow lazily mounted content as it grows
 
-## v0.9.0 — Beacon identity
+## v0.9.14
 
-- Product naming, design tokens, 8 themes + accents, appearance system, PWA
-  foundation.
+### Fixed
 
-## 1.x policy (effective v1.0.0)
+- Page footer clears the mobile bottom navigation like main content
 
-From v1.0.0 onward the changelog documents, per release: **breaking changes**
-(any change requiring configuration/data/action), **security changes**,
-**deprecations** (with removal timelines), and **migration notes**. Minor
-versions add features backward-compatibly; patch versions are fixes only.
-The Agent API is additive-only: existing endpoints and response fields are
-never removed or repurposed within a major version.
+## v0.9.13
 
-## v0.9.16 — v0.9.12 line completion
+### Improved
 
-See the v0.9.12 entry above (layout flow, Docker section navigation, docs
-overhaul) plus follow-up fixes: settings balance from production
-measurements, anchor settled-position scrolling, docs screenshot
-regeneration.
+- Settings columns balanced using measured production content heights
+
+## v0.9.12
+
+### Fixed
+
+- Overview dead bands: independent column stacks replace row-coupled grids
+- Settings columns rebalanced so both stay populated
+- Docker anchors expand, mount, scroll and highlight in one action
+
+### Added
+
+- Public documentation overhaul: install, configuration, updating, security, architecture, troubleshooting, roadmap
+- Demo mode documentation and curated screenshot workflow
+- Layout gates for column balance and section spacing
+
+## v0.9.11
+
+### Added
+
+- Thermal intelligence: 7-day context, hot-episode correlation with top consumers, idle-hot detection
+- Capability-aware Automation with per-workflow eligibility and specific blockers
+- Read-only thermal context in the Agent API
+
+### Improved
+
+- Health reasons ranked critical-first with a tap-to-explain popover
+
+## v0.9.10
+
+### Added
+
+- Unified verified action controller shared by the Docker list and container detail
+- 7-day thermal context and normalized action capability model
+
+### Fixed
+
+- Contradictory memory figures (percent now derived from used/total)
+
+## v0.9.9
+
+### Added
+
+- Docker action readiness with bounded transition verification
+- Cached update awareness: Updates badge and summary without registry sweeps
+
+### Improved
+
+- Health explanation surfaced directly in the header
+
+## v0.9.8
+
+### Fixed
+
+- Mobile footer clearance under the bottom navigation
+- Bottom navigation made opaque so content no longer shows through
+
+### Improved
+
+- PWA icon cache-busting and iOS identity documentation
+
+## v0.9.7
+
+### Added
+
+- Layout primitives and spacing tokens shared across pages
+
+### Fixed
+
+- Overview and Settings dead space from grid stretching
+- Contradictory RAM usage figures
+- PWA service-worker and icon staleness
+
+## v0.9.6
+
+### Fixed
+
+- Mobile anchor and section-navigation interactions
+- Visual defects caught by the new layout gates
+
+## v0.9.5
+
+### Added
+
+- Operations-first Docker layout groundwork
+
+### Fixed
+
+- Mobile navigation and sheet fixes
+
+## v0.9.4
+
+### Added
+
+- Read-only Agent API v1 under /api/agent/v1
+
+## v0.9.3
+
+### Added
+
+- Safe notification bulk operations
+- Automation evaluation streaming via SSE
+- NOC per-widget customization
+
+## v0.9.2
+
+### Fixed
+
+- Release and version correctness
+- Faster automation state updates
+- Docker list prioritization
+- Notification and log improvements
+
+## v0.9.1
+
+### Added
+
+- Storage page redesign
+- NOC wallboard redesign
+- Visual regression tooling
+
+## v0.9.0
+
+### Added
+
+- Beacon branding and identity
+- 8 themes with accent system
+- PWA foundation and installable shell

@@ -19,6 +19,7 @@ import {
   formatDateTimeIso,
   formatUptime,
 } from "@/lib/utils";
+import Link from "next/link";
 import { PageHeader, LoadingPanel } from "@/components/dashboard/page-primitives";
 import { describeDockerCapabilities, normalizeActionCapabilities } from "@/lib/action-capabilities";
 import { AdaptiveColumns, PageStack, SectionRule } from "@/components/dashboard/layout-primitives";
@@ -204,6 +205,11 @@ function AboutAndDiagnostics() {
                     {pwa.sw}
                   </Badge>
                   {pwa.updateReady && <Badge variant="warning">update ready</Badge>}
+                </DiagnosticsRow>
+                <DiagnosticsRow label="Changelog">
+                  <Link href="/changelog" className="text-primary hover:underline">
+                    What's changed in Beacon
+                  </Link>
                 </DiagnosticsRow>
                 <DiagnosticsRow label="App mode">
                   <Badge variant={pwa.standalone ? "success" : "muted"}>

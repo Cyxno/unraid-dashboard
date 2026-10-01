@@ -32,6 +32,7 @@ const SHOTS = [
   { file: "system-thermal.png", path: "/system", width: 1440, height: 900, fullPage: true },
   { file: "automation.png", path: "/automation", width: 1440, height: 900, fullPage: true },
   { file: "settings.png", path: "/settings", width: 1440, height: 900, fullPage: true },
+  { file: "changelog.png", path: "/changelog", width: 1440, height: 900, fullPage: true },
   { file: "noc.png", path: "/noc", width: 1920, height: 1080, fullPage: false },
 ];
 

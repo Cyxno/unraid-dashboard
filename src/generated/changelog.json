@@ -1,0 +1,360 @@
+{
+  "generatedFrom": "CHANGELOG.md",
+  "latestVersion": "v1.1.0",
+  "releases": [
+    {
+      "version": "v1.1.0",
+      "anchor": "v1-1-0",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Added",
+          "items": [
+            "In-app Changelog page (`/changelog`) with release history, current-version highlight and deep links"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "v1.0.1",
+      "anchor": "v1-0-1",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "Service worker version now follows the deployed release version, preventing installed PWA clients from retaining an older shell"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "v1.0.0",
+      "anchor": "v1-0-0",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Added",
+          "items": [
+            "Operational Unraid dashboard: overview, Docker operations, storage, system, network, VMs, notifications, logs, audit and NOC wallboard",
+            "Docker lifecycle actions (start/stop) with confirmation, live verification and audit trail",
+            "Storage monitoring with per-disk status and temperatures",
+            "Thermal intelligence: 24h analysis, 7-day context, hot-episode correlation and idle-hot detection",
+            "Capability-aware Automation with opt-in pilot auto-updates and proven rollback",
+            "Strict verified updates: registry digest match, automatic rollback, provenance badge",
+            "Installable PWA with offline shell and mobile-first navigation",
+            "Read-only Agent API v1 for machine integrations"
+          ]
+        },
+        {
+          "name": "Security",
+          "items": [
+            "Credentials stay server-side; the app has no Docker socket (isolated update helper)",
+            "Every mutation is confirmed, cooldown/rate-limited and audit-logged",
+            "Reverse-proxy auth with shared secret or trusted-LAN model"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "v1.0.0-rc1",
+      "anchor": "v1-0-0-rc1",
+      "prerelease": true,
+      "groups": [
+        {
+          "name": "Developer",
+          "items": [
+            "Release candidate: added semver prerelease support to the strict update train",
+            "Validated persistence migration and rollback against production data",
+            "Completed release-hardening, security and recovery audits"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "v0.9.16",
+      "anchor": "v0-9-16",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "Finalized one-click Docker section navigation",
+            "Improved scroll settling on dynamically expanding sections"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "v0.9.15",
+      "anchor": "v0-9-15",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "Anchor sections now follow lazily mounted content as it grows"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "v0.9.14",
+      "anchor": "v0-9-14",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "Page footer clears the mobile bottom navigation like main content"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "v0.9.13",
+      "anchor": "v0-9-13",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Improved",
+          "items": [
+            "Settings columns balanced using measured production content heights"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "v0.9.12",
+      "anchor": "v0-9-12",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "Overview dead bands: independent column stacks replace row-coupled grids",
+            "Settings columns rebalanced so both stay populated",
+            "Docker anchors expand, mount, scroll and highlight in one action"
+          ]
+        },
+        {
+          "name": "Added",
+          "items": [
+            "Public documentation overhaul: install, configuration, updating, security, architecture, troubleshooting, roadmap",
+            "Demo mode documentation and curated screenshot workflow",
+            "Layout gates for column balance and section spacing"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "v0.9.11",
+      "anchor": "v0-9-11",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Added",
+          "items": [
+            "Thermal intelligence: 7-day context, hot-episode correlation with top consumers, idle-hot detection",
+            "Capability-aware Automation with per-workflow eligibility and specific blockers",
+            "Read-only thermal context in the Agent API"
+          ]
+        },
+        {
+          "name": "Improved",
+          "items": [
+            "Health reasons ranked critical-first with a tap-to-explain popover"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "v0.9.10",
+      "anchor": "v0-9-10",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Added",
+          "items": [
+            "Unified verified action controller shared by the Docker list and container detail",
+            "7-day thermal context and normalized action capability model"
+          ]
+        },
+        {
+          "name": "Fixed",
+          "items": [
+            "Contradictory memory figures (percent now derived from used/total)"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "v0.9.9",
+      "anchor": "v0-9-9",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Added",
+          "items": [
+            "Docker action readiness with bounded transition verification",
+            "Cached update awareness: Updates badge and summary without registry sweeps"
+          ]
+        },
+        {
+          "name": "Improved",
+          "items": [
+            "Health explanation surfaced directly in the header"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "v0.9.8",
+      "anchor": "v0-9-8",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "Mobile footer clearance under the bottom navigation",
+            "Bottom navigation made opaque so content no longer shows through"
+          ]
+        },
+        {
+          "name": "Improved",
+          "items": [
+            "PWA icon cache-busting and iOS identity documentation"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "v0.9.7",
+      "anchor": "v0-9-7",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Added",
+          "items": [
+            "Layout primitives and spacing tokens shared across pages"
+          ]
+        },
+        {
+          "name": "Fixed",
+          "items": [
+            "Overview and Settings dead space from grid stretching",
+            "Contradictory RAM usage figures",
+            "PWA service-worker and icon staleness"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "v0.9.6",
+      "anchor": "v0-9-6",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "Mobile anchor and section-navigation interactions",
+            "Visual defects caught by the new layout gates"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "v0.9.5",
+      "anchor": "v0-9-5",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Added",
+          "items": [
+            "Operations-first Docker layout groundwork"
+          ]
+        },
+        {
+          "name": "Fixed",
+          "items": [
+            "Mobile navigation and sheet fixes"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "v0.9.4",
+      "anchor": "v0-9-4",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Added",
+          "items": [
+            "Read-only Agent API v1 under /api/agent/v1"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "v0.9.3",
+      "anchor": "v0-9-3",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Added",
+          "items": [
+            "Safe notification bulk operations",
+            "Automation evaluation streaming via SSE",
+            "NOC per-widget customization"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "v0.9.2",
+      "anchor": "v0-9-2",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "Release and version correctness",
+            "Faster automation state updates",
+            "Docker list prioritization",
+            "Notification and log improvements"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "v0.9.1",
+      "anchor": "v0-9-1",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Added",
+          "items": [
+            "Storage page redesign",
+            "NOC wallboard redesign",
+            "Visual regression tooling"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "v0.9.0",
+      "anchor": "v0-9-0",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Added",
+          "items": [
+            "Beacon branding and identity",
+            "8 themes with accent system",
+            "PWA foundation and installable shell"
+          ]
+        }
+      ]
+    }
+  ]
+}
