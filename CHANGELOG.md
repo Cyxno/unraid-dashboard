@@ -3,6 +3,18 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.1.2
+
+### Fixed
+
+- iPhone standalone PWA: the header now grows with the top safe-area inset instead of clipping its content under the status bar (notched and Dynamic Island devices); browser tabs keep the exact previous geometry
+- Live servers no longer show "Demo" labels when a single section fails (a key role the API rejects, a failing query, a boot race): demo data is shown only while the Unraid API has never responded since process start — missing integrations surface as honest degraded states instead
+
+### Improved
+
+- Demo mode explains itself: a dismissible banner states the connection reason (rejected API key vs unreachable API) instead of a bare "Demo data" badge
+- Update checks work without GHCR_TOKEN for the public package (anonymous registry check); Settings shows accurate registry state instead of "the package is private"
+
 ## v1.1.1
 
 ### Improved
