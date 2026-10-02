@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { deriveHealth } from "../src/server/health";
 import { MetricsHistory } from "../src/server/history";
 import { formatBytes, formatPercent, formatTemp, formatUptime, humanState } from "../src/lib/utils";
@@ -282,3 +283,28 @@ describe("formatting utilities", () => {
     assert.equal(humanState(null), "—");
   });
 });
+
+describe("hero verdict mapping (v1.1.3 regression)", () => {
+  it("maps attention to a verdict and never compares against 'warning'", () => {
+    const src = readFileSync("src/components/dashboard/hero-strip.tsx", "utf8");
+    assert.match(src, /healthLevel === "attention"/, "attention level must map to a verdict");
+    assert.doesNotMatch(src, /healthLevel === "warning"/, "'warning' is not a HealthLevel value");
+
+    // End-to-end with the exact situation that surfaced it.
+    const attention = deriveHealth(
+      healthInputs({
+        docker: section({
+          running: 1,
+          total: 2,
+          containers: [
+            container({ name: "watchtower", state: "EXITED" as const }),
+            container({ name: "Proxy-WOL-Redirect", state: "EXITED" as const }),
+          ],
+        }),
+      }),
+    );
+    assert.equal(attention.level, "attention");
+    assert.ok(attention.reasons.some((reason) => reason.includes("Autostart container(s) stopped")));
+  });
+});
+

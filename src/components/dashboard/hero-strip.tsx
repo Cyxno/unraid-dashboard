@@ -48,7 +48,7 @@ export function HeroStrip({
   const verdict =
     healthLevel === "healthy"
       ? "All systems nominal"
-      : healthLevel === "warning"
+      : healthLevel === "attention"
         ? "Needs attention"
         : healthLevel === "critical"
           ? "Critical condition"
