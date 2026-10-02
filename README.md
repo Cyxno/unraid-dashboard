@@ -83,6 +83,10 @@ docker compose up -d
 Open `http://<server>:8090`. Full walkthrough, including the key setup:
 [docs/INSTALL.md](docs/INSTALL.md).
 
+Using Beacon privately over Tailscale? [Tailscale Serve](docs/TAILSCALE.md)
+provides a tailnet-only HTTPS origin — enabling installed-PWA and Web Push
+notifications without exposing Beacon publicly.
+
 Other supported paths:
 
 - **Unraid 7.2+** — Docker → Compose → Add New Stack, paste

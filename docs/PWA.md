@@ -104,6 +104,11 @@ Web Push for home-screen-installed web apps is supported from
 - iOS delivers push to installed PWAs through the standard Web Push
   protocol with the server's VAPID keys — no Firebase/APNs setup is
   needed.
+- A **secure context (HTTPS) is required**. Running Beacon privately?
+  [Tailscale Serve](TAILSCALE.md) provides a tailnet-only HTTPS origin
+  with an automatically provisioned certificate — no public exposure
+  needed. If the PWA was installed from an old HTTP origin, remove it
+  and reinstall from the HTTPS origin (origins are separate).
 
 Desktop Chrome, Edge and Firefox support both in-tab notifications and
 installed-app push. If the server has no VAPID keys configured, Beacon

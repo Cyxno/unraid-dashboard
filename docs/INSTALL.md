@@ -168,6 +168,23 @@ performed host-side with `scripts/update-dashboard.sh`.
 Set `AGENT_API_TOKEN` (min 32 chars) to enable the read-only machine API under
 `/api/agent/v1`. See [AGENT_API.md](AGENT_API.md).
 
+## Remote access: private HTTPS with Tailscale (recommended)
+
+Beacon works great over plain HTTP on the trusted LAN, but **browser
+notifications, Web Push and installed PWAs require an HTTPS secure
+context**. The simplest private route — no public exposure, no extra
+proxy layer — is Tailscale Serve:
+
+```sh
+tailscale serve --bg localhost:8090
+```
+
+Beacon is then served at `https://<machine>.<tailnet>.ts.net` for
+tailnet devices only, with an automatically provisioned TLS
+certificate. Full guide including iPhone PWA migration and ACL
+examples: [TAILSCALE.md](TAILSCALE.md). Direct LAN HTTP access remains
+available and is optional.
+
 ## 7. Reverse proxy / auth
 
 Beacon supports two access models:
