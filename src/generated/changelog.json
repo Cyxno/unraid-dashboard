@@ -1,7 +1,26 @@
 {
   "generatedFrom": "CHANGELOG.md",
-  "latestVersion": "v1.2.1",
+  "latestVersion": "v1.2.2",
   "releases": [
+    {
+      "version": "v1.2.2",
+      "anchor": "v1-2-2",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "Notification permission state misreported \"blocked\" in environments where the browser reports `denied` without a per-site user choice — most notably **plain-HTTP (LAN) access**, where Chromium and Firefox always report denied. The section now classifies the insecure context first and shows \"requires HTTPS\" with the correct explanation instead of impossible \"re-enable in site settings\" advice. `Notification.permission` remains the live, authoritative browser state; \"default\" is never presented as blocked"
+          ]
+        },
+        {
+          "name": "Improved",
+          "items": [
+            "Development builds log a read-only notification capability payload (permission, secure context, service worker/push support, install state, subscription presence, derived state) to make future state questions diagnosable"
+          ]
+        }
+      ]
+    },
     {
       "version": "v1.2.1",
       "anchor": "v1-2-1",

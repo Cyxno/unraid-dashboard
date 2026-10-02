@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { usePwa } from "@/components/layout/pwa-provider";
 import { cn, formatDateTimeIso } from "@/lib/utils";
-import { evaluatePushSupport, isAppleMobile, isStandalone } from "@/lib/push-support";
+import { derivePermissionPresentation, evaluatePushSupport, isAppleMobile, isStandalone } from "@/lib/push-support";
 
 /**
  * Notification settings (v1.2.0): permission UX, delivery preferences,
@@ -98,6 +98,7 @@ export function NotificationsSection() {
   const [config, setConfig] = useState<NotificationConfig | null>(null);
   const [permission, setPermission] = useState<NotificationPermission | "unsupported">("default");
   const [support, setSupport] = useState<{ kind: string; installed: boolean } | null>(null);
+  const [presentation, setPresentation] = useState<ReturnType<typeof derivePermissionPresentation> | null>(null);
   const [subscribed, setSubscribed] = useState<boolean | null>(null);
   const [busy, setBusy] = useState<"subscribe" | "unsubscribe" | "test" | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
@@ -141,16 +142,42 @@ export function NotificationsSection() {
     const frame = window.requestAnimationFrame(() => {
       setPermission(typeof Notification === "undefined" ? "unsupported" : Notification.permission);
       const userAgent = navigator.userAgent;
-      setSupport(
-        evaluatePushSupport({
-          hasNotificationApi: typeof Notification !== "undefined",
-          hasPushManager: "PushManager" in window,
-          hasServiceWorker: "serviceWorker" in navigator,
-          secureContext: window.isSecureContext,
-          isAppleMobile: isAppleMobile(userAgent, navigator.maxTouchPoints ?? 0),
-          standalone: isStandalone(),
-        }),
-      );
+      const supportValue = evaluatePushSupport({
+        hasNotificationApi: typeof Notification !== "undefined",
+        hasPushManager: "PushManager" in window,
+        hasServiceWorker: "serviceWorker" in navigator,
+        secureContext: window.isSecureContext,
+        isAppleMobile: isAppleMobile(userAgent, navigator.maxTouchPoints ?? 0),
+        standalone: isStandalone(),
+      });
+      setSupport(supportValue);
+      const browserPermission = typeof Notification === "undefined" ? ("unsupported" as const) : Notification.permission;
+      const presentationValue = derivePermissionPresentation({ permission: browserPermission, supportKind: supportValue.kind });
+      setPresentation(presentationValue);
+      // Diagnostic capability payload (development only, no secrets).
+      if (process.env.NODE_ENV !== "production") {
+        void Promise.resolve().then(async () => {
+          let subscriptionPresent: boolean | null = null;
+          try {
+            if ("serviceWorker" in navigator) {
+              const reg = await navigator.serviceWorker.getRegistration();
+              subscriptionPresent = Boolean(await reg?.pushManager.getSubscription());
+            }
+          } catch {
+            subscriptionPresent = null;
+          }
+          console.info("[notifications] capability", {
+            notificationPermission: browserPermission,
+            secureContext: window.isSecureContext,
+            serviceWorkerSupported: "serviceWorker" in navigator,
+            pushManagerSupported: "PushManager" in window,
+            standalone: supportValue.installed,
+            vapidConfigured: config?.push.configured ?? null,
+            subscriptionPresent,
+            derivedState: presentationValue.badge,
+          });
+        });
+      }
     });
     return () => window.cancelAnimationFrame(frame);
   }, []);
@@ -289,14 +316,19 @@ export function NotificationsSection() {
     }
   };
 
+  const badgeFor: Record<string, { variant: "muted" | "success" | "destructive" | "warning"; label: string }> = {
+    granted: { variant: "success", label: "granted" },
+    blocked: { variant: "destructive", label: "blocked" },
+    "not-asked": { variant: "muted", label: "not asked" },
+    "not-supported": { variant: "muted", label: "not supported" },
+    "requires-https": { variant: "muted", label: "requires HTTPS" },
+    "install-required": { variant: "warning", label: "home-screen install required" },
+    "check-browser": { variant: "muted", label: "check browser" },
+  };
   const permissionBadge = () => {
-    if (support?.kind === "ios-needs-install") return <Badge variant="warning">home-screen install required</Badge>;
-    if (support?.kind === "unsupported-browser") return <Badge variant="muted">not supported</Badge>;
-    if (support?.kind === "insecure-context") return <Badge variant="muted">requires HTTPS</Badge>;
-    if (permission === "unsupported") return <Badge variant="muted">not supported</Badge>;
-    if (permission === "granted") return <Badge variant="success">granted</Badge>;
-    if (permission === "denied") return <Badge variant="destructive">blocked</Badge>;
-    return <Badge variant="muted">not asked</Badge>;
+    if (!presentation) return <Badge variant="muted">checking…</Badge>;
+    const meta = badgeFor[presentation.badge] ?? { variant: "muted" as const, label: presentation.badge };
+    return <Badge variant={meta.variant}>{meta.label}</Badge>;
   };
 
   return (
@@ -322,13 +354,7 @@ export function NotificationsSection() {
           )}
         </div>
         <div className="flex flex-wrap gap-2">
-          {support?.kind === "ios-needs-install" && (
-            <p className="text-xs text-muted-foreground">
-              Install Beacon to your Home Screen (Share → Add to Home Screen) to enable push
-              notifications on iPhone — iOS only delivers push to installed web apps.
-            </p>
-          )}
-          {support?.kind !== "ios-needs-install" && permission !== "granted" && permission !== "unsupported" && (
+          {presentation?.canEnable && (
             <Button size="sm" disabled={!online || busy !== null} onClick={() => void enableNotifications()}>
               {busy === "subscribe" ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : <Bell className="size-3.5" aria-hidden="true" />}
               Enable notifications
@@ -345,10 +371,9 @@ export function NotificationsSection() {
             Send test notification
           </Button>
         </div>
-        {permission === "denied" && (
-          <p className="text-xs text-muted-foreground">
-            Notifications are blocked in your browser for this site. Re-enable them via the padlock icon
-            in the address bar → Notifications, then reload.
+        {presentation?.message && (
+          <p className="text-xs text-muted-foreground" role="status">
+            {presentation.message}
           </p>
         )}
         {notice && (

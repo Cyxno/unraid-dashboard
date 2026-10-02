@@ -3,6 +3,16 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.2.2
+
+### Fixed
+
+- Notification permission state misreported "blocked" in environments where the browser reports `denied` without a per-site user choice — most notably **plain-HTTP (LAN) access**, where Chromium and Firefox always report denied. The section now classifies the insecure context first and shows "requires HTTPS" with the correct explanation instead of impossible "re-enable in site settings" advice. `Notification.permission` remains the live, authoritative browser state; "default" is never presented as blocked
+
+### Improved
+
+- Development builds log a read-only notification capability payload (permission, secure context, service worker/push support, install state, subscription presence, derived state) to make future state questions diagnosable
+
 ## v1.2.1
 
 ### Fixed

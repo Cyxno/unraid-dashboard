@@ -60,3 +60,71 @@ export function isStandalone(): boolean {
   const displayMode = window.matchMedia?.("(display-mode: standalone)").matches ?? false;
   return navigatorStandalone || displayMode;
 }
+
+export type PermissionPresentationBadge =
+  | "granted"
+  | "blocked"
+  | "not-asked"
+  | "not-supported"
+  | "requires-https"
+  | "install-required"
+  | "check-browser";
+
+export interface PermissionPresentation {
+  badge: PermissionPresentationBadge;
+  /** Explanation to render under the badge, when one is warranted. */
+  message: string | null;
+  /** Whether the "Enable notifications" button is meaningful here. */
+  canEnable: boolean;
+}
+
+/**
+ * Derives what the UI should SAY about browser permission.
+ *
+ * `Notification.permission` stays the authoritative browser state, but it
+ * is not always a user choice: insecure (plain HTTP) contexts and some
+ * browser-wide toggles report "denied" even though no per-site decision
+ * was ever made. Presentation precedence:
+ *   unsupported browser > insecure context (HTTPS required) > iOS install
+ *   required > granted > denied (only then the site-settings advice) >
+ *   not asked.
+ */
+export function derivePermissionPresentation(input: {
+  permission: "default" | "granted" | "denied" | "unsupported";
+  supportKind: PushSupportKind;
+}): PermissionPresentation {
+  if (input.supportKind === "unsupported-browser") {
+    return { badge: "not-supported", message: null, canEnable: false };
+  }
+  if (input.supportKind === "insecure-context") {
+    return {
+      badge: "requires-https",
+      message:
+        "Beacon is being served over plain HTTP. Browser notifications require a secure context (HTTPS) — they cannot be enabled for this address.",
+      canEnable: false,
+    };
+  }
+  if (input.supportKind === "ios-needs-install") {
+    return {
+      badge: "install-required",
+      message:
+        "Install Beacon to your Home Screen (Share → Add to Home Screen) to enable push notifications on iPhone — iOS only delivers push to installed web apps.",
+      canEnable: false,
+    };
+  }
+  if (input.permission === "unsupported") {
+    return { badge: "not-supported", message: null, canEnable: false };
+  }
+  if (input.permission === "granted") {
+    return { badge: "granted", message: null, canEnable: false };
+  }
+  if (input.permission === "denied") {
+    return {
+      badge: "blocked",
+      message:
+        "Notifications are blocked by your browser. Check the site permissions (padlock icon → Notifications) and your browser's global notification setting — some browsers also report denied in private windows.",
+      canEnable: false,
+    };
+  }
+  return { badge: "not-asked", message: null, canEnable: true };
+}
