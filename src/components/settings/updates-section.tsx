@@ -60,9 +60,10 @@ interface UpdateStatusPayload {
     latestTag: string | null;
     latestManifestDigest: string | null;
     latestRevisionSha: string | null;
+    checkedAt: string;
     registry: { tokenConfigured: boolean; reachable: boolean | null; authorized: boolean | null; reason: string | null };
   } | null;
-  releaseSource: "registry" | "local" | "none";
+  releaseSource: "registry" | "local-fallback" | "none";
   consistency: {
     versionMatchesTag: boolean | null;
     shaMatchesRevision: boolean | null;
@@ -170,6 +171,10 @@ export function UpdatesSection() {
   const [requestError, setRequestError] = useState<string | null>(null);
   const [requesting, setRequesting] = useState(false);
   const [rollbackTarget, setRollbackTarget] = useState<string | null>(null);
+  // Manual "Check for updates": forced remote lookup with visible states.
+  const [checking, setChecking] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null);
+  const [checkedJustNow, setCheckedJustNow] = useState(false);
 
   // Poll fast while a machine runs (SSE is primary; this is the fallback
   // that also survives a page reload mid-update).
@@ -182,6 +187,32 @@ export function UpdatesSection() {
   const targetTag = data?.release?.latestTag ?? null;
   const currentVersion = data?.build.version ?? null;
   const updateAvailable = data?.release?.status === "available";
+
+  const checkForUpdates = useCallback(async () => {
+    if (checking) return;
+    setChecking(true);
+    setCheckError(null);
+    try {
+      // force=1: server bypasses the release-check cache and performs a
+      // fresh remote registry lookup (background polls stay cached).
+      const response = await fetch("/api/update/status?force=1", { cache: "no-store" });
+      if (!response.ok) throw new Error(`Update check failed (HTTP ${response.status}).`);
+      const body = (await response.json()) as UpdateStatusPayload;
+      const remote = body.release?.registry;
+      if (body.release?.status === "unknown" && remote?.reachable === false) {
+        setCheckError("Could not reach GHCR — no remote answer, showing degraded state instead.");
+      } else if (body.release?.status === "unknown") {
+        setCheckError(body.release.reason ?? "Update check failed.");
+      }
+      setCheckedJustNow(true);
+      // Re-sync the poll with the now-fresh server state.
+      status.refresh();
+    } catch (error) {
+      setCheckError(error instanceof Error ? error.message : "Update check failed.");
+    } finally {
+      setChecking(false);
+    }
+  }, [checking, status]);
 
   // While a machine runs, poll the status endpoint aggressively.
   useEffect(() => {
@@ -286,15 +317,34 @@ export function UpdatesSection() {
         <div className="flex flex-wrap items-center gap-2 text-xs">
           {data?.release?.status === "available" && <Badge variant="warning">update available</Badge>}
           {data?.release?.status === "up-to-date" && <Badge variant="success">up to date</Badge>}
-          {(!data || data.release?.status === "unknown") && (
-            <span className="text-muted-foreground" title={data?.release?.reason}>release check: unknown</span>
+          {data?.release?.status === "unknown" && (
+            <Badge variant="warning" title={data?.release?.reason}>check failed</Badge>
           )}
-          {data?.releaseSource === "local" && (
-            <Badge variant="muted" title="Discovery from locally present images — the host has no GHCR login">
-              source: local images
+          {data?.releaseSource === "registry" && (
+            <Badge variant="muted" title="Authoritative answer from the GHCR container registry">
+              source: GHCR
             </Badge>
           )}
+          {data?.releaseSource === "local-fallback" && (
+            <Badge
+              variant="warning"
+              title="The registry check did not answer — discovered from locally present images. Not an authoritative latest release."
+            >
+              source: local fallback (degraded)
+            </Badge>
+          )}
+          {checkedJustNow && data?.release?.checkedAt && (
+            <span className="text-muted-foreground">Last checked: just now</span>
+          )}
         </div>
+        {checkError && (
+          <p role="alert" className="text-xs text-destructive">
+            {checkError}
+            {data?.release?.status === "unknown" && data.releaseSource === "local-fallback"
+              ? " — using local image metadata as fallback, not as a release answer."
+              : ""}
+          </p>
+        )}
 
         {/* Live phase timeline while a machine runs */}
         {machineRunning && (
@@ -325,8 +375,21 @@ export function UpdatesSection() {
 
         {/* One primary action */}
         <div className="flex flex-wrap items-center gap-2 pt-1">
-          <Button size="sm" variant="outline" disabled={!online || status.loading} onClick={() => status.refresh()}>
-            <RefreshCw aria-hidden="true" /> Check for updates
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!online || checking}
+            onClick={() => void checkForUpdates()}
+          >
+            {checking ? (
+              <>
+                <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> Checking…
+              </>
+            ) : (
+              <>
+                <RefreshCw aria-hidden="true" /> Check for updates
+              </>
+            )}
           </Button>
           <Button
             size="sm"

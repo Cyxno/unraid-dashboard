@@ -348,7 +348,9 @@ function AboutAndDiagnostics() {
                   ) : update.status === "up-to-date" ? (
                     <Badge variant="success">up to date</Badge>
                   ) : (
-                    <span title={update.reason}>unknown</span>
+                    <span className="text-warning" title={update.reason}>
+                      check failed — {update.reason ?? "no remote answer"}
+                    </span>
                   )}
                 </dd>
               </div>
