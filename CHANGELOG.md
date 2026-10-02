@@ -3,6 +3,16 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.1.5
+
+### Fixed
+
+- Stopped autostart containers no longer trigger the global warning banner: `autostart=true + exited` is configuration + state, not an objectively detectable problem (users legitimately keep rarely used containers stopped). Real failure signals — unhealthy containers, array/disk/parity issues, alerts, memory/temperature pressure — keep their existing health impact
+
+### Improved
+
+- The Docker page surfaces the combination as neutral metadata: a muted "Autostart · stopped" badge on the container row (mobile card and desktop table), with no warning styling
+
 ## v1.1.4
 
 ### Fixed
