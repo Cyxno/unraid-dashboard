@@ -108,7 +108,7 @@ describe("deriveHealth", () => {
     assert.equal(attention.level, "attention");
   });
 
-  it("flags unhealthy containers and autostart exits", () => {
+  it("flags unhealthy containers, but a stopped autostart container is not an incident", () => {
     const critical = deriveHealth(
       healthInputs({
         docker: section({
@@ -123,7 +123,9 @@ describe("deriveHealth", () => {
     assert.equal(critical.level, "critical");
     assert.ok(critical.reasons.some((reason) => reason.includes("api")));
 
-    const attention = deriveHealth(
+    // v1.1.5: `autostart=true + exited` is configuration + state, not an
+    // incident — users legitimately keep rarely used containers off.
+    const stopped = deriveHealth(
       healthInputs({
         docker: section({
           running: 0,
@@ -134,7 +136,8 @@ describe("deriveHealth", () => {
         }),
       }),
     );
-    assert.equal(attention.level, "attention");
+    assert.equal(stopped.level, "healthy");
+    assert.ok(!stopped.reasons.some((reason) => reason.includes("Autostart")));
   });
 
   it("uses memory pressure thresholds", () => {
@@ -289,22 +292,82 @@ describe("hero verdict mapping (v1.1.3 regression)", () => {
     const src = readFileSync("src/components/dashboard/hero-strip.tsx", "utf8");
     assert.match(src, /healthLevel === "attention"/, "attention level must map to a verdict");
     assert.doesNotMatch(src, /healthLevel === "warning"/, "'warning' is not a HealthLevel value");
+  });
+});
 
-    // End-to-end with the exact situation that surfaced it.
-    const attention = deriveHealth(
+describe("autostart-stopped containers carry no health weight (v1.1.5)", () => {
+  const withContainers = (containers: ReturnType<typeof container>[]) =>
+    deriveHealth(
       healthInputs({
-        docker: section({
-          running: 1,
-          total: 2,
-          containers: [
-            container({ name: "watchtower", state: "EXITED" as const }),
-            container({ name: "Proxy-WOL-Redirect", state: "EXITED" as const }),
-          ],
-        }),
+        docker: section({ running: containers.filter((c) => c.state === "RUNNING").length, total: containers.length, containers }),
       }),
     );
-    assert.equal(attention.level, "attention");
-    assert.ok(attention.reasons.some((reason) => reason.includes("Autostart container(s) stopped")));
+
+  it("1. running + autostart=true -> healthy, no warning", () => {
+    const health = withContainers([container({ name: "app", state: "RUNNING" })]);
+    assert.equal(health.level, "healthy");
+    assert.deepEqual(health.reasons, []);
+  });
+
+  it("2. exited + autostart=true -> no global warning, no health degradation", () => {
+    const health = withContainers([container({ name: "app", state: "EXITED", status: "Exited (0) 2 days ago" })]);
+    assert.equal(health.level, "healthy");
+    assert.ok(!health.reasons.some((reason) => /autostart/i.test(reason)));
+  });
+
+  it("3. exited + autostart=false -> healthy", () => {
+    const health = withContainers([container({ name: "app", state: "EXITED", status: "Exited", autoStart: false })]);
+    assert.equal(health.level, "healthy");
+    assert.deepEqual(health.reasons, []);
+  });
+
+  it("4. unhealthy + autostart=true -> critical warning stays", () => {
+    const health = withContainers([container({ name: "app", state: "RUNNING", health: "unhealthy", status: "Up (unhealthy)" })]);
+    assert.equal(health.level, "critical");
+    assert.ok(health.reasons.some((reason) => reason.includes("app")));
+  });
+
+  it("5. unhealthy + autostart=false -> critical warning stays", () => {
+    const health = withContainers([container({ name: "app", state: "RUNNING", health: "unhealthy", status: "Up (unhealthy)", autoStart: false })]);
+    assert.equal(health.level, "critical");
+    assert.ok(health.reasons.some((reason) => reason.includes("app")));
+  });
+
+  it("6. real failure signals keep their impact (stopped array unaffected)", () => {
+    const storage = {
+      state: "STOPPED",
+      totalBytes: 1,
+      usedBytes: 0,
+      freeBytes: 1,
+      parityStatus: "COMPLETED",
+      parityProgressPercent: null,
+      disks: [],
+    } as import("../src/lib/api-types").StorageUsage;
+    const health = deriveHealth(
+      healthInputs({
+        storage: { status: "live", data: storage, fetchedAt: new Date().toISOString(), ageMs: 0 },
+        docker: section({ running: 0, total: 1, containers: [container({ name: "app", state: "EXITED", status: "Exited" })] }),
+      }),
+    );
+    assert.equal(health.level, "critical");
+    assert.ok(health.reasons.some((reason) => /array/i.test(reason)));
+  });
+
+  it("7. the warning banner has no entry caused solely by a stopped autostart container", () => {
+    const health = withContainers([
+      container({ name: "needed", state: "RUNNING" }),
+      container({ name: "on-demand", state: "EXITED", status: "Exited (0) 6 days ago" }),
+      container({ name: "also-off", state: "EXITED", status: "Exited (0) 8 days ago" }),
+    ]);
+    assert.equal(health.level, "healthy");
+    assert.ok(!health.reasons.some((reason) => /autostart/i.test(reason)));
+  });
+
+  it("8. the Docker page shows the neutral autostart info badge", () => {
+    const src = readFileSync("src/app/docker/page.tsx", "utf8");
+    assert.match(src, /Autostart · stopped/);
+    // Neutral styling only: the badge is rendered with variant="muted".
+    assert.doesNotMatch(src, /variant="(destructive|warning)"[^>]*>\s*\{?\s*Autostart/);
   });
 });
 

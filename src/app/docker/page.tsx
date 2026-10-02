@@ -631,6 +631,11 @@ export default function DockerPage() {
                         <TriangleAlert aria-hidden="true" /> unhealthy
                       </Badge>
                     )}
+                    {container.state === "EXITED" && container.autoStart && (
+                      <Badge variant="muted" className="shrink-0 text-[10px]">
+                        Autostart · stopped
+                      </Badge>
+                    )}
                   </span>
                   <span className="mt-1.5 grid grid-cols-3 gap-2 text-xs">
                     <span>
@@ -837,6 +842,15 @@ export default function DockerPage() {
                               aria-hidden="true"
                             />
                             {meta.label}
+                            {container.state === "EXITED" && container.autoStart && (
+                              <Badge
+                                variant="muted"
+                                className="text-[10px]"
+                                title="Autostart is enabled for this container, but it is currently stopped — informational only."
+                              >
+                                Autostart · stopped
+                              </Badge>
+                            )}
                             <span className="sr-only">{container.state}</span>
                           </span>
                         </td>

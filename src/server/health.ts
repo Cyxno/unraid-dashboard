@@ -122,16 +122,10 @@ export function deriveHealth(inputs: HealthInputs): HealthSummary {
         `Container(s) unhealthy: ${unhealthy.slice(0, 3).map((container) => container.name).join(", ")}`,
       );
     }
-    const exited = docker.containers.filter(
-      (container) =>
-        container.state === "EXITED" && container.autoStart,
-    );
-    if (exited.length > 0) {
-      escalate(
-        "attention",
-        `Autostart container(s) stopped: ${exited.slice(0, 3).map((container) => container.name).join(", ")}`,
-      );
-    }
+    // A stopped container is a STATE, not an incident: `autostart=true +
+    // exited` proves nothing on its own (users legitimately keep rarely
+    // used containers off), so it carries no health weight. It stays
+    // visible as neutral metadata on the Docker page.
   }
 
   // Resource pressure
