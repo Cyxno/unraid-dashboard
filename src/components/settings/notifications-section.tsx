@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { usePwa } from "@/components/layout/pwa-provider";
 import { cn, formatDateTimeIso } from "@/lib/utils";
+import { evaluatePushSupport, isAppleMobile, isStandalone } from "@/lib/push-support";
 
 /**
  * Notification settings (v1.2.0): permission UX, delivery preferences,
@@ -37,6 +38,7 @@ interface NotificationConfig {
 interface HistoryEvent {
   id: number;
   severity: string;
+  category: string;
   title: string;
   body: string;
   source: string;
@@ -63,6 +65,25 @@ const SEVERITY_LABELS: Record<string, string> = {
   info: "Info",
 };
 
+
+const DELIVERY_LABELS: Record<string, { label: string; tone: "success" | "error" | "muted" }> = {
+  pushed: { label: "Delivered", tone: "success" },
+  "in-app": { label: "Delivered in-app", tone: "success" },
+  "skipped-preference": { label: "Skipped (preference)", tone: "muted" },
+  "skipped-unconfigured": { label: "Skipped (not configured)", tone: "muted" },
+  failed: { label: "Failed", tone: "error" },
+};
+
+const CATEGORY_SHORT: Record<string, string> = {
+  "system-health": "System health",
+  "docker-health": "Docker health",
+  "docker-updates": "Docker updates",
+  storage: "Storage",
+  "beacon-updates": "Beacon updates",
+  services: "Services",
+  resolved: "Resolved",
+};
+
 function b64urlToUint8Array(base64: string): Uint8Array {
   const padding = "=".repeat((4 - (base64.length % 4)) % 4);
   const normalized = (base64 + padding).replaceAll("-", "+").replaceAll("_", "/");
@@ -76,6 +97,7 @@ export function NotificationsSection() {
   const { online } = usePwa();
   const [config, setConfig] = useState<NotificationConfig | null>(null);
   const [permission, setPermission] = useState<NotificationPermission | "unsupported">("default");
+  const [support, setSupport] = useState<{ kind: string; installed: boolean } | null>(null);
   const [subscribed, setSubscribed] = useState<boolean | null>(null);
   const [busy, setBusy] = useState<"subscribe" | "unsubscribe" | "test" | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
@@ -118,6 +140,17 @@ export function NotificationsSection() {
     // the setState lands outside the effect body (react-hooks rule).
     const frame = window.requestAnimationFrame(() => {
       setPermission(typeof Notification === "undefined" ? "unsupported" : Notification.permission);
+      const userAgent = navigator.userAgent;
+      setSupport(
+        evaluatePushSupport({
+          hasNotificationApi: typeof Notification !== "undefined",
+          hasPushManager: "PushManager" in window,
+          hasServiceWorker: "serviceWorker" in navigator,
+          secureContext: window.isSecureContext,
+          isAppleMobile: isAppleMobile(userAgent, navigator.maxTouchPoints ?? 0),
+          standalone: isStandalone(),
+        }),
+      );
     });
     return () => window.cancelAnimationFrame(frame);
   }, []);
@@ -257,6 +290,9 @@ export function NotificationsSection() {
   };
 
   const permissionBadge = () => {
+    if (support?.kind === "ios-needs-install") return <Badge variant="warning">home-screen install required</Badge>;
+    if (support?.kind === "unsupported-browser") return <Badge variant="muted">not supported</Badge>;
+    if (support?.kind === "insecure-context") return <Badge variant="muted">requires HTTPS</Badge>;
     if (permission === "unsupported") return <Badge variant="muted">not supported</Badge>;
     if (permission === "granted") return <Badge variant="success">granted</Badge>;
     if (permission === "denied") return <Badge variant="destructive">blocked</Badge>;
@@ -286,7 +322,13 @@ export function NotificationsSection() {
           )}
         </div>
         <div className="flex flex-wrap gap-2">
-          {permission !== "granted" && permission !== "unsupported" && (
+          {support?.kind === "ios-needs-install" && (
+            <p className="text-xs text-muted-foreground">
+              Install Beacon to your Home Screen (Share → Add to Home Screen) to enable push
+              notifications on iPhone — iOS only delivers push to installed web apps.
+            </p>
+          )}
+          {support?.kind !== "ios-needs-install" && permission !== "granted" && permission !== "unsupported" && (
             <Button size="sm" disabled={!online || busy !== null} onClick={() => void enableNotifications()}>
               {busy === "subscribe" ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : <Bell className="size-3.5" aria-hidden="true" />}
               Enable notifications
@@ -317,6 +359,11 @@ export function NotificationsSection() {
         )}
 
         {/* Severity + category preferences */}
+        {config && (
+          <p className="text-xs text-muted-foreground">
+            Preferences apply to this Beacon installation; delivery itself is opt-in per device (below).
+          </p>
+        )}
         {config && (
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
@@ -397,19 +444,20 @@ export function NotificationsSection() {
                   >
                     {event.severity}
                   </Badge>
+                  <span className="shrink-0 text-muted-foreground">{CATEGORY_SHORT[event.category] ?? event.category}</span>
                   <span className="min-w-0 flex-1 truncate">{event.title}</span>
                   <span
                     className={cn(
                       "shrink-0 text-[10px]",
-                      event.delivery === "pushed" || event.delivery === "in-app"
+                      (DELIVERY_LABELS[event.delivery] ?? { tone: "muted" }).tone === "success"
                         ? "text-success"
-                        : event.delivery === "failed"
+                        : (DELIVERY_LABELS[event.delivery] ?? { tone: "muted" }).tone === "error"
                           ? "text-destructive"
                           : "text-muted-foreground",
                     )}
                     title={event.detail ?? undefined}
                   >
-                    {event.delivery}
+                    {(DELIVERY_LABELS[event.delivery] ?? { label: event.delivery }).label}
                   </span>
                 </li>
               ))}

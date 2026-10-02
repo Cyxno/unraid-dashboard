@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { guardRead, guardWrite } from "@/server/auth/guard";
+import { checkWriteRate } from "@/server/dashboards/rate-limit";
 import { loadStateFromDisk, scheduleSave } from "@/server/notifications/store";
 import { startNotificationLoop } from "@/server/notifications";
 
@@ -17,6 +18,16 @@ function labelFromUserAgent(request: NextRequest): string {
 export async function POST(request: NextRequest) {
   const guard = guardWrite(request);
   if (!guard.ok) return guard.response;
+  const actor = guard.identity.user ?? "lan";
+  const rate = checkWriteRate("subscribe:" + actor + "@" + guard.sourceIp);
+  if (!rate.allowed) {
+    return NextResponse.json({ error: "rate limited" }, { status: 429, headers: { "retry-after": String(Math.ceil((rate.retryAfterMs ?? 1000) / 1000)) } });
+  }
+  // Subscriptions are tiny JSON documents; refuse oversized bodies early.
+  const declaredLength = Number(request.headers.get("content-length") ?? 0);
+  if (declaredLength > 16 * 1024) {
+    return NextResponse.json({ error: "payload too large" }, { status: 413 });
+  }
 
   const body = (await request.json().catch(() => null)) as
     | { endpoint?: string; keys?: { p256dh?: string; auth?: string }; label?: string }

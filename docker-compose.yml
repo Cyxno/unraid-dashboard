@@ -34,6 +34,12 @@ services:
       PORT: ${PORT:-8090}
       # Optional: Prometheus for time-series metrics, history, thermals.
       # PROMETHEUS_URL: http://127.0.0.1:9090
+      # Optional: Web Push for notifications. Generate once with
+      #   npx web-push generate-vapid-keys
+      # Without these, Beacon runs normally and push shows "not configured".
+      # BEACON_VAPID_PUBLIC_KEY: ${BEACON_VAPID_PUBLIC_KEY}
+      # BEACON_VAPID_PRIVATE_KEY: ${BEACON_VAPID_PRIVATE_KEY}
+      # BEACON_VAPID_SUBJECT: ${BEACON_VAPID_SUBJECT:-mailto:admin@example.com}
       # Update helper wiring (part of this stack).
       UPDATE_HELPER_URL: http://127.0.0.1:8790
       UPDATE_HELPER_TOKEN: ${UPDATE_HELPER_TOKEN:-}
