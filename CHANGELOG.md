@@ -3,6 +3,17 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.1.3
+
+### Fixed
+
+- Update detection now actually sees remote releases: GHCR paginates the tag list (100 per page, sha tags included) and the newest semver tag had fallen off the first page — the check compared against an old tag and reported "up to date" while newer releases were live
+- Locally present images are no longer presented as the "latest release" when the registry check has no answer: local images are discovery-only, the status stays an explicit degraded/unknown state instead of a false "up to date"
+
+### Improved
+
+- "Check for updates" now forces a fresh remote lookup (bypassing the background cache) with visible states: spinner + "Checking…", disabled during the request, "Last checked" confirmation, inline error on failure, and an explicit source badge (GHCR vs local fallback)
+
 ## v1.1.2
 
 ### Fixed
