@@ -94,6 +94,16 @@ const envSchema = z.object({
    * reports "unknown" instead of failing. Never exposed to the browser.
    */
   GHCR_TOKEN: z.string().min(1).optional(),
+  /**
+   * Web Push (VAPID) for the notification system. Optional: without keys
+   * push delivery is "not configured" and the rest of the app (history,
+   * in-app toasts, local browser notifications) works normally. The
+   * private key never leaves the server; the public key is served to the
+   * browser for PushSubscription creation.
+   */
+  BEACON_VAPID_PUBLIC_KEY: z.string().min(1).optional(),
+  BEACON_VAPID_PRIVATE_KEY: z.string().min(1).optional(),
+  BEACON_VAPID_SUBJECT: z.string().min(3).optional(),
   GHCR_IMAGE: z
     .string()
     .regex(/^[a-z0-9-]+\/[a-z0-9-]+$/)

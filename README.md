@@ -33,6 +33,7 @@ and never sends it to the browser.
 - **VMs and network** — at-a-glance visibility, read-only by design
 - **System and thermal health** — load/CPU history, package-temperature analysis, hot-episode correlation with top consumers
 - **Notifications, incidents and logs** — one place for what needs attention, backed by an audit trail of every mutation
+- **Push notifications** — opt-in Web Push (browser + installed PWA) for critical conditions, recovery events and updates, with per-device subscriptions, severity/category filters, deduplication and a notification history
 - **Operations** — verified updates (registry digest match, automatic rollback) and opt-in pilot auto-update
 - **NOC mode** — read-only wallboard for always-on displays
 - **Mobile and PWA** — installable app with mobile-first shells and live SSE updates

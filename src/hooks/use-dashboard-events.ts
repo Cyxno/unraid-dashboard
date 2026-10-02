@@ -43,6 +43,15 @@ export interface DashboardEvents {
     intervention: number;
     targets: Array<{ name: string; state: string; optIn: boolean }>;
   };
+  /** v1.2.0: a notification was dispatched by the notification engine. */
+  notification?: {
+    id: number;
+    severity: string;
+    title: string;
+    body: string;
+    url: string;
+    kind: string;
+  };
 }
 
 export function useDashboardEvents(
@@ -125,6 +134,7 @@ export function useDashboardEvents(
         "state-transition",
         "hello",
         "update",
+        "notification",
       ];
       for (const name of names) {
         source.addEventListener(name, forward(name) as EventListener);

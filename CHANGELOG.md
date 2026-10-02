@@ -3,6 +3,13 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.2.0
+
+### Added
+
+- **Notification system with Web Push (opt-in)**: critical conditions, recoveries and updates can notify you even when no Beacon tab is open. Stable-fingerprint events (a two-hour unhealthy container notifies once, recovery notifies optionally, recurrence notifies again), severity and category filters, per-device subscriptions, an in-app notification history with delivery status, and a real "Send test notification". Standard Web Push with VAPID — no external service; fully functional without configuration (in-app delivery and history only)
+- Service worker now handles `push` and `notificationclick` (opens/focuses Beacon on the event's deep link)
+
 ## v1.1.5
 
 ### Fixed

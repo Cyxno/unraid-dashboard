@@ -207,3 +207,30 @@ docker run -d -p 3200:8090 \
 
 See [UPDATING.md](UPDATING.md) — in-app (helper) or host-side script; both
 verify the registry digest and roll back on failure.
+
+## 9. Optional: push notifications (VAPID)
+
+Web Push delivery for the notification system is opt-in and off by
+default. Without configuration the app works normally: notification
+history and in-app delivery function, and the Settings → Notifications
+section shows push as "not configured".
+
+To enable remote push (works for browser tabs and installed PWAs,
+including iOS 16.4+ home-screen installs):
+
+1. Generate VAPID keys once:
+   ```sh
+   npx web-push generate-vapid-keys
+   ```
+2. Configure them on the Beacon container:
+   - `BEACON_VAPID_PUBLIC_KEY` — safe to serve to browsers
+   - `BEACON_VAPID_PRIVATE_KEY` — server-side only, never commit
+   - `BEACON_VAPID_SUBJECT` — e.g. `mailto:you@example.com`
+3. Restart Beacon, open Settings → Notifications, click
+   **Enable notifications** (the browser asks for permission — always
+   from this explicit click, never on page load), then use
+   **Send test notification** to verify delivery.
+
+Each browser/device subscribes separately and can be disabled
+individually; stale subscriptions (push service 404/410) are pruned
+automatically.

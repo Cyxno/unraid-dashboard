@@ -227,3 +227,33 @@ everywhere with no stale "Ready" state.
 Running Beacon against an unreachable Unraid API renders synthetic data
 (badged **Demo data**). Mutations require a live Unraid API plus the
 action key, so a demo instance is read-only by construction.
+
+## Push notifications
+
+The notification system (v1.2.0) follows the same boundaries as the rest
+of Beacon:
+
+- **Events originate only inside Beacon.** There is no generic
+  "send a notification" endpoint. The sole user-triggered surface is
+  Settings → Notifications → *Send test notification*, which is a
+  write-guarded, rate-limited route and delivers a fixed text.
+- **Web Push uses standard VAPID**: the private key stays server-side;
+  only the public key reaches the browser for `PushSubscription`
+  creation. Subscriptions persist under `/app/data` next to the other
+  app state and are never logged with their keys.
+- **Payloads are plain text**: titles/bodies are sanitized (control
+  characters stripped, length-capped) before they reach the OS
+  notification surface — container names cannot inject markup, and OS
+  notification rendering does not interpret HTML in any case.
+- **Subscriptions are pruned on 404/410** from the push service; a
+  failed delivery is recorded on the subscription, never thrown as a
+  request error. Delivery attempts are best-effort with a single retry
+  on transient 5xx.
+- All notification routes sit behind the same auth guards as the rest
+  of the API (read routes: `guardRead`; mutations: `guardWrite` with
+  same-origin and content-type enforcement; the test route is
+  rate-limited per actor).
+- Opt-out is total: the master toggle disables evaluation-driven
+  notifications, and a browser can unsubscribe per device. Without
+  VAPID keys the push capability reports "not configured" and the rest
+  of the system (history, in-app delivery) keeps working.

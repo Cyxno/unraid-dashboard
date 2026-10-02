@@ -90,3 +90,22 @@ curl -s https://<host>/manifest.webmanifest | grep -o '"name"[^,]*'  # "Beacon �
 ```
 
 ## Verifying a deploy
+
+## Push notifications on iOS
+
+Web Push for home-screen-installed web apps is supported from
+**iOS 16.4** onward, with these requirements:
+
+- The app must be installed to the home screen (Share → Add to Home
+  Screen) — Safari tabs do not receive push on iOS.
+- Notification permission must be granted from an explicit user action
+  inside the app (Settings → Notifications → Enable notifications);
+  Beacon never prompts on page load.
+- iOS delivers push to installed PWAs through the standard Web Push
+  protocol with the server's VAPID keys — no Firebase/APNs setup is
+  needed.
+
+Desktop Chrome, Edge and Firefox support both in-tab notifications and
+installed-app push. If the server has no VAPID keys configured, Beacon
+falls back to in-app toasts and local browser notifications while a tab
+is open.

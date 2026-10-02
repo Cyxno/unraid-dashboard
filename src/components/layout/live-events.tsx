@@ -84,6 +84,37 @@ export function LiveEventsProvider({ children }: { children: React.ReactNode }) 
         transition.to === "RUNNING" ? "success" : "connection",
         `${transition.name}: ${transition.from.toLowerCase()} → ${transition.to.toLowerCase()}`,
       );
+    } else if (name === "notification") {
+      const notification = data as {
+        id: number;
+        severity: string;
+        title: string;
+        body: string;
+        url: string;
+      };
+      // In-app feedback for the dispatched notification. A local browser
+      // notification is raised ONLY when web push is not configured —
+      // otherwise the service worker owns delivery (open tab or not).
+      toast(
+        notification.severity === "critical" ? "error" : "connection",
+        notification.title,
+      );
+      let pushConfigured: boolean | null = null;
+      try {
+        pushConfigured = window.localStorage.getItem("beacon.notifications.pushConfigured") === "1";
+      } catch {
+        pushConfigured = null;
+      }
+      if (pushConfigured === false && typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+        try {
+          new Notification(notification.title, {
+            body: notification.body,
+            tag: `beacon:${notification.id}`,
+          });
+        } catch {
+          // Notification constructor can throw in some contexts — toast already shown.
+        }
+      }
     }
   };
 

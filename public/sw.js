@@ -17,7 +17,7 @@
  * mid-action by a version flip.
  */
 
-const VERSION = "v1.1.5";
+const VERSION = "v1.2.0";
 const SHELL_CACHE = `unraid-dash-shell-${VERSION}`;
 const STATIC_CACHE = `unraid-dash-static-${VERSION}`;
 
@@ -159,4 +159,54 @@ self.addEventListener("fetch", (event) => {
       })(),
     );
   }
+});
+
+/* ---------------------------------------------------------------------------
+ * Web Push notifications (v1.2.0).
+ *
+ * The server pushes JSON payloads {title, body, tag, url, severity}. The
+ * tag (= event fingerprint) lets the OS replace superseded notifications
+ * instead of stacking duplicates. Clicking focuses/opens Beacon on the
+ * event's deep link. Payloads are plain text rendered by the OS — never
+ * HTML — and are truncated server-side.
+ * ------------------------------------------------------------------------ */
+self.addEventListener("push", (event) => {
+  let payload = null;
+  try {
+    payload = event.data ? event.data.json() : null;
+  } catch {
+    payload = null;
+  }
+  if (!payload || typeof payload.title !== "string" || !payload.title.trim()) return;
+  const url = typeof payload.url === "string" && payload.url.startsWith("/") ? payload.url : "/";
+  event.waitUntil(
+    self.registration.showNotification(payload.title.slice(0, 90), {
+      body: typeof payload.body === "string" ? payload.body.slice(0, 220) : "",
+      tag: typeof payload.tag === "string" ? payload.tag.slice(0, 160) : "beacon",
+      icon: "/icons/icon-192.png",
+      badge: "/icons/icon-maskable-192.png",
+      data: { url },
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = event.notification.data && typeof event.notification.data.url === "string"
+    ? event.notification.data.url
+    : "/";
+  event.waitUntil(
+    (async () => {
+      const clientList = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      for (const client of clientList) {
+        const path = new URL(client.url).pathname;
+        if (path === target || path === "/") {
+          await client.focus();
+          if (path !== target) client.navigate(target).catch(() => {});
+          return;
+        }
+      }
+      await self.clients.openWindow(target);
+    })(),
+  );
 });

@@ -33,6 +33,7 @@ import { DashboardsSection } from "@/components/settings/dashboards-section";
 import { AppearanceSection } from "@/components/settings/appearance-section";
 import { AgentApiSection } from "@/components/settings/agent-api-section";
 import { UpdatesSection } from "@/components/settings/updates-section";
+import { NotificationsSection } from "@/components/settings/notifications-section";
 import type {
   BuildInfoDto,
   ConnectionStatus,
@@ -727,6 +728,10 @@ export default function SettingsPage() {
             <SectionRule label="Updates &amp; security" />
 
             <UpdatesSection />
+
+            <SectionRule label="Notifications" />
+
+            <NotificationsSection />
 
             <SectionRule label="Shared dashboards &amp; diagnostics" />
 
