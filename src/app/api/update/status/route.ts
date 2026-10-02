@@ -1,10 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { guardRead } from "@/server/auth/guard";
-import { getHelperStatus, isUpdatePhaseActive, compareSemver } from "@/server/update/helper-client";
+import { getHelperStatus, isUpdatePhaseActive } from "@/server/update/helper-client";
 import { checkForUpdate } from "@/server/actions/update-check";
 import { getBuildInfo } from "@/server/version";
 import { readUpdateHistory, maybeRecordFromHelper, validatedVersions } from "@/server/update/history";
 import { buildReleaseChain, readBootMarker } from "@/server/update/release-chain";
+import { resolveEffectiveRelease } from "@/server/update/effective-release";
 import { enrichedOverview } from "@/server/docker/updates";
 
 export const dynamic = "force-dynamic";
@@ -14,44 +15,32 @@ export const dynamic = "force-dynamic";
  * running build, GHCR release check, local-image discovery (usable
  * without a host GHCR login), version/digest consistency flags, the
  * local helper state, and the persisted update history. No secrets.
+ *
+ * `?force=1` (the manual "Check for updates" button) bypasses the release
+ * check's cache and performs a fresh remote registry lookup. Background
+ * polls keep using the cache. Local images are discovery-only: without a
+ * registry answer the status stays unknown/degraded — local images are
+ * never presented as an authoritative "latest release".
  */
 export async function GET(request: NextRequest) {
   const guard = guardRead(request);
   if (!guard.ok) return guard.response;
+  const force = request.nextUrl.searchParams.get("force") === "1";
 
   const build = getBuildInfo();
   const [release, helper] = await Promise.all([
-    checkForUpdate().catch(() => null),
+    checkForUpdate({ force }).catch(() => null),
     getHelperStatus(),
   ]);
 
-  /* Release discovery ---------------------------------------------------
-   * Registry check (GHCR_TOKEN) when available; otherwise the helper's
-   * locally present semver images drive discovery — same validation
-   * applies on apply (label match, newer-only, single-flight). */
-  let effectiveRelease = release;
-  let releaseSource: "registry" | "local" | "none" = "none";
-  if (release?.status === "available" || release?.status === "up-to-date") {
-    releaseSource = "registry";
-  } else if (helper.reachable && helper.localVersions.length > 0) {
-    const newestLocal = helper.localVersions[0] ?? null;
-    const comparison = newestLocal && build.version !== "unknown" ? compareSemver(newestLocal, build.version) : 0;
-    effectiveRelease = {
-      status: comparison > 0 ? "available" : comparison === 0 ? "up-to-date" : "unknown",
-      reason: comparison > 0 ? `Newer locally present image: ${newestLocal}.` : undefined,
-      latestTag: comparison > 0 ? newestLocal : (helper.currentVersion ?? newestLocal),
-      latestManifestDigest: null,
-      latestRevisionSha: null,
-      checkedAt: new Date().toISOString(),
-      registry: {
-        tokenConfigured: release?.registry.tokenConfigured ?? false,
-        reachable: release?.registry.reachable ?? null,
-        authorized: release?.registry.authorized ?? null,
-        reason: release?.reason ?? "Registry check unavailable — using locally present images.",
-      },
-    };
-    releaseSource = "local";
-  }
+  /* Release discovery ----------------------------------------------------
+   * Registry answer (now anonymous-capable) is authoritative; locally
+   * present images are discovery-only and never report "up to date". */
+  const { release: effectiveRelease, source: releaseSource } = resolveEffectiveRelease(
+    release,
+    helper,
+    build.version,
+  );
 
   /* Version/digest consistency (informational, not incident flags) ------- */
   const consistency = {
