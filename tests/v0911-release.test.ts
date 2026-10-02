@@ -138,7 +138,18 @@ describe("v0.9.11 thermal intelligence + capability-aware automation + PWA", () 
     it("safe-area system invariants hold (clearance token + safe-top + cover)", () => {
       const css = read("src/app/globals.css");
       assert.match(css, /--mobile-bottom-clearance: calc\(env\(safe-area-inset-bottom, 0px\) \+ 4\.75rem\)/);
-      assert.match(css, /\.safe-top \{\s*padding-top: env\(safe-area-inset-top\);/);
+      // v1.1.2 regression fix: the header GROWS by the top inset instead of
+      // padding a fixed h-14 (content was squeezed/clipped under the
+      // black-translucent status bar on notched iPhones in standalone).
+      assert.match(css, /--safe-area-top: env\(safe-area-inset-top, 0px\)/);
+      assert.match(css, /--shell-header-height: calc\(3\.5rem \+ var\(--safe-area-top\)\)/);
+      assert.match(css, /\.safe-top \{\s*padding-top: var\(--safe-area-top\);/);
+      const header = read("src/components/layout/header.tsx");
+      assert.match(header, /h-\[var\(--shell-header-height\)\]/, "header height must include the safe-area inset");
+      const sidebar = read("src/components/layout/sidebar.tsx");
+      assert.match(sidebar, /h-\[var\(--shell-header-height\)\]/, "sidebar identity row must stay aligned with the header");
+      const banner = read("src/components/layout/pwa-status-banner.tsx");
+      assert.match(banner, /top-\[var\(--shell-header-height\)\]/, "sticky banners must offset below the grown header");
       const layout = read("src/app/layout.tsx");
       assert.match(layout, /viewportFit: "cover"/);
       assert.match(layout, /appleWebApp: \{[\s\S]*?capable: true/);

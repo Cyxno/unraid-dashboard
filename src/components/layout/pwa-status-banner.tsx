@@ -84,7 +84,7 @@ function BannerRow({
   return (
     <div
       className={cn(
-        "sticky top-14 z-40 flex items-center justify-center gap-2 border-b px-4 py-1.5 text-xs font-medium",
+        "sticky top-[var(--shell-header-height)] z-40 flex items-center justify-center gap-2 border-b px-4 py-1.5 text-xs font-medium",
         tone === "destructive"
           ? "border-destructive/40 bg-destructive/15 text-destructive"
           : "border-warning/30 bg-warning/15 text-warning",

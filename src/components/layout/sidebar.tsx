@@ -61,10 +61,11 @@ export function Sidebar({ mobileOpen, onMobileClose, collapsed, onToggleCollapse
         )}
         style={{ paddingLeft: "env(safe-area-inset-left)" }}
       >
-        {/* Product identity */}
+        {/* Product identity — grows with the top safe-area exactly like the
+            header, so the two border rows stay aligned in standalone mode. */}
         <div
           className={cn(
-            "flex h-14 shrink-0 items-center gap-2.5 border-b px-3",
+            "safe-top flex h-[var(--shell-header-height)] shrink-0 items-center gap-2.5 border-b px-3",
             collapsed && "md:justify-center md:px-0",
           )}
         >

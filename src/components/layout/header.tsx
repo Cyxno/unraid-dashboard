@@ -154,7 +154,7 @@ export function Header({ overview, onMenuClick }: HeaderProps) {
   const storage = payload?.storage;
 
   return (
-    <header className="safe-top sticky top-0 z-30 flex h-14 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur-sm supports-[backdrop-filter]:bg-background/80">
+    <header className="safe-top sticky top-0 z-30 flex h-[var(--shell-header-height)] items-center gap-3 border-b bg-background/95 px-4 backdrop-blur-sm supports-[backdrop-filter]:bg-background/80">
       <Button
         variant="ghost"
         size="icon"

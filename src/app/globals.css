@@ -392,10 +392,17 @@
  * ------------------------------------------------------------------------- */
 :root {
   --mobile-bottom-clearance: calc(env(safe-area-inset-bottom, 0px) + 4.75rem);
+  /* Top safe-area inset and the resulting full header height. The header
+     must GROW by the inset (black-translucent standalone draws the status
+     bar over the page): a fixed h-14 with the inset padded inside left the
+     content row squeezed/clipped under the status bar on notched iPhones.
+     In browser tabs env() is 0, so this equals the historical 3.5rem. */
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --shell-header-height: calc(3.5rem + var(--safe-area-top));
 }
 @supports (padding: env(safe-area-inset-top)) {
   .safe-top {
-    padding-top: env(safe-area-inset-top);
+    padding-top: var(--safe-area-top);
   }
   .safe-frame {
     padding-top: max(1rem, env(safe-area-inset-top));
