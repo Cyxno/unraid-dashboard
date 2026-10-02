@@ -1,7 +1,30 @@
 {
   "generatedFrom": "CHANGELOG.md",
-  "latestVersion": "v1.2.0",
+  "latestVersion": "v1.2.1",
   "releases": [
+    {
+      "version": "v1.2.1",
+      "anchor": "v1-2-1",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "Notification evaluation now starts with the server process (Next.js instrumentation) instead of requiring someone to visit a notification route first — without this, push delivery and history silently never ran on a fresh install",
+            "First-run/upgrade anti-spam: on a fresh notification state (new install, or upgrade from v1.1.x) existing conditions are baselined silently — only future transitions notify, so activating notifications never floods devices with pre-existing problems",
+            "iPhone Safari without a Home Screen install now shows an honest \"home-screen install required\" state with instructions instead of a broken Enable button"
+          ]
+        },
+        {
+          "name": "Improved",
+          "items": [
+            "VAPID variables are now present in every official install route: docker-compose (optional, commented) and the Unraid template (private key masked, no defaults)",
+            "Corrupt notification state recovers to a clean baseline with a log warning instead of crashing; restart dedupe proven (recreating the process never re-pushes known conditions)",
+            "Subscription route is rate-limited with a 16 KB payload cap; notification history shows friendly delivery labels and categories; preferences scope documented in the UI"
+          ]
+        }
+      ]
+    },
     {
       "version": "v1.2.0",
       "anchor": "v1-2-0",
