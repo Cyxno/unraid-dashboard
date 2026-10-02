@@ -2,7 +2,7 @@ import { publishEvent } from "@/server/events/sampler";
 import { evaluateEvents } from "./engine";
 import { loadState, loadStateFromDisk, saveNow, scheduleSave } from "./store";
 import { sendToSubscription, pushConfigured } from "./push";
-import { collectEvents } from "./sources";
+import { collectEvents as collectEventsFromSources } from "./sources";
 import type { DeliveryStatus, NotificationRecord, RawEvent } from "./types";
 
 /**
@@ -22,6 +22,14 @@ const globalStore = globalThis as unknown as {
   __notificationLoop?: ReturnType<typeof setInterval>;
   __notificationBusy?: boolean;
 };
+
+type EventSource = () => Promise<RawEvent[]>;
+let eventSourceOverride: EventSource | null = null;
+
+/** Test seam: replaces the event sources (never used in production). */
+export function setEventSourceForTests(source: EventSource | null): void {
+  eventSourceOverride = source;
+}
 
 function pushRecord(
   state: ReturnType<typeof loadState>,
@@ -58,18 +66,19 @@ async function dispatchPush(
 ): Promise<void> {
   const state = loadState();
   const config = pushConfigured();
+  // In-app delivery (SSE broadcast) already happened for open clients; the
+  // push outcome refines the record. Without VAPID/subscribers the record
+  // stays an honest "in-app" with the reason, never a silent loss.
   if (!config.configured) {
     for (const notification of notifications) {
-      notification.record.delivery = "skipped-unconfigured";
-      notification.record.detail = "push not configured (VAPID keys missing)";
+      notification.record.detail = "push not configured (VAPID keys missing) — delivered in-app only";
     }
     return;
   }
   const subscriptions = state.subscriptions.filter((entry) => entry.enabled);
   for (const notification of notifications) {
     if (subscriptions.length === 0) {
-      notification.record.delivery = "skipped-unconfigured";
-      notification.record.detail = "no subscribed devices";
+      notification.record.detail = "no subscribed devices — delivered in-app only";
       continue;
     }
     const outcomes = await Promise.all(
@@ -108,8 +117,25 @@ async function runCycle(): Promise<void> {
   globalStore.__notificationBusy = true;
   try {
     const state = await loadStateFromDisk();
-    const rawEvents: RawEvent[] = await collectEvents();
-    const decision = evaluateEvents(rawEvents, state.active, state.preferences, Date.now());
+
+    // First-run / upgrade protection (anti-spam): before the baseline is
+    // taken, current conditions are ingested into the active set SILENTLY.
+    // Only future TRANSITIONS dispatch — activating notifications on a
+    // server that already has three unhealthy containers must never flood
+    // devices with pre-existing problems.
+    const baseline = state.baselinedAt === null;
+    const rawEvents: RawEvent[] = eventSourceOverride ? await eventSourceOverride() : await collectEventsFromSources();
+    const decision = evaluateEvents(baseline ? [] : rawEvents, state.active, state.preferences, Date.now());
+
+    if (baseline) {
+      const baselineDecision = evaluateEvents(rawEvents, state.active, state.preferences, Date.now());
+      for (const upsert of baselineDecision.activeUpserts) {
+        state.active[upsert.fingerprint] = upsert;
+      }
+      state.baselinedAt = Date.now();
+      await saveNow().catch(() => scheduleSave(1000));
+      return;
+    }
 
     // Merge active-set upserts; drop resolved fingerprints.
     for (const upsert of decision.activeUpserts) {

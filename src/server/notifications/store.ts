@@ -32,6 +32,7 @@ function emptyState(): NotificationState {
     subscriptions: [],
     history: [],
     lastId: 0,
+    baselinedAt: null,
   };
 }
 
@@ -55,9 +56,14 @@ export async function loadStateFromDisk(): Promise<NotificationState> {
         : [],
       history: Array.isArray(raw.history) ? raw.history.slice(-MAX_HISTORY) : [],
       lastId: Number(raw.lastId) || 0,
+      baselinedAt: typeof raw.baselinedAt === "number" ? raw.baselinedAt : null,
     };
   } catch {
+    // Corrupt or unreadable state: recover to a fresh baseline instead of
+    // crashing the app. Worst case, notification dedupe/history resets —
+    // and the engine's baseline mode prevents a recovery storm.
     globalStore.__notificationState = fallback;
+    console.warn("[notifications] state file unreadable — starting from a clean baseline");
   }
   return globalStore.__notificationState;
 }

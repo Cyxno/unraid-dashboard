@@ -114,6 +114,13 @@ export interface NotificationState {
   history: NotificationRecord[];
   /** Monotonic counter for history ids. */
   lastId: number;
+  /**
+   * When the initial baseline was taken. First-run/upgrade protection: on
+   * a fresh state file the current conditions are ingested SILENTLY (no
+   * dispatch) so activating notifications or upgrading from v1.1.x never
+   * floods devices with pre-existing problems.
+   */
+  baselinedAt: number | null;
 }
 
 export function sanitizeNotificationText(value: string, max: number): string {
