@@ -1,7 +1,20 @@
 {
   "generatedFrom": "CHANGELOG.md",
-  "latestVersion": "v1.1.3",
+  "latestVersion": "v1.1.4",
   "releases": [
+    {
+      "version": "v1.1.4",
+      "anchor": "v1-1-4",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "Overview hero strip showed \"State unknown\" for attention-level health situations (e.g. stopped autostart containers) instead of \"Needs attention\" — the verdict compared against a health-level value that does not exist; the warning banner above it was already correct"
+          ]
+        }
+      ]
+    },
     {
       "version": "v1.1.3",
       "anchor": "v1-1-3",

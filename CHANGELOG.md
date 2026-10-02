@@ -3,6 +3,12 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.1.4
+
+### Fixed
+
+- Overview hero strip showed "State unknown" for attention-level health situations (e.g. stopped autostart containers) instead of "Needs attention" — the verdict compared against a health-level value that does not exist; the warning banner above it was already correct
+
 ## v1.1.3
 
 ### Fixed
