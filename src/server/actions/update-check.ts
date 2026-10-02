@@ -58,6 +58,22 @@ interface RegistryError extends Error {
   status?: number;
 }
 
+/** OCI pagination: `Link: <…/tags/list?last=…&n=…>; rel="next"` → path+query.
+ *  GHCR returns path-only links (`</v2/…>`); absolute URLs are tolerated. */
+function nextLinkPath(link: string | null): string | null {
+  if (!link) return null;
+  const match = link.match(/<([^>]+)>;\s*rel="next"/);
+  const target = match?.[1];
+  if (!target) return null;
+  if (target.startsWith("/")) return target;
+  try {
+    const parsed = new URL(target);
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return null;
+  }
+}
+
 function parseVersion(tag: string): number[] | null {
   const cleaned = tag.replace(/^v/, "");
   if (!/^\d+\.\d+\.\d+$/.test(cleaned)) return null;
@@ -121,9 +137,20 @@ async function fetchLatestFromRegistry(token: string, image: string): Promise<{
   manifestDigest: string | null;
   revisionSha: string | null;
 }> {
-  const tagsResponse = await registryFetch(`/v2/${image}/tags/list`, token);
-  const body = (await tagsResponse.json()) as { tags?: string[] };
-  const semverTags = (body.tags ?? [])
+  // GHCR paginates tags/list (100 per page) and the tag list grows with
+  // every build (sha tags count toward the page budget). Without following
+  // the Link header the newest semver tag can be missing entirely — the
+  // check then compared against an old tag and reported "up to date"
+  // (v1.1.2 regression: list truncated alphabetically at 0.9.9).
+  const tags: string[] = [];
+  let path: string | null = `/v2/${image}/tags/list?n=100`;
+  for (let page = 0; page < 25 && path; page += 1) {
+    const response = await registryFetch(path, token);
+    const body = (await response.json()) as { tags?: string[] };
+    tags.push(...(body.tags ?? []));
+    path = nextLinkPath(response.headers.get("link"));
+  }
+  const semverTags = tags
     .map((tag) => ({ tag, version: parseVersion(tag) }))
     .filter((entry): entry is { tag: string; version: number[] } => entry.version !== null)
     .sort((a, b) => compareVersions(b.version, a.version));
@@ -156,10 +183,14 @@ async function fetchLatestFromRegistry(token: string, image: string): Promise<{
   return { latestTag: latest.tag, manifestDigest, revisionSha };
 }
 
-export async function checkForUpdate(): Promise<UpdateStatus> {
+export async function checkForUpdate(
+  options: { force?: boolean } = {},
+): Promise<UpdateStatus> {
   const cached = globalStore.__dashboardUpdateCheck;
-  // Check at most once per hour — never hammer GitHub.
-  if (cached && Date.now() - cached.at < 3_600_000) {
+  // Background checks cache for at most one hour — never hammer GitHub.
+  // A manual "Check for updates" (force) always performs a fresh remote
+  // lookup and refreshes the cache with its result.
+  if (!options.force && cached && Date.now() - cached.at < 3_600_000) {
     return cached.value;
   }
 
