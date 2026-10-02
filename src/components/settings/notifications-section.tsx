@@ -114,7 +114,10 @@ export function NotificationsSection() {
   }, []);
 
   useEffect(() => {
-    setPermission(typeof Notification === "undefined" ? "unsupported" : Notification.permission);
+    void (async () => {
+      // Read post-mount: no synchronous setState in the effect body.
+      setPermission(typeof Notification === "undefined" ? "unsupported" : Notification.permission);
+    })();
     void loadConfig();
     void loadHistory();
     void refreshSubscriptionState();
@@ -135,7 +138,7 @@ export function NotificationsSection() {
           tone: "error",
           text:
             permission === "denied"
-              ? "Notifications are blocked for this site. Re-enable them in your browser's site settings (padlock icon → Notifications)."
+              ? "Notifications are blocked for this site. Re-enable them in your browser&apos;s site settings (padlock icon → Notifications)."
               : "Permission was dismissed — click Enable again to ask the browser.",
         });
         return;
