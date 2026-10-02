@@ -114,13 +114,23 @@ export function NotificationsSection() {
   }, []);
 
   useEffect(() => {
-    void (async () => {
-      // Read post-mount: no synchronous setState in the effect body.
+    // Permission state after paint: browser APIs are read post-mount and
+    // the setState lands outside the effect body (react-hooks rule).
+    const frame = window.requestAnimationFrame(() => {
       setPermission(typeof Notification === "undefined" ? "unsupported" : Notification.permission);
-    })();
-    void loadConfig();
-    void loadHistory();
-    void refreshSubscriptionState();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    // Deferred to a macrotask: the loader callbacks settle state outside
+    // the effect body (react-hooks set-state-in-effect rule).
+    const timer = setTimeout(() => {
+      void loadConfig();
+      void loadHistory();
+      void refreshSubscriptionState();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [loadConfig, loadHistory, refreshSubscriptionState]);
 
   const enableNotifications = async () => {
@@ -262,7 +272,7 @@ export function NotificationsSection() {
       </CardHeader>
       <CardContent className="space-y-4 text-sm">
         <p className="-mt-2 text-xs text-muted-foreground">
-          Opt-in per browser/device. Critical and warning conditions come from Beacon's health
+          Opt-in per browser/device. Critical and warning conditions come from Beacon&apos;s health
           semantics; stopped containers are never a notification.
         </p>
         {/* Permission / push capability */}

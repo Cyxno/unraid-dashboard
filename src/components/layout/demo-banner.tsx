@@ -16,16 +16,6 @@ import type { PollResult } from "@/hooks/use-poll";
  * returns on the next page load until the connection actually works.
  */
 
-const DEMO_SECTIONS = [
-  "identity",
-  "cpu",
-  "memory",
-  "storage",
-  "docker",
-  "network",
-  "notifications",
-] as const;
-
 function demoExplanation(payload: OverviewPayload | null): string | null {
   if (!payload) return null;
   const sections: { status?: string; reason?: string | null }[] = [
