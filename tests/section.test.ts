@@ -67,3 +67,19 @@ describe("SectionProvider", () => {
     assert.notEqual(demo.identity.serverName, undefined);
   });
 });
+
+describe("SectionProvider.hasLive (demo gate input)", () => {
+  it("is false before the first success and true after it", async () => {
+    let shouldFail = true;
+    const provider = new SectionProvider("gate", async () => {
+      if (shouldFail) throw new Error("API down");
+      return { ok: 1 };
+    }, 60_000);
+    const failed = await provider.get();
+    assert.equal(failed.status, "unavailable");
+    assert.equal(provider.hasLive, false, "never-succeeded provider must keep the demo gate eligible");
+    shouldFail = false;
+    await provider.get();
+    assert.equal(provider.hasLive, true, "first success must close the demo gate");
+  });
+});

@@ -215,8 +215,33 @@ const systemProvider = new SectionProvider<SystemInfo>(
 
 /* Demo substitution ----------------------------------------------------- */
 
-function withDemo<T>(section: Section<T>, demoData: T): Section<T> {
-  if (section.status === "unavailable") {
+/**
+ * Demo substitution contract (see mock.ts and section.ts): demo data is
+ * shown only while the Unraid API has NEVER responded this process. A live
+ * server with one failing section (missing key role, query error, a boot
+ * race after another section succeeded) shows that section as unavailable —
+ * an honest degraded state — never as demo. Prometheus, helper and history
+ * failures never gate demo: they only feed enrichments.
+ */
+function unraidDemoActive(): boolean {
+  return !(
+    identityProvider.hasLive ||
+    metricsProvider.hasLive ||
+    storageProvider.hasLive ||
+    dockerProvider.hasLive ||
+    notificationsProvider.hasLive ||
+    vmsProvider.hasLive ||
+    systemProvider.hasLive
+  );
+}
+
+/** Pure demo-substitution decision, exported for regression tests. */
+export function applyDemoSubstitution<T>(
+  demoActive: boolean,
+  section: Section<T>,
+  demoData: T,
+): Section<T> {
+  if (demoActive && section.status === "unavailable") {
     return {
       status: "demo",
       data: demoData,
@@ -226,6 +251,10 @@ function withDemo<T>(section: Section<T>, demoData: T): Section<T> {
     };
   }
   return section;
+}
+
+function withDemo<T>(section: Section<T>, demoData: T): Section<T> {
+  return applyDemoSubstitution(unraidDemoActive(), section, demoData);
 }
 
 /** lastSuccessAt per provider, for the diagnostics view. */
