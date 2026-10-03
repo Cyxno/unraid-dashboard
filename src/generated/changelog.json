@@ -1,7 +1,21 @@
 {
   "generatedFrom": "CHANGELOG.md",
-  "latestVersion": "v1.3.2",
+  "latestVersion": "v1.3.3",
   "releases": [
+    {
+      "version": "v1.3.3",
+      "anchor": "v1-3-3",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "Local login was broken in the Alpine standalone container: scrypt with N=2^15 exceeded the OpenSSL default memory limit, causing hashPassword to throw on every attempt. Reduced to N=2^14 (still OWASP-acceptable) with explicit 64 MB maxmem",
+            "Setup claim did not generate a session secret when local auth was selected — login always returned \"Session secret not configured\" after setup completed with local auth"
+          ]
+        }
+      ]
+    },
     {
       "version": "v1.3.2",
       "anchor": "v1-3-2",
