@@ -3,6 +3,25 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.3.0
+
+### Added
+
+- **First-time setup wizard**: a fresh install opens a guided setup instead of requiring environment variables — connect to the Unraid API, choose a security mode, done. Requires a one-time, host-generated setup token (0600 file under /app/data) so nobody on the network can claim setup without host access
+- **Three authentication modes**: Trusted Network (default, no login — backward compatible with all existing installs), Local Login (built-in username/password with scrypt hashing, HttpOnly session cookies, rate-limited login, session-epoch logout), and Reverse Proxy (the existing trusted-proxy model)
+- **Settings → Security**: shows the current auth mode, HTTPS state, action capability, helper status and push configuration in one card
+- **ENV > UI > default precedence**: settings from environment variables show "Managed by environment" and cannot be silently overridden by the UI
+- **Setup token**: 32-byte random, host-generated, single-claim (atomic; second claim rejected 409), deleted after use
+- Local login over plain HTTP warns "insecure connection" in the UI (the login still works; the warning is informational)
+
+### Security
+
+- Local auth passwords are hashed with scrypt (N=2^15) and stored in the 0600 config file; never plaintext, never returned by the API
+- Session cookies are HttpOnly, SameSite=Lax, Secure when served over HTTPS; session tokens are HMAC-SHA256 signed with a per-install secret and bound to a session epoch (credential change invalidates all sessions)
+- Login is rate-limited per source IP with generic error messages (no username enumeration)
+- Setup claim is race-safe (in-process lock + atomic file write); the setup token is deleted after successful claim
+- No first-visitor-wins: setup requires host filesystem access to read the token
+
 ## v1.2.3
 
 ### Fixed

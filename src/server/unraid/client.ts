@@ -1,4 +1,5 @@
 import { getEnv } from "@/server/env";
+import { resolveUnraidUrl, resolveUnraidApiKey } from "@/server/config/runtime";
 
 /**
  * Thin typed client for the Unraid GraphQL API.
@@ -33,8 +34,11 @@ export class UnraidClient {
     }> = {},
   ) {
     const env = getEnv();
-    this.url = `${options.url ?? env.UNRAID_URL}${env.UNRAID_GRAPHQL_PATH}`;
-    this.apiKey = options.apiKey ?? env.UNRAID_API_KEY;
+    // Runtime precedence: ENV > UI config > placeholder (demo mode). The
+    // resolution is live — after setup writes the config, new clients
+    // pick up the connection without a restart.
+    this.url = `${(options.url ?? resolveUnraidUrl().value) || env.UNRAID_URL}${env.UNRAID_GRAPHQL_PATH}`;
+    this.apiKey = (options.apiKey ?? resolveUnraidApiKey().value) || env.UNRAID_API_KEY;
     this.timeoutMs = options.timeoutMs ?? env.UNRAID_TIMEOUT_MS;
   }
 

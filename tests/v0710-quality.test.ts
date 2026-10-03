@@ -6,7 +6,7 @@ import { readFile } from "node:fs/promises";
 
 describe("v0.7.10 UTF-8 regressie (em-dash in 401-tekst)", () => {
   it("middleware-bron bevat de em-dash als correcte UTF-8-bytevolgorde", async () => {
-    const bytes = await readFile("src/middleware.ts");
+    const bytes = await readFile("src/proxy.ts");
     const text = bytes.toString("utf8");
     // 401-tekst bevat een em-dash en geen losse mojibake-bytes (Ã¢â¬â)
     assert.match(text, /Unauthorized — /);
@@ -18,7 +18,7 @@ describe("v0.7.10 UTF-8 regressie (em-dash in 401-tekst)", () => {
   });
 
   it("charset=utf-8 op de plain-text 401-responses", async () => {
-    const text = await readFile("src/middleware.ts", "utf8");
+    const text = await readFile("src/proxy.ts", "utf8");
     assert.ok(text.includes("text/plain; charset=utf-8"));
   });
 });
