@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { guardRead, guardWrite } from "@/server/auth/guard";
+import { guardDelete, guardWrite } from "@/server/auth/guard";
 import { checkWriteRate } from "@/server/dashboards/rate-limit";
 import { loadStateFromDisk, scheduleSave } from "@/server/notifications/store";
 import { startNotificationLoop } from "@/server/notifications";
@@ -63,7 +63,9 @@ export async function POST(request: NextRequest) {
 
 /** Removes a subscription (explicit unsubscribe from this device). */
 export async function DELETE(request: NextRequest) {
-  const guard = guardWrite(request);
+  // guardDelete: identical CSRF posture as guardWrite but for DELETE —
+  // guardWrite is POST-only and rejected every unsubscribe with 405.
+  const guard = guardDelete(request);
   if (!guard.ok) return guard.response;
 
   const body = (await request.json().catch(() => null)) as { endpoint?: string } | null;

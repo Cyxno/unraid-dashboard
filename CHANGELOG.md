@@ -3,6 +3,18 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.2.3
+
+### Fixed
+
+- **Device unsubscribe was broken**: the notification subscription DELETE handler used the POST-only write guard, so every unsubscribe attempt was rejected with 405 — devices could never unbind through the API. Now uses the DELETE guard with the identical CSRF posture
+- Notification preference saves are now rate-limited like every other notification mutation
+
+### Security
+
+- Added Strict-Transport-Security (ignored over the HTTP LAN fallback, enforced on the Tailscale HTTPS origin); CSP, frame-ancestors 'none', X-Frame-Options DENY, nosniff, Referrer-Policy and Permissions-Policy were already in place and verified
+- Security-posture regression suite locking route guards, DELETE/POST guard separation, HSTS/frame headers, absence of shell composition and log-read allowlisting
+
 ## v1.2.2
 
 ### Fixed

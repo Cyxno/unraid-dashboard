@@ -49,6 +49,9 @@ const nextConfig: NextConfig = {
             ].join("; "),
           },
           { key: "X-Content-Type-Options", value: "nosniff" },
+          // HSTS is ignored over plain HTTP (the LAN fallback path) and
+          // enforces HTTPS on the Tailscale Serve origin.
+          { key: "Strict-Transport-Security", value: "max-age=15552000" },
           { key: "X-Frame-Options", value: "DENY" },
           { key: "Referrer-Policy", value: "no-referrer" },
           {

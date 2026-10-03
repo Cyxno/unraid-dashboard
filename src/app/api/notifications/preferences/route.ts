@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { guardWrite } from "@/server/auth/guard";
+import { checkWriteRate } from "@/server/dashboards/rate-limit";
 import { loadStateFromDisk, scheduleSave } from "@/server/notifications/store";
 import { DEFAULT_PREFERENCES, type NotificationPreferences } from "@/server/notifications/types";
 import { startNotificationLoop } from "@/server/notifications";
@@ -14,6 +15,11 @@ function coerceBool(value: unknown, fallback: boolean): boolean {
 export async function POST(request: NextRequest) {
   const guard = guardWrite(request);
   if (!guard.ok) return guard.response;
+  const actor = guard.identity.user ?? "lan";
+  const rate = checkWriteRate("notify-prefs:" + actor + "@" + guard.sourceIp);
+  if (!rate.allowed) {
+    return NextResponse.json({ error: "rate limited" }, { status: 429, headers: { "retry-after": String(Math.ceil((rate.retryAfterMs ?? 1000) / 1000)) } });
+  }
 
   const body = (await request.json().catch(() => null)) as Partial<NotificationPreferences> | null;
   if (!body) return NextResponse.json({ error: "invalid body" }, { status: 400 });
