@@ -1,7 +1,26 @@
 {
   "generatedFrom": "CHANGELOG.md",
-  "latestVersion": "v1.3.3",
+  "latestVersion": "v1.3.4",
   "releases": [
+    {
+      "version": "v1.3.4",
+      "anchor": "v1-3-4",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Added",
+          "items": [
+            "Helper inventory single-flight coalescing: concurrent /inventory requests share one in-flight Docker CLI refresh instead of each spawning N+1 processes. Reduces helper CPU bursts from N+1 spawns per request to 1 shared refresh per 10-second TTL window"
+          ]
+        },
+        {
+          "name": "Improved",
+          "items": [
+            "Helper image includes the inventory read cache and coalescing optimizations from the performance audit"
+          ]
+        }
+      ]
+    },
     {
       "version": "v1.3.3",
       "anchor": "v1-3-3",

@@ -36,6 +36,16 @@ only non-empty groups are shown. No dates — versions are ordered by semver.
 - Settings → Security status card: auth mode, Unraid connection, action key, helper status, push configuration
 - scripts/reset-local-auth.sh: host-side recovery for forgotten local password (reverts to trusted mode, invalidates all sessions)
 
+## v1.3.4
+
+### Added
+
+- Helper inventory single-flight coalescing: concurrent /inventory requests share one in-flight Docker CLI refresh instead of each spawning N+1 processes. Reduces helper CPU bursts from N+1 spawns per request to 1 shared refresh per 10-second TTL window
+
+### Improved
+
+- Helper image includes the inventory read cache and coalescing optimizations from the performance audit
+
 ## v1.3.3
 
 ### Fixed
