@@ -1,7 +1,30 @@
 {
   "generatedFrom": "CHANGELOG.md",
-  "latestVersion": "v1.3.0",
+  "latestVersion": "v1.3.1",
   "releases": [
+    {
+      "version": "v1.3.1",
+      "anchor": "v1-3-1",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "Compose: UNRAID_API_KEY no longer fails hard on fresh install — the setup wizard collects it from the browser",
+            "Unraid template: UNRAID_URL and UNRAID_API_KEY are now optional (setup wizard collects them)",
+            "Notification preference saves are rate-limited (was missing)",
+            "env AUTH_MODE schema: added \"local\" to the enum (was missing from the deployment override)"
+          ]
+        },
+        {
+          "name": "Added",
+          "items": [
+            "Settings → Security status card: auth mode, Unraid connection, action key, helper status, push configuration",
+            "scripts/reset-local-auth.sh: host-side recovery for forgotten local password (reverts to trusted mode, invalidates all sessions)"
+          ]
+        }
+      ]
+    },
     {
       "version": "v1.3.0",
       "anchor": "v1-3-0",

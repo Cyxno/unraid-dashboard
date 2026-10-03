@@ -22,6 +22,20 @@ only non-empty groups are shown. No dates — versions are ordered by semver.
 - Setup claim is race-safe (in-process lock + atomic file write); the setup token is deleted after successful claim
 - No first-visitor-wins: setup requires host filesystem access to read the token
 
+## v1.3.1
+
+### Fixed
+
+- Compose: UNRAID_API_KEY no longer fails hard on fresh install — the setup wizard collects it from the browser
+- Unraid template: UNRAID_URL and UNRAID_API_KEY are now optional (setup wizard collects them)
+- Notification preference saves are rate-limited (was missing)
+- env AUTH_MODE schema: added "local" to the enum (was missing from the deployment override)
+
+### Added
+
+- Settings → Security status card: auth mode, Unraid connection, action key, helper status, push configuration
+- scripts/reset-local-auth.sh: host-side recovery for forgotten local password (reverts to trusted mode, invalidates all sessions)
+
 ## v1.2.3
 
 ### Fixed
