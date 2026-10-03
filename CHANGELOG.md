@@ -53,6 +53,12 @@ only non-empty groups are shown. No dates — versions are ordered by semver.
 - Local login was broken in the Alpine standalone container: scrypt with N=2^15 exceeded the OpenSSL default memory limit, causing hashPassword to throw on every attempt. Reduced to N=2^14 (still OWASP-acceptable) with explicit 64 MB maxmem
 - Setup claim did not generate a session secret when local auth was selected — login always returned "Session secret not configured" after setup completed with local auth
 
+## v1.3.5
+
+### Fixed
+
+- Inventory cache is now invalidated after container mutations (recreate, update, compose up) — the previous 10s TTL allowed stale data for up to 10 seconds after a container change
+
 ## v1.3.2
 
 ### Added

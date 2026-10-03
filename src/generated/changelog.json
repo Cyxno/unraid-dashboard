@@ -1,7 +1,20 @@
 {
   "generatedFrom": "CHANGELOG.md",
-  "latestVersion": "v1.3.4",
+  "latestVersion": "v1.3.5",
   "releases": [
+    {
+      "version": "v1.3.5",
+      "anchor": "v1-3-5",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "Inventory cache is now invalidated after container mutations (recreate, update, compose up) — the previous 10s TTL allowed stale data for up to 10 seconds after a container change"
+          ]
+        }
+      ]
+    },
     {
       "version": "v1.3.4",
       "anchor": "v1-3-4",
