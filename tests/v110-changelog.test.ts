@@ -58,7 +58,7 @@ describe("v1.1.0 in-app changelog", () => {
     it("is current with CHANGELOG.md and covers the full retrospective", () => {
       const versions = generated.releases.map((release: { version: string }) => release.version);
       assert.equal(generated.latestVersion, "v1.3.6");
-      assert.equal(generated.releases.length, 36);
+      assert.equal(generated.releases.length, 37);
       for (const expected of ["v1.0.1", "v1.0.0", "v1.0.0-rc1", "v0.9.16", "v0.9.12", "v0.9.9", "v0.9.0"]) {
         assert.ok(versions.includes(expected), `missing ${expected}`);
       }
