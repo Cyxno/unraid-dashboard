@@ -30,7 +30,8 @@ services:
     environment:
       # Where the Unraid GraphQL API lives.
       UNRAID_URL: ${UNRAID_URL:-http://127.0.0.1:442}
-      UNRAID_API_KEY: ${UNRAID_API_KEY:?set UNRAID_API_KEY in .env (a read-only key is enough)}
+      UNRAID_API_KEY: ${UNRAID_API_KEY:-}
+      # Optional: leave empty for fresh installs — the setup wizard collects it.
       PORT: ${PORT:-8090}
       # Optional: Prometheus for time-series metrics, history, thermals.
       # PROMETHEUS_URL: http://127.0.0.1:9090

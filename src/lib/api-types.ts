@@ -529,7 +529,7 @@ export interface DiagnosticsPayload {
     /** Overall /app/data verdict: audit + dashboards writable. */
     dataVolumeWritable: boolean;
     /** v0.7 additions. */
-    authMode: "disabled" | "proxy";
+    authMode: "disabled" | "proxy" | "local";
     dashboardSchemaVersion: number;
     dataVolumeFreeBytes: number | null;
     helper: {

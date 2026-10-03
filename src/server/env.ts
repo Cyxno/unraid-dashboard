@@ -35,7 +35,7 @@ const envSchema = z.object({
    * - "proxy": requests must arrive via a configured trusted reverse proxy
    *   that injects the identity header. Direct requests are rejected.
    */
-  AUTH_MODE: z.enum(["disabled", "proxy"]).default("disabled"),
+  AUTH_MODE: z.enum(["disabled", "proxy", "local"]).default("disabled"),
   /** Identity header injected by the trusted reverse proxy (proxy mode). */
   AUTH_HEADER: z
     .string()
