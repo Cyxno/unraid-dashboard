@@ -75,6 +75,26 @@ notification diagnostic (dev console) reports `secureContext: true`.
 Settings → Notifications should now offer *Enable notifications* instead
 of the "requires HTTPS" state.
 
+## Port 443 already in use (e.g. Nginx Proxy Manager)
+
+If something else on the host already binds TCP 443 (NPM binds
+`0.0.0.0:443` by default), Tailscale cannot attach Serve to the default
+HTTPS port — Serve is then unreachable on the plain ts.net URL. Point it
+at a free HTTPS port instead:
+
+```sh
+tailscale serve --https=443 off          # remove the non-functional entry
+tailscale serve --bg --https=4443 localhost:8090
+```
+
+The origin becomes https://<machine>.<tailnet>.ts.net:4443 — still a
+real secure context, so PWA and push work exactly the same. Once 443 is
+free again you can move back to the default with
+`tailscale serve --https=4443 off` + `tailscale serve --bg localhost:8090`
+(same-origin caveat: browsers treat the ported URL as a separate origin,
+so re-enable notifications / reinstall the PWA from whichever address
+becomes canonical).
+
 ## Tailscale Serve vs Tailscale Funnel
 
 | | Reachable from | Use for Beacon |
