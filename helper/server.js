@@ -66,6 +66,7 @@ const STEP_TIMEOUT_MS = { inspect: 15_000, pull: 300_000, replace: 30_000 };
 // Mutations clear the cache via invalidateInventory() to ensure freshness.
 const INVENTORY_TTL_MS = 10_000;
 let inventoryCache = null; // { at, body }
+let inventoryRefreshPromise = null; // single-flight coalescing
 function invalidateInventory() { inventoryCache = null; }
 
 const HELPER_VERSION = "0.9.5";
@@ -1415,8 +1416,17 @@ const server = http.createServer(async (req, res) => {
     if (inventoryCache && Date.now() - inventoryCache.at < INVENTORY_TTL_MS) {
       return sendJson(res, 200, inventoryCache.body);
     }
-    void (async () => {
+    // Single-flight coalescing: concurrent cache-miss requests await the
+    // same in-flight refresh instead of each spawning Docker CLI processes.
+    if (inventoryRefreshPromise) {
+      const body = await inventoryRefreshPromise.catch(() => null);
+      if (body) return sendJson(res, 200, body);
+      return sendJson(res, 500, { error: "Inventory refresh failed." });
+    }
+    inventoryRefreshPromise = (async () => {
       try {
+        // Batch: one `docker ps` for the list + one `docker inspect` with
+        // ALL container IDs (single spawn instead of N per-container spawns).
         const psRaw = await docker(
           ["ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.State}}\t{{.Status}}"],
           { timeoutMs: 20_000 },
@@ -1426,17 +1436,31 @@ const server = http.createServer(async (req, res) => {
           .filter((line) => line.trim().length > 0)
           .map((line) => line.split("\t"))
           .filter((parts) => parts.length >= 5);
+        if (entries.length === 0) {
+          return { version: HELPER_VERSION, containers: [], storage: { mode: process.env.DOCKER_STORAGE_MODE || "unknown", source: process.env.DOCKER_STORAGE_SOURCE || null } };
+        }
+        // Batch inspect: one spawn with all container IDs.
+        const allIds = entries.map(([id]) => id).join(" ");
+        const inspectRaw = await docker(
+          ["container", "inspect", "--format", "{{json .}}", ...entries.map(([id]) => id)],
+          STEP_TIMEOUT_MS.inspect,
+        );
+        let inspectResults = [];
+        try {
+          inspectResults = JSON.parse(inspectRaw.stdout);
+          if (!Array.isArray(inspectResults)) inspectResults = [inspectResults];
+        } catch {
+          inspectResults = [];
+        }
+        const inspectById = new Map();
+        for (const item of inspectResults) {
+          if (item?.Id) inspectById.set(item.Id, item);
+        }
         const containers = [];
         const imageDigestCache = new Map();
         for (const [id, name, image, state, status] of entries) {
           try {
-            // Full JSON inspect parsed in JS: Go template arrays in --format
-            // render space-separated (invalid JSON) — {{json .}} is safe.
-            const inspectArray = await dockerJson(
-              ["container", "inspect", "--format", "{{json .}}", id],
-              STEP_TIMEOUT_MS.inspect,
-            );
-            const current = Array.isArray(inspectArray) ? inspectArray[0] : inspectArray;
+            const current = inspectById.get(id) ?? null;
             const rawLabels = current?.Config?.Labels ?? {};
             const labels = {};
             for (const key of [
@@ -1458,8 +1482,6 @@ const server = http.createServer(async (req, res) => {
                 labels[key] = rawLabels[key].slice(0, 300);
               }
             }
-            // Unsupported-config detectie via de recreate-engine — dezelfde
-            // code als de update-machine, dus geen drift mogelijk.
             const snapForDetect = inspectToSnapshot(current);
             let imageExposed = [];
             try {
@@ -1473,9 +1495,6 @@ const server = http.createServer(async (req, res) => {
               imageExposed = [];
             }
             const unsupported = findUnsupported(snapForDetect, imageExposed);
-            // RepoDigests live on IMAGE inspect (absent from container
-            // inspect on newer Docker). Cache per image; this is the
-            // pulled index digest used for update comparison.
             let repoDigests = [];
             if (imageDigestCache.has(image)) {
               repoDigests = imageDigestCache.get(image) ?? [];
@@ -1529,12 +1548,15 @@ const server = http.createServer(async (req, res) => {
           storage: { mode: process.env.DOCKER_STORAGE_MODE || "unknown", source: process.env.DOCKER_STORAGE_SOURCE || null },
         };
         inventoryCache = { at: Date.now(), body };
-        return sendJson(res, 200, body);
+        return body;
       } catch (error) {
-        return sendJson(res, 500, { error: String(error.message ?? error).slice(0, 200) });
+        log("inventory", `refresh failed: ${String(error.message ?? error).slice(0, 120)}`);
+        return null;
       }
     })();
-    return;
+    const body = await inventoryRefreshPromise;
+    if (body) return sendJson(res, 200, body);
+    return sendJson(res, 500, { error: "Inventory refresh failed." });
   }
 
   if (url.pathname === "/status") {
