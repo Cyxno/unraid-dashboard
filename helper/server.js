@@ -61,6 +61,13 @@ const HEALTH_TIMEOUT_MS = 150_000;
 const VERIFY_TIMEOUT_MS = 30_000;
 const STEP_TIMEOUT_MS = { inspect: 15_000, pull: 300_000, replace: 30_000 };
 
+// Inventory cache: repeated dashboard polls within the TTL reuse the same
+// result instead of re-spawning N+1 Docker CLI processes per request.
+// Mutations clear the cache via invalidateInventory() to ensure freshness.
+const INVENTORY_TTL_MS = 10_000;
+let inventoryCache = null; // { at, body }
+function invalidateInventory() { inventoryCache = null; }
+
 const HELPER_VERSION = "0.9.5";
 
 /** Strict remote mode (v0.7.14): when UPDATE_REQUIRE_REMOTE=true, a
@@ -306,6 +313,7 @@ async function verifyLive(expectedVersion) {
 let machineMutated = false;
 
 async function recreateContainer(baseArgs, image, envLines) {
+
   await docker(["rm", "-f", CONTAINER_NAME], { timeoutMs: STEP_TIMEOUT_MS.replace }).catch(() => {});
   machineMutated = true;
   await dockerRunWithEnv(baseArgs, image, envLines, STEP_TIMEOUT_MS.replace);
@@ -393,6 +401,7 @@ async function runUpdate(tag, options = {}) {
     setPhase("pulling", targetImage);
     let pullFailed = false;
     try {
+
       await docker(["pull", targetImage], {
         timeoutMs: STEP_TIMEOUT_MS.pull,
         onStdout: (text) => {
@@ -618,6 +627,7 @@ function machineStateFor(name) {
 
 /** Stops and removes a container, tolerating absence. */
 async function removeContainer(name) {
+
   await docker(["rm", "-f", name], { timeoutMs: 30_000 }).catch(() => {});
 }
 
@@ -738,6 +748,7 @@ async function runContainerUpdate(name, { rollback = false } = {}) {
       setPhase("pulling", targetImage);
       let pullFailed = false;
       try {
+
         await docker(["pull", targetImage], {
           timeoutMs: STEP_TIMEOUT_MS.pull,
           onStdout: (text) => {
@@ -953,6 +964,7 @@ async function runComposeUpdate(name) {
     };
 
     setPhase("verifying", "compose config validation");
+
     await docker(composeInvocation("config"), { timeoutMs: 30_000 });
 
     // Sibling-state vóór mutatie (moet gelijk blijven behalve target).
@@ -981,6 +993,7 @@ async function runComposeUpdate(name) {
     setPhase("pulling", targetImage);
     let pullFailed = false;
     try {
+
       await docker(["pull", targetImage], { timeoutMs: STEP_TIMEOUT_MS.pull });
     } catch (pullError) {
       const local = await dockerJson(["image", "inspect", targetImage], STEP_TIMEOUT_MS.inspect).catch(() => null);
@@ -1002,7 +1015,9 @@ async function runComposeUpdate(name) {
     })();
     mutated = true;
     await removeContainer(name).catch(() => {});
+
     await docker(composeInvocation("pull"), { timeoutMs: STEP_TIMEOUT_MS.pull });
+
     await docker(composeInvocation("up"), { timeoutMs: STEP_TIMEOUT_MS.replace });
 
     // Health-verificatie.
@@ -1213,6 +1228,7 @@ async function runComposeProjectUpdate(project) {
       };
       try {
         setPhase(`updating:${service}`, "pulling scoped image");
+
         await docker(composeInvocation("pull"), { timeoutMs: STEP_TIMEOUT_MS.pull });
         // No-op guard: image unchanged after pull → leave the service alone.
         const newImage = await dockerJson(["image", "inspect", member.image], STEP_TIMEOUT_MS.inspect).catch(() => null);
@@ -1234,6 +1250,7 @@ async function runComposeProjectUpdate(project) {
         })();
         await removeContainer(member.name);
         mutatedServices.push(service);
+
         await docker(composeInvocation("up"), { timeoutMs: STEP_TIMEOUT_MS.replace });
 
         setPhase(`health-wait:${service}`, snapshot.hasHealthcheck ? "waiting for healthcheck" : "verifying stable running state");
@@ -1395,6 +1412,9 @@ const server = http.createServer(async (req, res) => {
     if (!authorize(req)) {
       return sendJson(res, 401, { error: "unauthorized" });
     }
+    if (inventoryCache && Date.now() - inventoryCache.at < INVENTORY_TTL_MS) {
+      return sendJson(res, 200, inventoryCache.body);
+    }
     void (async () => {
       try {
         const psRaw = await docker(
@@ -1503,11 +1523,13 @@ const server = http.createServer(async (req, res) => {
         }
         // Storage model: configured at deploy time by deploy-helper.sh (the
         // script runs on the host where the docker root mount is visible).
-        return sendJson(res, 200, {
+        const body = {
           version: HELPER_VERSION,
           containers,
           storage: { mode: process.env.DOCKER_STORAGE_MODE || "unknown", source: process.env.DOCKER_STORAGE_SOURCE || null },
-        });
+        };
+        inventoryCache = { at: Date.now(), body };
+        return sendJson(res, 200, body);
       } catch (error) {
         return sendJson(res, 500, { error: String(error.message ?? error).slice(0, 200) });
       }
@@ -2113,6 +2135,7 @@ server.listen(PORT, LISTEN_HOST, () => {
   void refreshCurrentImage().then(() => {
     const probePull = async () => {
       try {
+
         await docker(["pull", `${IMAGE_REPO}:latest`], { timeoutMs: 60_000 });
         state.pullAvailable = true;
       } catch (error) {
