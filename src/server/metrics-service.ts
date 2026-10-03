@@ -14,6 +14,7 @@ import {
 import {
   CPU_PER_CORE_QUERY,
   CPU_TOTAL_QUERY,
+  CONTAINER_CPU_RATE_WINDOW,
   DISK_READ_IOPS_QUERY,
   DISK_READ_QUERY,
   DISK_WRITTEN_QUERY,
@@ -25,6 +26,7 @@ import {
   LOAD5_QUERY,
   MEMORY_USED_QUERY,
 } from "./prometheus/queries";
+import { fetchInventory } from "./docker/updates";
 import {
   getPackagePeak,
   getThermalHistory,
@@ -335,6 +337,16 @@ export async function getContainerHistoryPayload(
   const start = end - WINDOW_SECONDS[window];
   const step = WINDOW_STEP_SECONDS[window];
   const { promqlString } = await import("./prometheus/containers");
+  const { containerCpuQuery, containerMemoryUsedQuery } = await import(
+    "./prometheus/queries"
+  );
+
+  // Id-anchored history: resolve the container's Docker id from the helper
+  // inventory so a recreated container (same name, new id) never blends
+  // with its predecessor's series. Falls back to the cAdvisor name label
+  // when the helper is unreachable.
+  const inventory = await fetchInventory();
+  const shortId = inventory?.containers.find((c) => c.name === name)?.id ?? null;
 
   const result = await withDegrade(
     `container-history:${name}`,
@@ -344,8 +356,12 @@ export async function getContainerHistoryPayload(
       const client = promClient();
       const [base, network] = await Promise.all([
         getContainerHistory(client, name, {
-          cpu: `docker_stats_cpu_percent{name=${promqlString(name)}}`,
-          memory: `docker_stats_memory_usage_bytes{name=${promqlString(name)}}`,
+          cpu: shortId
+            ? containerCpuQuery(shortId)
+            : `100 * sum (rate(container_cpu_usage_seconds_total{name=${promqlString(name)}}[${CONTAINER_CPU_RATE_WINDOW}])) / scalar(machine_cpu_cores)`,
+          memory: shortId
+            ? containerMemoryUsedQuery(shortId)
+            : `container_memory_working_set_bytes{name=${promqlString(name)}}`,
         }, start, end, step),
         getContainerNetworkHistory(
           name,

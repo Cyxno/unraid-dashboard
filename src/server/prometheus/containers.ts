@@ -1,7 +1,6 @@
 import {
   CONTAINER_CPU_QUERY,
   CONTAINER_MEMORY_LIMIT_QUERY,
-  CONTAINER_MEMORY_PERCENT_QUERY,
   CONTAINER_MEMORY_USED_QUERY,
   HOST_MEM_TOTAL_CACHE_KEY,
   MEMORY_TOTAL_QUERY,
@@ -20,12 +19,11 @@ import type {
 } from "@/lib/api-types";
 
 /**
- * Per-container runtime metrics from the `docker_stats_*` textfile gauges
- * (refreshed every 15s by docker-stats-textfile → node-exporter). These
- * are name-keyed and join 1:1 with Unraid's container names.
- *
- * cAdvisor also runs here but exposes only cgroup-id labels (no
- * name/image), so it is deliberately not used for these metrics.
+ * Per-container runtime metrics from cAdvisor (via Prometheus), selected
+ * by cgroup id and joined on the container `name` label. CPU is
+ * rate()-averaged over a window and expressed as % of host capacity —
+ * the same semantics as the retired docker_stats gauge, minus its
+ * ~instant snapshot behaviour.
  */
 
 /** Escapes a container name for an exact-match PromQL string literal. */
@@ -57,50 +55,55 @@ export async function getHostMemoryTotal(
 }
 
 /**
- * Container metric rows for all containers. Missing metrics (e.g. the
- * textfile collector has not seen a container) yield nulls — never zeros.
+ * Container metric rows for all containers. Missing metrics (e.g. cAdvisor
+ * has not seen a container yet) yield nulls — never zeros.
  */
 export async function getContainerMetrics(
   client: PromClient,
 ): Promise<Map<string, ContainerMetrics>> {
   return withCache("containers:instant", 3_000, async () => {
-    const [cpu, memUsed, memLimit, memPercent, hostTotal] = await Promise.all([
-      client.instant(CONTAINER_CPU_QUERY),
-      client.instant(CONTAINER_MEMORY_USED_QUERY),
-      client.instant(CONTAINER_MEMORY_LIMIT_QUERY),
-      client.instant(CONTAINER_MEMORY_PERCENT_QUERY),
+    const [cpu, memUsed, memLimit, hostTotal] = await Promise.all([
+      client.instant(CONTAINER_CPU_QUERY()),
+      client.instant(CONTAINER_MEMORY_USED_QUERY()),
+      client.instant(CONTAINER_MEMORY_LIMIT_QUERY()),
       getHostMemoryTotal(client),
     ]);
 
     const cpuMap = byName(cpu);
     const usedMap = byName(memUsed);
     const limitMap = byName(memLimit);
-    const percentMap = byName(memPercent);
 
     const names = new Set<string>([
       ...cpuMap.keys(),
       ...usedMap.keys(),
       ...limitMap.keys(),
-      ...percentMap.keys(),
     ]);
 
     const result = new Map<string, ContainerMetrics>();
     for (const name of names) {
-      const limit = limitMap.get(name) ?? null;
+      const rawLimit = limitMap.get(name) ?? null;
+      // cgroup-v2 unlimited containers report limit 0 — docker showed the
+      // host RAM there. Treat anything non-positive as "no limit".
+      const limit = rawLimit !== null && rawLimit > 0 ? rawLimit : null;
+      const used = usedMap.get(name) ?? null;
       const hasLimit =
         limit !== null &&
         hostTotal !== null &&
         Math.abs(limit - hostTotal) > MEMORY_LIMIT_HOST_TOLERANCE_BYTES;
+      const percentDenominator = limit ?? hostTotal;
       result.set(name, {
         cpuPercent: cpuMap.get(name) ?? null,
-        memoryUsedBytes: usedMap.get(name) ?? null,
+        memoryUsedBytes: used,
         memoryLimitBytes: limit,
         memoryPercentOfLimit:
           hasLimit && limit !== null && limit > 0
-            ? ((usedMap.get(name) ?? 0) / limit) * 100
+            ? ((used ?? 0) / limit) * 100
             : null,
         hasMemoryLimit: hasLimit,
-        memoryPercentOfHost: percentMap.get(name) ?? null,
+        memoryPercentOfHost:
+          used !== null && percentDenominator !== null && percentDenominator > 0
+            ? (used / percentDenominator) * 100
+            : null,
         networkRxBytesPerSec: null,
         networkTxBytesPerSec: null,
         networkReliable: false,
@@ -111,8 +114,8 @@ export async function getContainerMetrics(
 }
 
 /**
- * Top consumers (running containers only — docker stats only reports
- * running containers, so stopped ones are naturally absent).
+ * Top consumers (running containers only — the freshness guard drops
+ * recently destroyed containers, so stopped ones are naturally absent).
  */
 export async function getTopConsumers(
   client: PromClient,
@@ -120,8 +123,8 @@ export async function getTopConsumers(
 ): Promise<TopConsumers> {
   return withCache(`containers:top:${limit}`, 5_000, async () => {
     const [cpu, used] = await Promise.all([
-      client.instant(CONTAINER_CPU_QUERY),
-      client.instant(CONTAINER_MEMORY_USED_QUERY),
+      client.instant(CONTAINER_CPU_QUERY()),
+      client.instant(CONTAINER_MEMORY_USED_QUERY()),
     ]);
     const top = (
       samples: Array<{ metric: Record<string, string>; v: number | null }>,

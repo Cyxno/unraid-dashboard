@@ -3,6 +3,23 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.3.6
+
+### Improved
+
+- **Container CPU/memory metrics now come from cAdvisor instead of the custom docker_stats textfile gauges.** Containers are joined by Docker container id (cAdvisor cgroup `id` label vs the helper inventory), not by name, so a recreated container (same name, new id) no longer blends with its predecessor's history. Destroyed-container leftovers are excluded via a `container_last_seen` freshness guard, so ghost entries can no longer appear in top consumers
+- Container CPU percent is now a 2-minute rate average expressed as % of total host capacity (`rate(container_cpu_usage_seconds_total)/machine_cpu_cores`), matching the previous docker-stats semantics minus the ~1-second snapshot spikiness — values move smoother and spikes are less extreme
+- Container history (CPU + memory) works retroactively: cAdvisor counters have been scraped all along, so graphs show continuous data across the migration
+- Thermal episode per-container attribution uses the same cAdvisor CPU series (same % semantics, no unit shift)
+
+### Fixed
+
+- Unlimited containers no longer show a fake memory cap: cgroup-v2 reports limit 0 where docker-stats reported the host's total RAM — the dashboard now treats that as "no limit" and shows memory as % of host RAM, exactly like docker stats did
+
+### Security
+
+- No component change; the removal path for the 15s `docker stats --no-stream` collector (a container with the Docker socket) is now documented in `docs/DOCKER_STATS_RETIREMENT.md` — disable it only after this release is verified in production
+
 ## v1.3.0
 
 ### Added

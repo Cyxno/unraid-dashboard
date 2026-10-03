@@ -7,10 +7,11 @@
  *
  * Expected sources:
  * - job="node"      node-exporter + textfile collector
- *                     (docker_stats_* gauges, refreshed every 15s)
  * - job="homelab"   host exporter (temperatures, power)
- * - job="cadvisor"  cAdvisor — cgroup-id labels only (no name/image),
- *                     intentionally NOT used for name-keyed metrics
+ * - job="cadvisor"  cAdvisor — container CPU/memory/network.
+ *                     Containers are selected by cgroup id (the helper
+ *                     inventory's Docker id is the /docker/<64hex> prefix),
+ *                     not by the optional `name` label.
  */
 
 /** Rate window placeholder replaced per request (never user input). */
@@ -98,17 +99,66 @@ export const FILESYSTEM_USAGE_QUERY =
 export const FILESYSTEM_AVAIL_QUERY =
   'max by (mountpoint) (node_filesystem_avail_bytes{fstype!~"tmpfs|squashfs|nsfs|overlay|rootfs"})';
 
-/* Containers (docker_stats textfile gauges, name-keyed) --------------------- */
+/* Containers (cAdvisor, id-joined) ------------------------------------------
+ * Semantics matched to the retired docker_stats_* gauges (verified on
+ * production 2026-10-03, shadow comparison):
+ * - CPU: docker stats CPUPerc = % of total host capacity →
+ *   100 · rate(cpu counter) / machine_cpu_cores, averaged over
+ *   CONTAINER_CPU_RATE_WINDOW (the old gauge was an ~instant snapshot;
+ *   values now move smoother — documented in the changelog).
+ * - Memory used: container_memory_working_set_bytes equals docker's
+ *   "MEM USAGE" (usage − inactive_file); shadow median Δ 0.02%.
+ * - Memory limit: container_spec_memory_limit_bytes is 0 on cgroup-v2
+ *   unlimited containers (docker showed host RAM instead) — the caller
+ *   treats limit ≤ 0 as "no limit".
+ * - Freshness: cAdvisor keeps series of DESTROYED containers for minutes
+ *   (verified: 4 ghosts). container_last_seen freezes at destruction, so
+ *   the unless-guard drops only ids that demonstrably went stale; ids
+ *   without a last_seen series survive (resilient fallback).
+ */
 
-export const CONTAINER_CPU_QUERY = 'docker_stats_cpu_percent';
-export const CONTAINER_MEMORY_USED_QUERY = 'docker_stats_memory_usage_bytes';
-export const CONTAINER_MEMORY_LIMIT_QUERY = 'docker_stats_memory_limit_bytes';
-export const CONTAINER_MEMORY_PERCENT_QUERY = 'docker_stats_memory_percent';
+/** cgroup selector: real Docker containers only — excludes cAdvisor's
+ *  /docker/buildkit, /docker/buildx and host slices. */
+export const CADVISOR_DOCKER_SELECTOR = 'id=~"/docker/[0-9a-f]{64}"';
 
-export const CONTAINER_CPU_BY_NAME_QUERY = (name: string) =>
-  `docker_stats_cpu_percent{name=${JSON.stringify(name)}}`;
-export const CONTAINER_MEMORY_BY_NAME_QUERY = (name: string) =>
-  `docker_stats_memory_usage_bytes{name=${JSON.stringify(name)}}`;
+/** Destruction-freshness guard: drop ids whose last_seen froze >90s ago
+ *  (6 scrape intervals). `unless` (not `and`) so series without any
+ *  last_seen sample are kept. */
+export function cadvisorFreshnessGuard(): string {
+  return `unless on (id) (container_last_seen{${CADVISOR_DOCKER_SELECTOR}} < (time() - 90))`;
+}
+
+/** Average window for container CPU percent (rate lookback). */
+export const CONTAINER_CPU_RATE_WINDOW = "2m";
+
+/** CPU % of host capacity, per container, grouped by the `name` label. */
+export const CONTAINER_CPU_QUERY = (rateWindow: string = CONTAINER_CPU_RATE_WINDOW) =>
+  `100 * sum by (name) (rate(container_cpu_usage_seconds_total{${CADVISOR_DOCKER_SELECTOR}}[${rateWindow}]) ${cadvisorFreshnessGuard()}) / scalar(machine_cpu_cores)`;
+
+export const CONTAINER_MEMORY_USED_QUERY = () =>
+  `container_memory_working_set_bytes{${CADVISOR_DOCKER_SELECTOR}} ${cadvisorFreshnessGuard()}`;
+export const CONTAINER_MEMORY_LIMIT_QUERY = () =>
+  `container_spec_memory_limit_bytes{${CADVISOR_DOCKER_SELECTOR}} ${cadvisorFreshnessGuard()}`;
+
+/**
+ * Id-anchored per-container builders (helper inventory id, 12+ hex chars —
+ * validated by dockerIdPattern before use). Preferred over the name-based
+ * fallbacks: a recreated container keeps its name but gets a new id, so
+ * id-anchored history never blends two containers.
+ */
+export function containerCpuQuery(idOrName: string, rateWindow: string = CONTAINER_CPU_RATE_WINDOW): string {
+  if (/^[0-9a-f]{12,64}$/.test(idOrName)) {
+    return `100 * sum (rate(container_cpu_usage_seconds_total{id=~"/docker/${idOrName}[0-9a-f]*"}[${rateWindow}])) / scalar(machine_cpu_cores)`;
+  }
+  return `100 * sum (rate(container_cpu_usage_seconds_total{name=${JSON.stringify(idOrName)}}[${rateWindow}])) / scalar(machine_cpu_cores)`;
+}
+
+export function containerMemoryUsedQuery(idOrName: string): string {
+  if (/^[0-9a-f]{12,64}$/.test(idOrName)) {
+    return `container_memory_working_set_bytes{id=~"/docker/${idOrName}[0-9a-f]*"}`;
+  }
+  return `container_memory_working_set_bytes{name=${JSON.stringify(idOrName)}}`;
+}
 
 /* Host totals used for limit heuristics ------------------------------------- */
 

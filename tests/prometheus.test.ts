@@ -1,7 +1,18 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { PromClient, PrometheusError, isFreshSample } from "../src/server/prometheus/client";
-import { promqlString, isHighCpu, isHighMemory } from "../src/server/prometheus/containers";
+import { getContainerMetrics, promqlString, isHighCpu, isHighMemory } from "../src/server/prometheus/containers";
+import {
+  CADVISOR_DOCKER_SELECTOR,
+  CONTAINER_CPU_QUERY,
+  CONTAINER_CPU_RATE_WINDOW,
+  CONTAINER_MEMORY_LIMIT_QUERY,
+  CONTAINER_MEMORY_USED_QUERY,
+  MEMORY_TOTAL_QUERY,
+  cadvisorFreshnessGuard,
+  containerCpuQuery,
+  containerMemoryUsedQuery,
+} from "../src/server/prometheus/queries";
 import { classifySensor } from "../src/server/prometheus/thermal";
 import {
   parseWindow,
@@ -48,7 +59,7 @@ describe("PromClient parsing", () => {
   it("parses instant vectors and keeps metric labels", async () => {
     const client = new PromClient({ url: "http://prom:9090", timeoutMs: 500 });
     stubFetch(vectorResult([["1700000000", "42.5"], ["1700000000", "7"]], { name: "immich" }));
-    const samples = await client.instant("docker_stats_cpu_percent");
+    const samples = await client.instant(CONTAINER_CPU_QUERY());
     assert.equal(samples.length, 2);
     assert.equal(samples[0]!.v, 42.5);
     assert.equal(samples[0]!.metric.name, "immich");
@@ -184,6 +195,126 @@ describe("container metrics join", () => {
     );
     assert.equal(isHighMemory(null), false);
     assert.equal(isHighMemory(undefined), false);
+  });
+});
+
+/* cAdvisor container query builders ------------------------------------------ */
+
+describe("cAdvisor container query builders", () => {
+  it("selects only real Docker containers (64-hex cgroup ids)", () => {
+    // buildkit/buildx pseudo-entries use named cgroups — no hex id.
+    assert.equal(CADVISOR_DOCKER_SELECTOR, 'id=~"/docker/[0-9a-f]{64}"');
+  });
+
+  it("builds CPU percent with rate, host-core normalization and the freshness guard", () => {
+    const query = CONTAINER_CPU_QUERY();
+    assert.ok(query.includes(`rate(container_cpu_usage_seconds_total{${CADVISOR_DOCKER_SELECTOR}}[${CONTAINER_CPU_RATE_WINDOW}]`));
+    assert.ok(query.includes("/ scalar(machine_cpu_cores)"));
+    assert.ok(query.includes(cadvisorFreshnessGuard()));
+  });
+
+  it("guards against destroyed-container ghosts via container_last_seen", () => {
+    const guard = cadvisorFreshnessGuard();
+    assert.ok(guard.startsWith("unless on (id)"));
+    assert.ok(guard.includes("container_last_seen"));
+    assert.ok(guard.includes("time() - 90"));
+    // `unless` (not `and`): ids without a last_seen series must survive.
+    assert.ok(!guard.includes(" and "));
+  });
+
+  it("keeps memory queries on the id selector with the guard attached", () => {
+    assert.ok(CONTAINER_MEMORY_USED_QUERY().startsWith(`container_memory_working_set_bytes{${CADVISOR_DOCKER_SELECTOR}}`));
+    assert.ok(CONTAINER_MEMORY_LIMIT_QUERY().startsWith(`container_spec_memory_limit_bytes{${CADVISOR_DOCKER_SELECTOR}}`));
+    assert.ok(CONTAINER_MEMORY_USED_QUERY().includes(cadvisorFreshnessGuard()));
+  });
+
+  it("anchors per-container queries on the Docker id when one is given", () => {
+    const short = containerCpuQuery("2e125c468762");
+    assert.ok(short.includes('id=~"/docker/2e125c468762[0-9a-f]*"'));
+    assert.ok(short.includes("scalar(machine_cpu_cores)"));
+    const full = containerMemoryUsedQuery("2e125c468762abcdef".padEnd(64, "0"));
+    assert.ok(full.includes('id=~"/docker/2e125c468762abcdef'));
+  });
+
+  it("falls back to the name label for non-id inputs, safely escaped", () => {
+    const byName = containerCpuQuery("netdata");
+    assert.ok(byName.includes('container_cpu_usage_seconds_total{name="netdata"}'));
+    assert.ok(!byName.includes("id=~"));
+    const hostile = containerMemoryUsedQuery('evil"} or {x="');
+    assert.equal(hostile, 'container_memory_working_set_bytes{name="evil\\"} or {x=\\""}');
+  });
+});
+
+/* Container limit mapping (cgroup-v2 unlimited = 0) --------------------------- */
+
+function stubContainerClient(rows: {
+  cpu: Array<[string, number]>;
+  used: Array<[string, number]>;
+  limit: Array<[string, number]>;
+  hostTotal: number;
+}) {
+  const respond = (query: string) => {
+    const pick = (list: Array<[string, number]>) =>
+      list.map(([name, v]) => ({ metric: { name }, value: [Math.floor(Date.now() / 1000), String(v)] as [number, string] }));
+    let values: Array<{ metric: Record<string, string>; value: [number, string] }>;
+    if (query.startsWith("container_memory_working_set_bytes")) values = pick(rows.used);
+    else if (query.startsWith("container_spec_memory_limit_bytes")) values = pick(rows.limit);
+    else if (query === MEMORY_TOTAL_QUERY) values = [{ metric: {}, value: [1, String(rows.hostTotal)] }];
+    else values = pick(rows.cpu);
+    return Promise.resolve(values.map((entry) => ({ metric: entry.metric, v: Number(entry.value[1]) })));
+  };
+  return {
+    instant: (query: string) => respond(query),
+  } as unknown as PromClient;
+}
+
+describe("container metrics limit mapping", () => {
+  const HOST_RAM = 32 * 1024 ** 3;
+
+  async function metricsFor(rows: Parameters<typeof stubContainerClient>[0]) {
+    (globalThis as unknown as { __dashboardPromCache?: Map<string, unknown> }).__dashboardPromCache?.clear();
+    return await getContainerMetrics(stubContainerClient(rows));
+  }
+
+  it("treats cgroup-v2 limit 0 as unlimited (no fake cap, % against host RAM)", async () => {
+    const map = await metricsFor({
+      cpu: [["web", 1.5]],
+      used: [["web", 8 * 1024 ** 3]],
+      limit: [["web", 0]],
+      hostTotal: HOST_RAM,
+    });
+    const web = map.get("web")!;
+    assert.equal(web.hasMemoryLimit, false);
+    assert.equal(web.memoryLimitBytes, null);
+    assert.equal(web.memoryPercentOfLimit, null);
+    // docker MemPerc semantics: usage/limit, limit falls back to host RAM.
+    assert.ok(Math.abs((web.memoryPercentOfHost ?? 0) - 25) < 0.001);
+  });
+
+  it("keeps a real cap capped: % of limit, hasMemoryLimit true", async () => {
+    const cap = 4 * 1024 ** 3;
+    const map = await metricsFor({
+      cpu: [["db", 2]],
+      used: [["db", 2 * 1024 ** 3]],
+      limit: [["db", cap]],
+      hostTotal: HOST_RAM,
+    });
+    const db = map.get("db")!;
+    assert.equal(db.hasMemoryLimit, true);
+    assert.equal(db.memoryLimitBytes, cap);
+    assert.ok(Math.abs((db.memoryPercentOfLimit ?? 0) - 50) < 0.001);
+    // MemPerc against the cap, matching docker stats.
+    assert.ok(Math.abs((db.memoryPercentOfHost ?? 0) - 50) < 0.001);
+  });
+
+  it("yields nulls (never zeros) for containers without samples", async () => {
+    const map = await metricsFor({
+      cpu: [],
+      used: [],
+      limit: [],
+      hostTotal: HOST_RAM,
+    });
+    assert.equal(map.size, 0);
   });
 });
 

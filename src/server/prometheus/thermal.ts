@@ -1,4 +1,5 @@
 import {
+  CONTAINER_CPU_QUERY,
   PACKAGE_TEMP_FALLBACK_QUERY,
   POWER_WATTS_QUERY,
   TEMPERATURES_QUERY,
@@ -409,11 +410,12 @@ export async function getThermalDiagnostics(
     const powerPoints = tempPowerPairs;
 
     // Per-container CPU history for episode attribution (v0.7). One range
-    // query over all name-keyed container CPU series at 5m step; a series
-    // must have ≥2 in-range samples to count (no fabricated attribution).
+    // query over all id-joined cAdvisor container CPU series at 5m step; a
+    // series must have ≥2 in-range samples to count (no fabricated
+    // attribution).
     let containerCpuSeries = new Map<string, Array<{ t: number; v: number | null }>>();
     try {
-      const matrix = await client.range("docker_stats_cpu_percent", Math.floor(Date.now() / 1000) - windowSeconds, Math.floor(Date.now() / 1000), rangeStep);
+      const matrix = await client.range(CONTAINER_CPU_QUERY(), Math.floor(Date.now() / 1000) - windowSeconds, Math.floor(Date.now() / 1000), rangeStep);
       for (const entry of matrix) {
         const name = entry.metric.name;
         if (!name) continue;
