@@ -1,7 +1,28 @@
 {
   "generatedFrom": "CHANGELOG.md",
-  "latestVersion": "v1.3.1",
+  "latestVersion": "v1.3.2",
   "releases": [
+    {
+      "version": "v1.3.2",
+      "anchor": "v1-3-2",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Added",
+          "items": [
+            "Settings → Configuration: every runtime setting with ENV/UI/Default source badge, effective value (secrets masked), restart-required markers and Test connection buttons (Unraid, Prometheus)",
+            "Local auth: Log out button and \"Sign out all devices\" (session-epoch bump) in the Security status card",
+            "Credential change endpoint (current-password verified, session-epoch bumped)"
+          ]
+        },
+        {
+          "name": "Fixed",
+          "items": [
+            "Notification subscription DELETE used the POST-only guardWrite (v1.2.0 regression) — devices could never unsubscribe"
+          ]
+        }
+      ]
+    },
     {
       "version": "v1.3.1",
       "anchor": "v1-3-1",

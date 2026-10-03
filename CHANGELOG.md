@@ -36,6 +36,18 @@ only non-empty groups are shown. No dates — versions are ordered by semver.
 - Settings → Security status card: auth mode, Unraid connection, action key, helper status, push configuration
 - scripts/reset-local-auth.sh: host-side recovery for forgotten local password (reverts to trusted mode, invalidates all sessions)
 
+## v1.3.2
+
+### Added
+
+- Settings → Configuration: every runtime setting with ENV/UI/Default source badge, effective value (secrets masked), restart-required markers and Test connection buttons (Unraid, Prometheus)
+- Local auth: Log out button and "Sign out all devices" (session-epoch bump) in the Security status card
+- Credential change endpoint (current-password verified, session-epoch bumped)
+
+### Fixed
+
+- Notification subscription DELETE used the POST-only guardWrite (v1.2.0 regression) — devices could never unsubscribe
+
 ## v1.2.3
 
 ### Fixed
