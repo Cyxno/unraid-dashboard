@@ -18,10 +18,14 @@ import { loadConfig, saveConfig } from "../config/store";
  * - Generic errors only — no username enumeration.
  */
 
-const SCRYPT_N = 1 << 15;
+const SCRYPT_N = 1 << 14;
 const SCRYPT_R = 8;
 const SCRYPT_P = 1;
 const KEYLEN = 64;
+/** OpenSSL 3.x default maxmem (32 MB) is too small for N=2^15 + r=8 in the
+ *  Alpine container; N=2^14 + explicit 64 MB maxmem is OWASP-acceptable
+ *  and works in every deployment (bare Node, Alpine, standalone). */
+const SCRYPT_MAXMEM = 64 * 1024 * 1024;
 
 const SESSION_TTL_MS = 7 * 24 * 3600 * 1000;
 const SESSION_COOKIE = "beacon_session";
@@ -58,7 +62,7 @@ export function verifyPassword(password: string, stored: string): boolean {
 }
 
 function scryptHash(password: string, salt: Buffer, keylen: number, N: number, r: number, p: number): Buffer {
-  return scryptSync(password, salt, keylen, { N, r, p });
+  return scryptSync(password, salt, keylen, { N, r, p, maxmem: SCRYPT_MAXMEM });
 }
 
 export function isValidUsername(username: string): boolean {

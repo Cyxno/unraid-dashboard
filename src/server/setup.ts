@@ -179,6 +179,10 @@ export async function claimSetup(claim: SetupClaim): Promise<void> {
         claim.localUsername ?? "",
         claim.localPassword ?? "",
       );
+      // Generate the session secret for local auth (HMAC-signs session tokens).
+      if (!config.security.sessionSecret || config.security.sessionSecret.length < 32) {
+        config.security.sessionSecret = randomBytes(32).toString("base64url");
+      }
     }
     config.setup.completedAt = new Date().toISOString();
     await saveConfig(config);
