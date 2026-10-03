@@ -67,7 +67,7 @@ const STEP_TIMEOUT_MS = { inspect: 15_000, pull: 300_000, replace: 30_000 };
 const INVENTORY_TTL_MS = 10_000;
 let inventoryCache = null; // { at, body }
 let inventoryRefreshPromise = null; // single-flight coalescing
-function invalidateInventory() { inventoryCache = null; }
+function invalidateInventory() { inventoryCache = null; inventoryRefreshPromise = null; }
 
 const HELPER_VERSION = "0.9.5";
 
@@ -488,7 +488,9 @@ async function runUpdate(tag, options = {}) {
     setPhase("verifying", "probing /api/health, /api/version, /api/overview");
     await verifyLive(normalizedTag);
 
-    setPhase("complete", `${fromImage} → ${targetImage}${pullFailed ? " (local image)" : ""}`);
+    invalidateInventory();
+    invalidateInventory();
+    setPhase("complete"); // INVALIDATED, `${fromImage} → ${targetImage}${pullFailed ? " (local image)" : ""}`);
     state.lastUpdate = {
       from: fromImage, to: targetImage, result: "success",
       startedAt: new Date(requestedAt).toISOString(),
@@ -772,7 +774,9 @@ async function runContainerUpdate(name, { rollback = false } = {}) {
       if (!newImageId) throw new Error("cannot resolve new image ID");
       if (newImageId === snapshot.imageId && !pullFailed) {
         // Same image ID: the tag did not move (version-pinned or unchanged).
-        setPhase("completed", "image unchanged — already up to date, container untouched");
+        invalidateInventory();
+    invalidateInventory();
+    setPhase("complete"); // INVALIDATED, "image unchanged — already up to date, container untouched");
         setJob(name, {
           phase: "completed",
           finishedAt: new Date().toISOString(),
@@ -833,7 +837,9 @@ async function runContainerUpdate(name, { rollback = false } = {}) {
       });
       return;
     }
-    setPhase("completed", `${name} updated and healthy`);
+    invalidateInventory();
+    invalidateInventory();
+    setPhase("complete"); // INVALIDATED, `${name} updated and healthy`);
     setJob(name, {
       phase: "completed",
       finishedAt: new Date().toISOString(),
@@ -1045,7 +1051,9 @@ async function runComposeUpdate(name) {
       if (!stillRunning) throw new Error(`sibling service ${sibling.name} is no longer running after update`);
     }
 
-    setPhase("completed", `${name} updated en healthy`);
+    invalidateInventory();
+    invalidateInventory();
+    setPhase("complete"); // INVALIDATED, `${name} updated en healthy`);
     setJob(`compose:${name}`, {
       phase: "completed",
       finishedAt: new Date().toISOString(),
@@ -1339,7 +1347,9 @@ async function runComposeProjectUpdate(project) {
       }
     }
 
-    setPhase("completed", `project ${project}: ${orderResult.order.length} service(s) processed sequentially`);
+    invalidateInventory();
+    invalidateInventory();
+    setPhase("complete"); // INVALIDATED, `project ${project}: ${orderResult.order.length} service(s) processed sequentially`);
     setJob(jobKey, {
       phase: "completed",
       finishedAt: new Date().toISOString(),
