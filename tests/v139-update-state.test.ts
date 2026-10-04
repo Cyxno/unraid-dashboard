@@ -224,6 +224,30 @@ test("cache invalidation runs after a settled update", async () => {
   assert.match(route, /invalidateUpdateState/);
 });
 
+test("pipeline-owned containers never claim updates in summary OR model (15-vs-14 regression)", async () => {
+  const { updateVerdictForFacts } = await import("../src/server/docker/model");
+  const facts2 = facts({
+    name: "tornscope-postgres-1",
+    image: "postgres:16-alpine",
+    repoDigests: ["library/postgres@sha256:aaaa"],
+    labels: { "com.docker.compose.project": "tornscope", "com.docker.compose.service": "postgres" },
+  });
+  const v = updateVerdictForFacts(facts2, { kind: "digest", remoteDigest: "sha256:new" });
+  assert.equal(v.management_type, "pipeline_owned");
+  assert.equal(v.update_available, false);
+  assert.equal(v.update_status, "LOCAL_BUILD");
+  // and the full model agrees — no divergent derivation
+  const built = buildManagedContainer({
+    facts: facts2,
+    customDeployContainers: [],
+    extraHighRisk: [],
+    rawCheck: { kind: "digest", remoteDigest: "sha256:new" },
+    checkedAt: "now",
+  });
+  assert.equal(built.update_available, false);
+  assert.equal(built.update_status, "LOCAL_BUILD");
+});
+
 /* ---- production fixture consistency (Fase 32/33) ------------------------ */
 
 test("production snapshot consistency: registry-managed images classify from digests, local builds from 404", () => {

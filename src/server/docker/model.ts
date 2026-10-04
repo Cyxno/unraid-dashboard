@@ -428,6 +428,26 @@ export function canonicalUpdateState(
   }
 }
 
+/**
+ * THE verdict every consumer uses (v1.3.9): canonical registry state +
+ * management policy in one function. Pipeline-owned containers observe
+ * but never claim updates — their pipeline is the updater. Used by
+ * buildManagedContainer AND the cached summary so no second derivation
+ * can diverge (the 15-vs-14 bug).
+ */
+export function updateVerdictForFacts(
+  facts: ContainerFacts,
+  raw: RegistryCheckResult | null | undefined,
+  customDeployContainers: string[] = [],
+): ContainerUpdateVerdict & { management_type: ManagementType } {
+  const { management_type } = classifyManagement(facts, customDeployContainers);
+  const verdict = canonicalUpdateState(facts, raw);
+  if (management_type === "pipeline_owned") {
+    return { ...verdict, update_available: false, update_status: "LOCAL_BUILD", management_type };
+  }
+  return { ...verdict, management_type };
+}
+
 /** Build the full managed model from facts + an optional check result. */
 export function buildManagedContainer(input: {
   facts: ContainerFacts;
@@ -459,13 +479,9 @@ export function buildManagedContainer(input: {
   const basePolicy = input.policyOverride ?? defaultPolicyFor(risk);
   const policy = basePolicy === "manual" ? "manual" : ownership.policy === "manual" ? "manual" : basePolicy;
 
-  const canonical = canonicalUpdateState(facts, input.rawCheck ?? null);
-  let update_status: UpdateStatus = canonical.update_status;
-  // Pipeline-owned projects update through their own pipeline; the
-  // dashboard only observes their state.
-  if (management_type === "pipeline_owned") update_status = "LOCAL_BUILD";
-
-  const update_available = management_type === "pipeline_owned" ? false : canonical.update_available;
+  const canonical = updateVerdictForFacts(facts, input.rawCheck ?? null, input.customDeployContainers);
+  const update_status: UpdateStatus = canonical.update_status;
+  const update_available = canonical.update_available;
   const remote_digest = canonical.remote_digest;
   const local_digest = canonical.local_digest;
 

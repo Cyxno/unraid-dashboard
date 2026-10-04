@@ -3,6 +3,12 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.3.12
+
+### Fixed
+
+- **Updates counter and update summary can no longer diverge.** The light summary counted a pipeline-owned container's registry update while the full model correctly withheld it (the pipeline is the updater) — one code path now derives both, so badge, counter, filter and summary are provably the same set
+
 ## v1.3.11
 
 ### Fixed

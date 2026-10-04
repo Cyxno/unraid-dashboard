@@ -5,9 +5,9 @@ import { computeAutoEligibility, pilotAllowlist } from "@/server/update/eligibil
 import { checkRemoteDigest, type RegistryCheckResult } from "./registry";
 import {
   buildManagedContainer,
-  canonicalUpdateState,
   localDigestOf,
   parseImageRef,
+  updateVerdictForFacts,
   type ContainerFacts,
   type ManagedContainer,
 } from "./model";
@@ -353,8 +353,9 @@ export function updatesSummaryFromCache(): {
   let knownUpdatesCount = 0;
   let containersChecked = 0;
   const containers = inventory.containers.map((facts) => {
-    // Same canonical verdict the full overview uses — no second derivation.
-    const verdict = canonicalUpdateState(facts, rawCheckFor(facts.image));
+    // Same combined verdict the full overview uses (incl. management
+    // policy) — no second derivation.
+    const verdict = updateVerdictForFacts(facts, rawCheckFor(facts.image), customDeployContainers());
     if (verdict.update_status !== "UNKNOWN" && verdict.update_status !== "CHECK_FAILED") containersChecked += 1;
     if (verdict.update_available) knownUpdatesCount += 1;
     return {

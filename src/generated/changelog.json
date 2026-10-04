@@ -1,7 +1,20 @@
 {
   "generatedFrom": "CHANGELOG.md",
-  "latestVersion": "v1.3.11",
+  "latestVersion": "v1.3.12",
   "releases": [
+    {
+      "version": "v1.3.12",
+      "anchor": "v1-3-12",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "**Updates counter and update summary can no longer diverge.** The light summary counted a pipeline-owned container's registry update while the full model correctly withheld it (the pipeline is the updater) — one code path now derives both, so badge, counter, filter and summary are provably the same set"
+          ]
+        }
+      ]
+    },
     {
       "version": "v1.3.11",
       "anchor": "v1-3-11",
