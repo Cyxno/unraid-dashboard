@@ -1,8 +1,12 @@
 # Docker-stats textfile collector retirement
 
-Status: **prepared, not yet executed** — Beacon v1.3.6 no longer reads the
-`docker_stats_*` gauges. The collector can be switched off once v1.3.6 has
-been verified in production.
+Status: **executed 2026-10-04 (v1.3.7, SHA 58e969b)** — Beacon no longer reads
+the `docker_stats_*` gauges. The collector container was stopped + removed,
+the `docker-stats.prom` output deleted and its autostart line removed; a
+4-hour post-retirement soak (10:15–13:38 UTC) showed no regressions: container
+CPU/memory serve from cAdvisor (id-joined), dockerd avg 6.21% → 5.85% of one
+core, the collector's own ~3.6%-of-a-core cost is gone. Rollback: see
+`/mnt/cache/appdata/docker-stats-textfile/retirement-backup-20261004/ROLLBACK.md`.
 
 ## What the collector is
 
