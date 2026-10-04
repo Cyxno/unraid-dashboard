@@ -59,6 +59,58 @@ docker pull "$IMAGE" 2>/dev/null || docker image inspect "$IMAGE" >/dev/null 2>&
   exit 1
 }
 
+# Fase 33 (v1.3.16): version precheck — never deploy an image whose
+# internal version does not match the requested tag.
+EXPECTED_VERSION="${IMAGE##*:}"
+LABEL_VERSION=$(docker inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null || true)
+if [ -n "$LABEL_VERSION" ] && [ "$LABEL_VERSION" != "$EXPECTED_VERSION" ]; then
+  echo "ERROR: image label version '$LABEL_VERSION' does not match requested '$EXPECTED_VERSION' — deploy blocked." >&2
+  exit 1
+fi
+echo "==> Version precheck OK (label: ${LABEL_VERSION:-none}, tag: $EXPECTED_VERSION)"
+
+# Fase 34 (v1.3.16): candidate smoke — boot the candidate ISOLATED on an
+# alternate port with the real Docker socket and require a FRESH healthy
+# inventory before touching the production helper. Skippable with
+# SMOKE=0 for emergencies.
+if [ "${SMOKE:-1}" = "1" ]; then
+  CAND_NAME="${NAME}-candidate-$"
+  docker rm -f "$CAND_NAME" >/dev/null 2>&1 || true
+  echo "==> Candidate smoke on port 8791 (isolated)..."
+  docker run -d --name "$CAND_NAME" \
+    -p "127.0.0.1:8791:8791" \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -e HELPER_PORT=8791 \
+    -e UPDATE_HELPER_TOKEN="$UPDATE_HELPER_TOKEN" \
+    --entrypoint node "$IMAGE" server.js >/dev/null
+  CAND_OK=""
+  for i in $(seq 1 30); do
+    if curl -sf -m 3 "http://127.0.0.1:8791/health" >/dev/null 2>&1; then CAND_OK=1; break; fi
+    sleep 1
+  done
+  if [ -z "$CAND_OK" ]; then
+    echo "ERROR: candidate never became healthy on :8791 — deploy blocked." >&2
+    docker logs "$CAND_NAME" 2>&1 | tail -10 >&2
+    docker rm -f "$CAND_NAME" >/dev/null 2>&1 || true
+    exit 1
+  fi
+  # fresh inventory must be healthy (Fase 5: not stale-cache green — the
+  # candidate container has an empty cache, so this is a real refresh)
+  sleep 2
+  CAND_HEALTH=$(curl -sf -m 30 -H "authorization: Bearer $UPDATE_HELPER_TOKEN" "http://127.0.0.1:8791/inventory" >/dev/null && curl -sf -m 5 "http://127.0.0.1:8791/health")
+  CAND_STATUS=$(echo "$CAND_HEALTH" | grep -o '"inventoryStatus":"[a-z]*"' || true)
+  docker rm -f "$CAND_NAME" >/dev/null 2>&1 || true
+  if [ -z "$CAND_HEALTH" ]; then
+    echo "ERROR: candidate /inventory or /health failed — deploy blocked." >&2
+    exit 1
+  fi
+  echo "$CAND_HEALTH" | grep -q '"inventoryStatus":"healthy"' || {
+    echo "ERROR: candidate fresh inventory is not healthy ($CAND_STATUS) — deploy blocked." >&2
+    exit 1
+  }
+  echo "==> Candidate smoke PASS (fresh inventory healthy)"
+fi
+
 echo "==> Recreating $NAME..."
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 # Persistent update state (snapshots/jobs): must survive helper
@@ -150,6 +202,31 @@ else
   echo "ERROR: helper health probe failed." >&2
   exit 1
 fi
+
+# Fase 36 (v1.3.16): post-deploy gate — fresh inventory healthy is REQUIRED
+# (process health alone is not deployment success). The fresh container has
+# an empty cache, so this proves a real successful refresh.
+INV_OK=""
+for i in $(seq 1 30); do
+  curl -sf -m 30 -H "authorization: Bearer $UPDATE_HELPER_TOKEN" "http://127.0.0.1:8790/inventory" >/dev/null 2>&1 && INV_OK=1 && break
+  sleep 2
+done
+if [ -z "$INV_OK" ]; then
+  echo "ERROR: fresh inventory refresh failed after deploy — deployment NOT complete." >&2
+  docker logs "$NAME" 2>&1 | tail -10 >&2
+  exit 1
+fi
+INV_STATUS=$(docker exec "$NAME" node -e "
+  const t=process.env.UPDATE_HELPER_TOKEN;
+  fetch('http://127.0.0.1:8790/health',{headers:{authorization:'Bearer '+t}}).then(r=>r.json()).then(b=>{
+    console.log(b.inventoryStatus || 'unknown');
+  }).catch(()=>console.log('probe-failed'));
+" 2>/dev/null)
+if [ "$INV_STATUS" != "healthy" ] && [ "$INV_STATUS" != "partial" ]; then
+  echo "ERROR: inventoryStatus is '$INV_STATUS' (expected healthy/partial) — deployment NOT complete." >&2
+  exit 1
+fi
+echo "OK: fresh inventory pipeline $INV_STATUS."
 
 # The helper must NOT be reachable from a non-loopback address.
 HELPER_IP=$(hostname -i 2>/dev/null | awk '{print $1}')

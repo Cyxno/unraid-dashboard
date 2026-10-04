@@ -1,0 +1,3 @@
+aaa000000001	web	registry.example/web:1.0	running	Up 1 hour (healthy)
+bbb000000002	db	registry.example/db:2.0	exited	Exited (0) 1 day ago
+ccc000000003	sick	registry.example/sick:3.0	running	Up 5 min (unhealthy)

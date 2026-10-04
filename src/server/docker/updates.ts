@@ -3,6 +3,7 @@ import { getHelperStatus, getHelperSnapshots } from "@/server/update/helper-clie
 import { containerStatsBatch } from "@/server/update/history";
 import { computeAutoEligibility, pilotAllowlist } from "@/server/update/eligibility";
 import { checkRemoteDigest, type RegistryCheckResult } from "./registry";
+import { describeInventoryIssues, helperInventorySchema } from "./helper-contract";
 import {
   buildManagedContainer,
   localDigestOf,
@@ -70,18 +71,29 @@ export async function fetchInventory(): Promise<{
       cache: "no-store",
     });
     if (!response.ok) return null;
-    const body = (await response.json()) as {
-      containers: ContainerFacts[];
-      storage: { mode: string; source: string | null };
-    };
+    const body = (await response.json()) as unknown;
+    // Runtime contract validation (v1.3.16): a helper that drifts from the
+    // expected shape is treated as unavailable — never ingested as facts.
+    // The last-known-good dashboard-side cache keeps serving while the
+    // helper recovers.
+    const parsed = helperInventorySchema.safeParse(body);
+    if (!parsed.success) {
+      console.error(
+        `[docker-updates] helper inventory contract violation: ${describeInventoryIssues(parsed.error)}`,
+      );
+      return globalStore.__dockerInventoryCache
+        ? { containers: globalStore.__dockerInventoryCache.containers, storage: globalStore.__dockerInventoryCache.storage }
+        : null;
+    }
+    const validated = parsed.data;
     globalStore.__dockerInventoryCache = {
       at: Date.now(),
-      containers: body.containers ?? [],
-      storage: body.storage ?? { mode: "unknown", source: null },
+      containers: validated.containers as unknown as ContainerFacts[],
+      storage: validated.storage,
     };
     return {
-      containers: body.containers ?? [],
-      storage: body.storage ?? { mode: "unknown", source: null },
+      containers: validated.containers as unknown as ContainerFacts[],
+      storage: validated.storage,
     };
   } catch {
     return globalStore.__dockerInventoryCache

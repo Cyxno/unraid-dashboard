@@ -34,6 +34,15 @@ TARGET_IMAGE="${1:-$CURRENT_IMAGE}"
 echo "==> Current image: $CURRENT_IMAGE"
 echo "==> Target image:  $TARGET_IMAGE"
 
+# Fase 33 (v1.3.16): version-label precheck before any mutation.
+EXPECTED_VERSION="${TARGET_IMAGE##*:}"
+LABEL_VERSION=$(docker inspect "$TARGET_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null || true)
+if [ -n "$LABEL_VERSION" ] && [ "$LABEL_VERSION" != "$EXPECTED_VERSION" ]; then
+  echo "ERROR: image label version '$LABEL_VERSION' != requested '$EXPECTED_VERSION' — deploy blocked." >&2
+  exit 1
+fi
+echo "==> Version-label precheck OK (${LABEL_VERSION:-no label})"
+
 # --- capture current configuration ------------------------------------------
 NETWORK_MODE=$(docker inspect "$NAME" --format '{{.HostConfig.NetworkMode}}')
 RESTART_POLICY=$(docker inspect "$NAME" --format '{{.HostConfig.RestartPolicy.Name}}')

@@ -38,7 +38,7 @@ const { spawn } = require("node:child_process");
 const { randomUUID, timingSafeEqual, createHash } = require("node:crypto");
 const nodePath = require("node:path");
 const { inspectToSnapshot, findUnsupported, snapshotToRunArgs, UNSUPPORTED_PREFIX } = require("./recreate");
-const inventoryLib = require("./inventory");
+// fixture: require removed (models the v1.3.13 incident)
 const compose = require("./compose");
 const { writeFile, unlink, mkdir } = require("node:fs/promises");
 const { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } = require("node:fs");

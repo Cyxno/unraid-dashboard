@@ -1,0 +1,49 @@
+#!/bin/sh
+# Mock Docker CLI for helper runtime smoke tests (no real Docker needed).
+# Behavior is driven by fixture files in MOCK_DOCKER_DIR and a mode file:
+#   ok      -> serve fixtures (default)
+#   fail    -> exit 1 for inspect commands (simulates daemon failure)
+# Fixtures:
+#   ps.txt                     output of: docker ps -a --format ...
+#   inspect.ndjson             output of: docker container inspect --format '{{json .}}' ...
+#   image-digests.json         map "image ref" -> JSON RepoDigests array
+set -u
+MOCK_DIR="${MOCK_DOCKER_DIR:-/tmp/mock-docker}"
+MODE_FILE="$MOCK_DIR/mode"
+MODE="ok"
+[ -f "$MODE_FILE" ] && MODE="$(cat "$MODE_FILE")"
+
+cmd="$1"; shift
+case "$cmd" in
+  ps)
+    [ -f "$MOCK_DIR/ps.txt" ] && cat "$MOCK_DIR/ps.txt" && exit 0
+    exit 1
+    ;;
+  container)
+    sub="${1:-}"; [ "${1:-}" = "inspect" ] && shift
+    if [ "$MODE" = "fail" ]; then echo "mock docker: daemon unavailable" >&2; exit 1; fi
+    [ -f "$MOCK_DIR/inspect.ndjson" ] && cat "$MOCK_DIR/inspect.ndjson" && exit 0
+    exit 1
+    ;;
+  image)
+    sub="${1:-}"; [ "${1:-}" = "inspect" ] && shift
+    if [ "$MODE" = "fail" ]; then echo "mock docker: daemon unavailable" >&2; exit 1; fi
+    # last arg is the image reference
+    img="${*##* }"
+    if [ -f "$MOCK_DIR/image-digests.json" ]; then
+      img=""
+      for arg in "$@"; do img="$arg"; done
+      node -e '
+        const fs = require("fs");
+        const map = JSON.parse(fs.readFileSync(process.argv[1] + "/image-digests.json", "utf8"));
+        const img = process.argv[2];
+        process.stdout.write(JSON.stringify(map[img] ?? []));
+      ' "$MOCK_DIR" "$img"
+      exit 0
+    fi
+    echo "[]" && exit 0
+    ;;
+  *)
+    exit 1
+    ;;
+esac

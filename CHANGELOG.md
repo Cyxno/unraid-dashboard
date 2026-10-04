@@ -3,6 +3,18 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.3.16
+
+### Improved
+
+- **Release pipeline now validates helper/dashboard runtime integration before images are published**: both images boot in CI — the helper against a mocked Docker CLI requiring a fresh, healthy inventory, the dashboard with version/PWA/SSE checks — and publish only runs after those smokes pass, with a re-verification of the published tags
+- **Production updates now require healthy fresh inventory state**: the helper deploy precheck boots the candidate isolated on an alternate port (fresh inventory healthy or production is never touched), verifies the image version label against the requested tag, and the post-deploy gate requires a successful fresh refresh — process health alone is no longer deployment success
+
+### Fixed
+
+- **Release gates prevent missing runtime modules and version-contract mismatches from reaching production**: the suite boots the real helper entrypoint end-to-end (the v1.3.13 missing-import class is now hard red before release) and the dashboard validates helper responses at runtime with a Zod contract (drift degrades instead of poisoning the update model)
+- **Inventory no longer freezes after the first refresh**: the helper's single-flight promise was never cleared once settled, so /inventory replayed the boot-time result until an update invalidated the cache — the next cache miss now performs a real fresh refresh; an all-chunks-failed refresh is a hard failure that serves last-known-good instead of an empty-facts inventory
+
 ## v1.3.15
 
 ### Improved

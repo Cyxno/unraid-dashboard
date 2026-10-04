@@ -1,5 +1,10 @@
 name: Build and publish Docker image
 
+# Release pipeline (v1.3.16 hardening):
+#   build (loaded locally) → IMAGE BOOT SMOKES → only then push to GHCR.
+# A broken image (boot failure, wrong version metadata, missing modules,
+# degraded fresh inventory) can no longer reach the registry.
+
 on:
   push:
     branches: [main]
@@ -15,14 +20,97 @@ permissions:
   packages: write
 
 jobs:
-  build-and-push:
+  build-and-smoke:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Compute app version
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build dashboard image (local, not pushed yet)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: beacon-dashboard:candidate
+          labels: |
+            org.opencontainers.image.title=unraid-dashboard
+            org.opencontainers.image.description=Self-hosted Unraid server dashboard (Next.js BFF over the Unraid GraphQL API)
+            org.opencontainers.image.vendor=Cyxno
+            org.opencontainers.image.source=https://github.com/Cyxno/unraid-dashboard
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          build-args: |
+            APP_VERSION=${{ steps.ver.outputs.version }}
+            GIT_SHA=${{ github.sha }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build helper image (local, not pushed yet)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: helper/Dockerfile
+          push: false
+          load: true
+          tags: beacon-helper:candidate
+          labels: |
+            org.opencontainers.image.title=unraid-dashboard-helper
+            org.opencontainers.image.source=https://github.com/Cyxno/unraid-dashboard
+            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=helper
+          cache-to: type=gha,scope=helper,mode=max
+
+      - name: Smoke dashboard image (boot, version contract, PWA, SSE)
+        run: |
+          chmod +x scripts/smoke-dashboard-image.sh
+          scripts/smoke-dashboard-image.sh beacon-dashboard:candidate "${{ steps.ver.outputs.version }}"
+
+      - name: Smoke helper image (boot, mock-docker fresh inventory, version contract)
+        run: |
+          chmod +x scripts/smoke-helper-image.sh
+          scripts/smoke-helper-image.sh beacon-helper:candidate "${{ steps.ver.outputs.version }}"
+
+      - name: Export candidate images for the publish job
+        run: |
+          docker save beacon-dashboard:candidate -o /tmp/dashboard-image.tar
+          docker save beacon-helper:candidate -o /tmp/helper-image.tar
+
+      - name: Upload candidate images
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-images
+          path: |
+            /tmp/dashboard-image.tar
+            /tmp/helper-image.tar
+          retention-days: 1
+
+  publish:
+    needs: build-and-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download validated candidate images
+        uses: actions/download-artifact@v4
+        with:
+          name: candidate-images
+          path: /tmp
+
+      - name: Load candidate images
+        run: |
+          docker load -i /tmp/dashboard-image.tar
+          docker load -i /tmp/helper-image.tar
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -31,50 +119,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          # latest tracks main; semver tags on v* releases; sha for traceability
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=sha,prefix=sha-
-          labels: |
-            org.opencontainers.image.title=unraid-dashboard
-            org.opencontainers.image.description=Self-hosted Unraid server dashboard (Next.js BFF over the Unraid GraphQL API)
-            org.opencontainers.image.vendor=Cyxno
-            org.opencontainers.image.source=https://github.com/Cyxno/unraid-dashboard
-            org.opencontainers.image.licenses=MIT
+      - name: Push validated dashboard image
+        run: |
+          V="${{ needs.build-and-smoke.outputs.version }}"
+          for tag in "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$V" \
+                    "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" \
+                    "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"; do
+            docker tag beacon-dashboard:candidate "$tag"
+            docker push "$tag"
+          done
 
-      - name: Compute app version
-        id: ver
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Push validated helper image
+        run: |
+          V="${{ needs.build-and-smoke.outputs.version }}"
+          for tag in "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper:$V" \
+                    "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper:latest" \
+                    "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper:sha-${{ github.sha }}"; do
+            docker tag beacon-helper:candidate "$tag"
+            docker push "$tag"
+          done
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            APP_VERSION=${{ steps.ver.outputs.version }}
-            GIT_SHA=${{ github.sha }}
-            BUILD_TIME=${{ github.event.head_commit.timestamp }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push update helper
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: helper/Dockerfile
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper:${{ steps.ver.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper:sha-${{ github.sha }}
-          cache-from: type=gha,scope=helper
-          cache-to: type=gha,scope=helper,mode=max
+      - name: Re-verify published artifacts (Fase 54: artifact == validated artifact)
+        run: |
+          chmod +x scripts/smoke-dashboard-image.sh scripts/smoke-helper-image.sh
+          V="${{ needs.build-and-smoke.outputs.version }}"
+          docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$V"
+          docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper:$V"
+          scripts/smoke-dashboard-image.sh "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$V" "$V"
+          scripts/smoke-helper-image.sh "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper:$V" "$V"
