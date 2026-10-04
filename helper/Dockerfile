@@ -5,6 +5,7 @@
 FROM node:22-alpine
 WORKDIR /helper
 COPY helper/server.js ./server.js
+COPY helper/inventory.js ./inventory.js
 COPY helper/recreate.js ./recreate.js
 COPY helper/compose.js ./compose.js
 RUN apk add --no-cache docker-cli docker-cli-compose docker-cli-buildx

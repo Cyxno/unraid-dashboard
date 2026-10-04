@@ -65,11 +65,20 @@ const STEP_TIMEOUT_MS = { inspect: 15_000, pull: 300_000, replace: 30_000 };
 // result instead of re-spawning N+1 Docker CLI processes per request.
 // Mutations clear the cache via invalidateInventory() to ensure freshness.
 const INVENTORY_TTL_MS = 10_000;
-let inventoryCache = null; // { at, body }
+let inventoryCache = null; // { at, body, degraded, lastGoodAt }
+// Fase 15/16: inventory pipeline health — process-alive alone never
+// proved the pipeline healthy (three silent degradations shipped).
+let inventoryStatus = {
+  status: "unknown",
+  lastRefreshAt: null,
+  lastRefreshAgeSeconds: null,
+  lastRefreshFailures: null,
+  diagnostics: null,
+};
 let inventoryRefreshPromise = null; // single-flight coalescing
 function invalidateInventory() { inventoryCache = null; inventoryRefreshPromise = null; }
 
-const HELPER_VERSION = "1.3.12";
+const HELPER_VERSION = "1.3.13";
 
 /** Strict remote mode (v0.7.14): when UPDATE_REQUIRE_REMOTE=true, a
  * self-update pull failure aborts BEFORE any mutation — the local-image
@@ -1416,7 +1425,16 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${LISTEN_HOST}`);
 
   if (url.pathname === "/health") {
-    return sendJson(res, 200, { ok: true, version: HELPER_VERSION });
+    const lastRefreshAgeSeconds = inventoryStatus.lastRefreshAt
+      ? Math.round((Date.now() - Date.parse(inventoryStatus.lastRefreshAt)) / 1000)
+      : null;
+    return sendJson(res, 200, {
+      ok: true,
+      version: HELPER_VERSION,
+      inventoryStatus: inventoryStatus.status,
+      lastRefreshAgeSeconds,
+      lastRefreshFailures: inventoryStatus.lastRefreshFailures,
+    });
   }
 
   // Read-only inventory of ALL containers: what the central update manager
@@ -1436,9 +1454,11 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 500, { error: "Inventory refresh failed." });
     }
     inventoryRefreshPromise = (async () => {
+      const refreshStartedAt = Date.now();
       try {
-        // Batch: one `docker ps` for the list + one `docker inspect` with
-        // ALL container IDs (single spawn instead of N per-container spawns).
+        // One `docker ps` for the list; inspect runs in DETERMINISTIC CHUNKS
+        // (v1.3.13): bounded stdout per spawn, partial-failure isolation,
+        // no N+1, no mega-batch that can silently truncate.
         const psRaw = await docker(
           ["ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.State}}\t{{.Status}}"],
           { timeoutMs: 20_000 },
@@ -1451,48 +1471,59 @@ const server = http.createServer(async (req, res) => {
         if (entries.length === 0) {
           return { version: HELPER_VERSION, containers: [], storage: { mode: process.env.DOCKER_STORAGE_MODE || "unknown", source: process.env.DOCKER_STORAGE_SOURCE || null } };
         }
-        // Batch inspect: one spawn with all container IDs.
-        const allIds = entries.map(([id]) => id).join(" ");
-        const inspectRaw = await docker(
-          ["container", "inspect", "--format", "{{json .}}", ...entries.map(([id]) => id)],
-          STEP_TIMEOUT_MS.inspect,
-        );
+        // Chunked inspect (25 ids per spawn, sequential — predictable memory
+        // and dockerd load). Each chunk parses independently (NDJSON); one
+        // malformed line or failing chunk degrades only its own containers.
+        const CHUNK_SIZE = 25;
+        const chunks = inventoryLib.chunkList(entries, CHUNK_SIZE);
         let inspectResults = [];
-        try {
-          // `docker container inspect --format {{json .}} id1 id2 …` emits
-          // ONE JSON OBJECT PER LINE — the whole stdout is not a single JSON
-          // document, so a bare JSON.parse() throws and silently degraded
-          // every container to null (no labels, no digests → everything
-          // looked like a local build). Parse line-delimited JSON instead.
-          for (const line of inspectRaw.stdout.split("\n")) {
-            const trimmed = line.trim();
-            if (trimmed.length === 0) continue;
+        let chunkFailures = 0;
+        let parseErrors = 0;
+        for (const chunk of chunks) {
+          let raw = null;
+          try {
+            raw = await docker(
+              ["container", "inspect", "--format", "{{json .}}", ...chunk.map(([id]) => id)],
+              STEP_TIMEOUT_MS.inspect,
+            );
+          } catch {
+            raw = null; // timeout/spawn failure → chunk degrades, not the batch
+          }
+          if (raw && raw.stderr && raw.stderr.trim().length > 0) {
+            log("inventory", `inspect chunk stderr: ${raw.stderr.trim().slice(0, 120)}`);
+          }
+          const parsedChunk = inventoryLib.parseInspectOutput(raw ? raw.stdout : "");
+          // Partial-failure policy (Fase 5/10): keep the valid records of a
+          // chunk; a chunk that parsed NOTHING while having entries counts as
+          // failed and gets ONE retry before its containers fall back.
+          if (parsedChunk.records.length === 0 && chunk.length > 0) {
+            chunkFailures += 1;
             try {
-              const parsed = JSON.parse(trimmed);
-              if (parsed && typeof parsed === "object") inspectResults.push(parsed);
+              const retry = await docker(
+                ["container", "inspect", "--format", "{{json .}}", ...chunk.map(([id]) => id)],
+                STEP_TIMEOUT_MS.inspect,
+              );
+              const retryParsed = inventoryLib.parseInspectOutput(retry ? retry.stdout : "");
+              if (retryParsed.records.length > 0) {
+                chunkFailures -= 1;
+                inspectResults.push(...retryParsed.records);
+                parseErrors += retryParsed.parseErrors.length;
+              }
             } catch {
-              // skip malformed line; never fail the whole inventory for one
+              // keep the failure counted; containers fall through the
+              // per-container catch below with explicit degraded facts
             }
-          }
-          if (inspectRaw.stderr && inspectRaw.stderr.trim().length > 0) {
-            log("inventory", `batch inspect stderr: ${inspectRaw.stderr.trim().slice(0, 120)}`);
-          }
-        } catch {
-          inspectResults = [];
-        }
-        const inspectById = new Map();
-        for (const item of inspectResults) {
-          if (item?.Id) {
-            // `docker ps` reports SHORT ids (12 chars) while inspect returns
-            // the full 64-char Id — index BOTH, otherwise every lookup misses
-            // and the whole inventory degrades to null facts (v1.3.9 root
-            // cause of the "everything is a local build" classification).
-            inspectById.set(item.Id, item);
-            inspectById.set(item.Id.slice(0, 12), item);
+          } else {
+            inspectResults.push(...parsedChunk.records);
+            parseErrors += parsedChunk.parseErrors.length;
           }
         }
+        // Index by BOTH id forms (short join) + duplicate/malformed counts.
+        const { byId: inspectById, duplicates } = inventoryLib.buildIdIndex(inspectResults);
+        if (duplicates > 0) log("inventory", `duplicate inspect records: ${duplicates}`);
         const containers = [];
         const imageDigestCache = new Map();
+        let inspectFailures = 0;
         for (const [id, name, image, state, status] of entries) {
           try {
             const current = inspectById.get(id) ?? null;
@@ -1551,6 +1582,8 @@ const server = http.createServer(async (req, res) => {
             }
             containers.push({
               id,
+              idShort: inventoryLib.isShortId(id) ? id : (inventoryLib.isFullId(id) ? id.slice(0, 12) : null),
+              idFull: inventoryLib.isFullId(id) ? id : null,
               name,
               image,
               state,
@@ -1574,20 +1607,59 @@ const server = http.createServer(async (req, res) => {
               ),
             });
           } catch (inspectError) {
+            inspectFailures += 1;
             log("inventory", `inspect failed for ${name}: ${String(inspectError.message).slice(0, 100)}`);
             containers.push({ id, name, image, state, status, health: null, imageId: null, repoDigests: [], created: null, labels: {} });
           }
         }
         // Storage model: configured at deploy time by deploy-helper.sh (the
         // script runs on the host where the docker root mount is visible).
+        const diagnostics = inventoryLib.assessInventory(containers, {
+          inspectedContainers: containers.length - inspectFailures,
+          inspectFailures,
+          parseErrors,
+          chunks: chunks.length,
+          durationMs: Date.now() - refreshStartedAt,
+          lastSuccessfulRefresh: new Date().toISOString(),
+        });
         const body = {
           version: HELPER_VERSION,
           containers,
           storage: { mode: process.env.DOCKER_STORAGE_MODE || "unknown", source: process.env.DOCKER_STORAGE_SOURCE || null },
+          diagnostics,
         };
-        inventoryCache = { at: Date.now(), body };
+        // Fase 11: full success replaces the cache; a partial refresh still
+        // replaces (its facts are coherent) but carries the degraded marker;
+        // cache poisoning is impossible because we never store a fabricated
+        // empty inventory over a good one.
+        inventoryCache = {
+          at: Date.now(),
+          body,
+          degraded: diagnostics.partial || diagnostics.structurallyDegraded,
+          lastGoodAt: Date.now(),
+        };
+        inventoryStatus = {
+          status: diagnostics.structurallyDegraded ? "degraded" : diagnostics.partial ? "partial" : "healthy",
+          lastRefreshAt: new Date().toISOString(),
+          lastRefreshAgeSeconds: 0,
+          lastRefreshFailures: inspectFailures + chunkFailures + parseErrors,
+          diagnostics,
+        };
+        log("inventory", inventoryLib.refreshLogLine(diagnostics));
         return body;
       } catch (error) {
+        // Fase 11: hard failure → keep serving last-known-good; never wipe.
+        if (inventoryCache?.body) {
+          inventoryStatus = {
+            status: "degraded",
+            lastRefreshAt: new Date().toISOString(),
+            lastRefreshAgeSeconds: 0,
+            lastRefreshFailures: 1,
+            diagnostics: inventoryCache.body.diagnostics ?? null,
+          };
+          log("inventory", `refresh failed — serving last-known-good: ${String(error.message ?? error).slice(0, 100)}`);
+          return inventoryCache.body;
+        }
         log("inventory", `refresh failed: ${String(error.message ?? error).slice(0, 120)}`);
         return null;
       }

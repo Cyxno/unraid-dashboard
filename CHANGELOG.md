@@ -3,6 +3,19 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.3.13
+
+### Fixed
+
+- **Hardened Docker inventory parsing for large and multi-container inspect responses**: inspect output is parsed line-by-line (NDJSON), runs in deterministic 25-container chunks with one bounded retry, and the CLI output capture cap was raised so no tail of the container list can silently disappear
+- **Container metadata no longer silently disappears when individual inspect records fail**: a malformed line or failing chunk now degrades only its own containers, is counted in diagnostics, and never wipes the batch or poisons the cache — failed refreshes keep serving last-known-good data marked degraded
+- **Full Docker IDs are now matched reliably against short Docker IDs**: short 12-char ps ids and full 64-char inspect ids are indexed together, with malformed-id rejection and duplicate detection
+
+### Improved
+
+- Inventory diagnostics now detect partial/degraded refreshes instead of treating missing metadata as valid: the inventory response carries an additive diagnostics block (coverage, failures, chunks, duration, structural-degradation flag) and the health endpoint reports inventory pipeline status — an all-local-build host can never false-positive
+- Large Docker installations are handled in bounded batches (tested with 250/500-container fixtures; single-flight unchanged; no N+1 regression)
+
 ## v1.3.12
 
 ### Fixed
