@@ -79,7 +79,7 @@ let inventoryStatus = {
 let inventoryRefreshPromise = null; // single-flight coalescing
 function invalidateInventory() { inventoryCache = null; inventoryRefreshPromise = null; }
 
-const HELPER_VERSION = "1.3.14";
+const HELPER_VERSION = "1.3.15";
 
 /** Strict remote mode (v0.7.14): when UPDATE_REQUIRE_REMOTE=true, a
  * self-update pull failure aborts BEFORE any mutation — the local-image
@@ -1584,7 +1584,9 @@ const server = http.createServer(async (req, res) => {
             containers.push({
               id,
               idShort: inventoryLib.isShortId(id) ? id : (inventoryLib.isFullId(id) ? id.slice(0, 12) : null),
-              idFull: inventoryLib.isFullId(id) ? id : null,
+              // Canonical identity from the inspect record (64-char) — the
+              // ps id is short. Fase 2/3: full id is the primary join key.
+              idFull: current && inventoryLib.isFullId(current.Id) ? current.Id : null,
               name,
               image,
               state,

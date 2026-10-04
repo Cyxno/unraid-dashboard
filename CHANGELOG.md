@@ -3,6 +3,12 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.3.15
+
+### Improved
+
+- Inventory facts now carry the canonical full 64-char container id (`idFull`) alongside the short display id, completing the identity contract (short id stays in `id`/`idShort` for compatibility)
+
 ## v1.3.14
 
 ### Fixed

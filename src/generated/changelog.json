@@ -1,7 +1,20 @@
 {
   "generatedFrom": "CHANGELOG.md",
-  "latestVersion": "v1.3.14",
+  "latestVersion": "v1.3.15",
   "releases": [
+    {
+      "version": "v1.3.15",
+      "anchor": "v1-3-15",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Improved",
+          "items": [
+            "Inventory facts now carry the canonical full 64-char container id (`idFull`) alongside the short display id, completing the identity contract (short id stays in `id`/`idShort` for compatibility)"
+          ]
+        }
+      ]
+    },
     {
       "version": "v1.3.14",
       "anchor": "v1-3-14",
