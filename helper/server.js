@@ -48,7 +48,11 @@ const path = require("node:path");
 
 const CONTAINER_NAME = process.env.TARGET_CONTAINER || "unraid-dashboard";
 const IMAGE_REPO = process.env.TARGET_IMAGE_REPO || "ghcr.io/cyxno/unraid-dashboard";
-const LISTEN_HOST = "127.0.0.1";
+// Loopback by default (localhost-only security). HELPER_BIND=0.0.0.0 is for
+// release smoke containers that publish 127.0.0.1::<port> on the host — the
+// host-side binding stays loopback-only, so nothing becomes externally
+// reachable.
+const LISTEN_HOST = process.env.HELPER_BIND || "127.0.0.1";
 const PORT = Number(process.env.HELPER_PORT || 8790);
 const DASHBOARD_URL = process.env.DASHBOARD_URL || `http://127.0.0.1:${process.env.DASHBOARD_PORT || 8090}`;
 /** Proxy-auth secret shared with the dashboard (AUTH_PROXY_SECRET) — required
