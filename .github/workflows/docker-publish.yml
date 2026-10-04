@@ -139,7 +139,7 @@ jobs:
             docker push "$tag"
           done
 
-      - name: Re-verify published artifacts (Fase 54: artifact == validated artifact)
+      - name: Re-verify published artifacts match the validated candidates
         run: |
           chmod +x scripts/smoke-dashboard-image.sh scripts/smoke-helper-image.sh
           V="${{ needs.build-and-smoke.outputs.version }}"
