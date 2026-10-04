@@ -10,7 +10,7 @@
 # Exits non-zero on any failure; prints the last container logs (no secrets).
 # Usage: scripts/smoke-helper-image.sh <image> <expected-version>
 # =============================================================================
-set -eu
+set -eux
 
 IMAGE="${1:?usage: smoke-helper-image.sh <image> <expected-version>}"
 EXPECTED="${2:?usage: smoke-helper-image.sh <image> <expected-version>}"
@@ -27,7 +27,8 @@ trap cleanup EXIT
 
 fail() {
   echo "SMOKE FAIL: $1"
-  docker logs "$NAME" 2>&1 | tail -20 || true
+  echo "::error::helper-image smoke: $1"
+  docker logs "$NAME" 2>&1 | tail -20 | while IFS= read -r line; do echo "::error::helper-log: $line"; done || true
   exit 1
 }
 

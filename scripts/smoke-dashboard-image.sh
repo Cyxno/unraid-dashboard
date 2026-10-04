@@ -9,7 +9,7 @@
 # Exits non-zero on any failure; prints the last container logs (no secrets).
 # Usage: scripts/smoke-dashboard-image.sh <image> <expected-version>
 # =============================================================================
-set -eu
+set -eux
 
 IMAGE="${1:?usage: smoke-dashboard-image.sh <image> <expected-version>}"
 EXPECTED="${2:?usage: smoke-dashboard-image.sh <image> <expected-version>}"
@@ -20,7 +20,7 @@ trap cleanup EXIT
 
 fail() {
   echo "SMOKE FAIL: $1"
-  docker logs "$NAME" 2>&1 | tail -25 || true
+  echo "::error::dashboard-image smoke: $1"
   exit 1
 }
 
