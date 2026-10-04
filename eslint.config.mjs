@@ -15,6 +15,9 @@ const eslintConfig = defineConfig([
     // The update helper is a standalone CommonJS container script — it is
     // intentionally outside the Next.js/TS toolchain and has its own checks.
     "helper/**",
+    // Generated release-gate fixture (models the v1.3.13 missing-import
+    // incident; requires CommonJS by design — covered by the runtime smoke).
+    "tests/fixtures/helper-broken/**",
   ]),
 ]);
 
