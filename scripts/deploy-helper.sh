@@ -74,11 +74,11 @@ echo "==> Version precheck OK (label: ${LABEL_VERSION:-none}, tag: $EXPECTED_VER
 # inventory before touching the production helper. Skippable with
 # SMOKE=0 for emergencies.
 if [ "${SMOKE:-1}" = "1" ]; then
-  CAND_NAME="${NAME}-candidate-$"
+  CAND_NAME="${NAME}-candidate"
   docker rm -f "$CAND_NAME" >/dev/null 2>&1 || true
   echo "==> Candidate smoke on port 8791 (isolated)..."
   docker run -d --name "$CAND_NAME" \
-    -p "127.0.0.1:8791:8791" \
+    --network host \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -e HELPER_PORT=8791 \
     -e UPDATE_HELPER_TOKEN="$UPDATE_HELPER_TOKEN" \
