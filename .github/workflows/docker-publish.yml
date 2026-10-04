@@ -148,9 +148,7 @@ jobs:
 
       - name: Re-verify published artifacts match the validated candidates
         run: |
-          chmod +x scripts/smoke-dashboard-image.sh scripts/smoke-helper-image.sh
+          chmod +x scripts/verify-published.sh
           V="${{ needs.build-and-smoke.outputs.version }}"
-          docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$V"
-          docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper:$V"
-          scripts/smoke-dashboard-image.sh "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$V" "$V"
-          scripts/smoke-helper-image.sh "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper:$V" "$V"
+          scripts/verify-published.sh dashboard "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$V" "$V"
+          scripts/verify-published.sh helper "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper:$V" "$(node -p 'require("./package.json").version')"
