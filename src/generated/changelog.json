@@ -1,7 +1,20 @@
 {
   "generatedFrom": "CHANGELOG.md",
-  "latestVersion": "v1.3.10",
+  "latestVersion": "v1.3.11",
   "releases": [
+    {
+      "version": "v1.3.11",
+      "anchor": "v1-3-11",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "**Inventory no longer loses the tail of the container list.** The helper capped captured Docker CLI output at 400 KB while a full batch inspect is ~0.5–1 MB, so the last ~14 containers silently lost their inspect facts and kept falling back to empty classification input. The capture cap is now 8 MB"
+          ]
+        }
+      ]
+    },
     {
       "version": "v1.3.10",
       "anchor": "v1-3-10",

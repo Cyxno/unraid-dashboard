@@ -3,6 +3,12 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.3.11
+
+### Fixed
+
+- **Inventory no longer loses the tail of the container list.** The helper capped captured Docker CLI output at 400 KB while a full batch inspect is ~0.5–1 MB, so the last ~14 containers silently lost their inspect facts and kept falling back to empty classification input. The capture cap is now 8 MB
+
 ## v1.3.10
 
 ### Fixed

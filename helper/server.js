@@ -69,7 +69,7 @@ let inventoryCache = null; // { at, body }
 let inventoryRefreshPromise = null; // single-flight coalescing
 function invalidateInventory() { inventoryCache = null; inventoryRefreshPromise = null; }
 
-const HELPER_VERSION = "1.3.10";
+const HELPER_VERSION = "1.3.11";
 
 /** Strict remote mode (v0.7.14): when UPDATE_REQUIRE_REMOTE=true, a
  * self-update pull failure aborts BEFORE any mutation — the local-image
@@ -222,10 +222,12 @@ function docker(args, { timeoutMs = 30_000, onStdout, env } = {}) {
     child.stdout.on("data", (chunk) => {
       const text = chunk.toString();
       if (onStdout) onStdout(text);
-      if (stdout.length < 400_000) stdout += text;
+      // 8 MB cap: a full-inventory batch inspect is ~0.5-1 MB; the old 400 KB
+    // cap silently truncated the tail and degraded the last N containers.
+    if (stdout.length < 8_000_000) stdout += text;
     });
     child.stderr.on("data", (chunk) => {
-      if (stderr.length < 100_000) stderr += chunk.toString();
+      if (stderr.length < 1_000_000) stderr += chunk.toString();
     });
     child.on("error", (error) => {
       clearTimeout(timer);
