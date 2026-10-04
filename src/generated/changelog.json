@@ -1,7 +1,20 @@
 {
   "generatedFrom": "CHANGELOG.md",
-  "latestVersion": "v1.3.9",
+  "latestVersion": "v1.3.10",
   "releases": [
+    {
+      "version": "v1.3.10",
+      "anchor": "v1-3-10",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "**Helper inventory was still degraded: every container lost its facts.** The batch `docker inspect` joins on short 12-character ids from `docker ps`, while inspect returns full 64-character ids — every lookup missed, so all containers fell back to empty facts (no labels, no digests) and the update model had nothing to work with. Both id forms are indexed now; production inventory returns real facts again (54/62 containers with registry digests, 8 proven local/pipeline builds)"
+          ]
+        }
+      ]
+    },
     {
       "version": "v1.3.9",
       "anchor": "v1-3-9",

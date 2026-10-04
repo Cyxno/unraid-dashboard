@@ -69,7 +69,7 @@ let inventoryCache = null; // { at, body }
 let inventoryRefreshPromise = null; // single-flight coalescing
 function invalidateInventory() { inventoryCache = null; inventoryRefreshPromise = null; }
 
-const HELPER_VERSION = "1.3.9";
+const HELPER_VERSION = "1.3.10";
 
 /** Strict remote mode (v0.7.14): when UPDATE_REQUIRE_REMOTE=true, a
  * self-update pull failure aborts BEFORE any mutation — the local-image
@@ -1480,7 +1480,14 @@ const server = http.createServer(async (req, res) => {
         }
         const inspectById = new Map();
         for (const item of inspectResults) {
-          if (item?.Id) inspectById.set(item.Id, item);
+          if (item?.Id) {
+            // `docker ps` reports SHORT ids (12 chars) while inspect returns
+            // the full 64-char Id — index BOTH, otherwise every lookup misses
+            // and the whole inventory degrades to null facts (v1.3.9 root
+            // cause of the "everything is a local build" classification).
+            inspectById.set(item.Id, item);
+            inspectById.set(item.Id.slice(0, 12), item);
+          }
         }
         const containers = [];
         const imageDigestCache = new Map();

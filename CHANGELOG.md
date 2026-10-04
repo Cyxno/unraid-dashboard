@@ -3,6 +3,12 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.3.10
+
+### Fixed
+
+- **Helper inventory was still degraded: every container lost its facts.** The batch `docker inspect` joins on short 12-character ids from `docker ps`, while inspect returns full 64-character ids — every lookup missed, so all containers fell back to empty facts (no labels, no digests) and the update model had nothing to work with. Both id forms are indexed now; production inventory returns real facts again (54/62 containers with registry digests, 8 proven local/pipeline builds)
+
 ## v1.3.9
 
 ### Fixed
