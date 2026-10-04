@@ -57,6 +57,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Compute helper internal version
+        id: helperver
+        run: echo "version=$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
+
       - name: Build helper image (local, not pushed yet)
         uses: docker/build-push-action@v6
         with:
@@ -68,7 +72,10 @@ jobs:
           labels: |
             org.opencontainers.image.title=unraid-dashboard-helper
             org.opencontainers.image.source=https://github.com/Cyxno/unraid-dashboard
-            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
+            # helper reports its INTERNAL semver (package.json), independent
+            # of the ref name — coherent with HELPER_VERSION and the deploy
+            # precheck that compares label vs requested tag on semver tags
+            org.opencontainers.image.version=${{ steps.helperver.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=helper
           cache-to: type=gha,scope=helper,mode=max
