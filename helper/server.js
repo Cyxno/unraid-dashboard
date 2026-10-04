@@ -69,7 +69,7 @@ let inventoryCache = null; // { at, body }
 let inventoryRefreshPromise = null; // single-flight coalescing
 function invalidateInventory() { inventoryCache = null; inventoryRefreshPromise = null; }
 
-const HELPER_VERSION = "0.9.5";
+const HELPER_VERSION = "1.3.8";
 
 /** Strict remote mode (v0.7.14): when UPDATE_REQUIRE_REMOTE=true, a
  * self-update pull failure aborts BEFORE any mutation — the local-image

@@ -3,6 +3,18 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.3.8
+
+### Fixed
+
+- **Stopped Docker containers are no longer treated as problems.** The Docker page's Problems filter and problem counter used "not running" as failure evidence, so deliberately stopped containers (maintenance tools, one-shot utilities) were counted as problems. A new canonical classifier (`classifyContainerHealth`) now drives the filter and counters: only unhealthy, restarting/crash-loop and concrete error states are problems — stopped, exited and paused containers stay visible with their neutral Stopped/Paused state
+- Intentionally inactive containers remain visible under the Stopped filter and no longer inflate the Problems count or the dashboard health level
+- Autostart-enabled stopped containers are not flagged either: autostart does not imply a 24/7 expectation, and the container inventory carries no exit codes, so stale non-zero exit codes cannot surface as failure evidence
+
+### Improved
+
+- Dashboard and helper release versions are aligned again: both ship as v1.3.8 (the helper had been reporting v1.3.5/0.9.5 while the dashboard moved ahead)
+
 ## v1.3.7
 
 ### Fixed

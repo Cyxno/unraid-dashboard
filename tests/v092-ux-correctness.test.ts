@@ -55,9 +55,12 @@ describe("v0.9.2 docker page ordering + filters", () => {
     assert.match(docker, /c\.health === "unhealthy"\) return 0/);
   });
 
-  it("problems quick filter = not-running OR unhealthy OR hot", () => {
+  it("problems quick filter = canonical isProblem only (v1.3.8: stopped is not a problem)", () => {
     assert.match(docker, /filter === "problems"/);
-    assert.match(docker, /c\.state !== "RUNNING" \|\|/);
+    // v1.3.8: the problems filter must derive from the canonical
+    // classifier, never from raw "not running" state.
+    assert.match(docker, /isContainerProblem\(c\)/);
+    assert.doesNotMatch(docker, /c\.state !== "RUNNING" \|\|/);
   });
 
   it("summary chips are click-to-filter", () => {

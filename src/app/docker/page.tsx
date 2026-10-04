@@ -11,6 +11,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { isContainerProblem } from "@/lib/container-health";
 import { usePoll } from "@/hooks/use-poll";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import {
@@ -315,13 +316,10 @@ export default function DockerPage() {
     if (filter === "running") list = list.filter((c) => c.state === "RUNNING");
     if (filter === "stopped") list = list.filter((c) => c.state === "EXITED");
     if (filter === "problems")
-      list = list.filter(
-        (c) =>
-          c.state !== "RUNNING" ||
-          c.health === "unhealthy" ||
-          (c.metrics && (c.metrics.cpuPercent ?? -1) >= HIGH_CPU_PERCENT) ||
-          isHighMemory(c),
-      );
+      // v1.3.8: canonical semantics — only actionable failures (unhealthy,
+      // restarting). Stopped/paused is a state, not an incident; resource
+      // pressure has its own high-cpu / high-memory filters.
+      list = list.filter((c) => isContainerProblem(c));
     if (filter === "update") list = list.filter((c) => c.updateAvailable);
     if (filter === "high-cpu")
       list = list.filter(
@@ -489,7 +487,7 @@ export default function DockerPage() {
           const counts = {
             running: containers.filter((c) => c.state === "RUNNING").length,
             stopped: containers.filter((c) => c.state === "EXITED").length,
-            problems: containers.filter((c) => c.state !== "RUNNING" || c.health === "unhealthy").length,
+            problems: containers.filter((c) => isContainerProblem(c)).length,
             update: containers.filter((c) => c.updateAvailable).length,
           };
           const chip = (key: StatusFilter, label: string, count: number) => (
