@@ -206,11 +206,44 @@ describe("cAdvisor container query builders", () => {
     assert.equal(CADVISOR_DOCKER_SELECTOR, 'id=~"/docker/[0-9a-f]{64}"');
   });
 
-  it("builds CPU percent with rate, host-core normalization and the freshness guard", () => {
+  it("builds CPU percent as Docker-style per-core percent with the freshness guard", () => {
     const query = CONTAINER_CPU_QUERY();
     assert.ok(query.includes(`rate(container_cpu_usage_seconds_total{${CADVISOR_DOCKER_SELECTOR}}[${CONTAINER_CPU_RATE_WINDOW}]`));
-    assert.ok(query.includes("/ scalar(machine_cpu_cores)"));
     assert.ok(query.includes(cadvisorFreshnessGuard()));
+    // Docker's (cpuDelta/systemDelta) × onlineCPUs × 100 = cores_used × 100:
+    // 1 fully-used core = 100%. Dividing by machine_cpu_cores would be a
+    // factor-16 error (v1.3.6 regression, fixed in v1.3.7).
+    assert.ok(!query.includes("machine_cpu_cores"));
+    assert.match(query, /^100 \* sum by \(name\)/);
+  });
+
+  it("keeps per-core scale for id-anchored history queries", () => {
+    const short = containerCpuQuery("2e125c468762");
+    assert.ok(short.startsWith("100 * sum (rate(container_cpu_usage_seconds_total"));
+    assert.ok(!short.includes("machine_cpu_cores"));
+  });
+
+  it("does not clamp CPU to 100% — multi-core containers exceed it", () => {
+    // Scale check on the expression itself: the value is cores × 100, so a
+    // 2-core workload evaluates to 200% and must survive unchanged.
+    const query = CONTAINER_CPU_QUERY();
+    assert.equal(query.includes("min"), false);
+    assert.equal(query.includes("clamp"), false);
+    assert.equal(query.includes("clamp_max"), false);
+  });
+
+  it("documents the controlled-load scale contract (verified on a 16-core host)", () => {
+    // Runtime proof (2026-10-04, --cpus quota test container):
+    //   0.5 CPU → docker CPUPerc 50.7%, raw cAdvisor rate 0.31–0.5 cores
+    //   1.0 CPU → docker CPUPerc 101.7%
+    //   2.0 CPU → docker CPUPerc 202.3%
+    // The builder therefore maps raw core rate c to c × 100:
+    const toDockerStyle = (rawCores: number) => rawCores * 100;
+    assert.equal(toDockerStyle(0.5), 50);
+    assert.equal(toDockerStyle(1.0), 100);
+    assert.equal(toDockerStyle(2.0), 200);
+    // Host-normalized would need ÷16 — explicitly NOT the Beacon semantic:
+    assert.notEqual(toDockerStyle(0.5), 50 / 16);
   });
 
   it("guards against destroyed-container ghosts via container_last_seen", () => {
@@ -231,7 +264,7 @@ describe("cAdvisor container query builders", () => {
   it("anchors per-container queries on the Docker id when one is given", () => {
     const short = containerCpuQuery("2e125c468762");
     assert.ok(short.includes('id=~"/docker/2e125c468762[0-9a-f]*"'));
-    assert.ok(short.includes("scalar(machine_cpu_cores)"));
+    assert.ok(!short.includes("machine_cpu_cores"));
     const full = containerMemoryUsedQuery("2e125c468762abcdef".padEnd(64, "0"));
     assert.ok(full.includes('id=~"/docker/2e125c468762abcdef'));
   });

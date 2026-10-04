@@ -21,9 +21,9 @@ import type {
 /**
  * Per-container runtime metrics from cAdvisor (via Prometheus), selected
  * by cgroup id and joined on the container `name` label. CPU is
- * rate()-averaged over a window and expressed as % of host capacity —
- * the same semantics as the retired docker_stats gauge, minus its
- * ~instant snapshot behaviour.
+ * rate()-averaged over a window in Docker-style per-core percent
+ * (1 fully-used core = 100%; >100% is valid) — the same semantics as the
+ * retired docker_stats gauge, minus its ~instant snapshot behaviour.
  */
 
 /** Escapes a container name for an exact-match PromQL string literal. */

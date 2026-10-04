@@ -101,11 +101,18 @@ export const FILESYSTEM_AVAIL_QUERY =
 
 /* Containers (cAdvisor, id-joined) ------------------------------------------
  * Semantics matched to the retired docker_stats_* gauges (verified on
- * production 2026-10-03, shadow comparison):
- * - CPU: docker stats CPUPerc = % of total host capacity →
- *   100 · rate(cpu counter) / machine_cpu_cores, averaged over
- *   CONTAINER_CPU_RATE_WINDOW (the old gauge was an ~instant snapshot;
- *   values now move smoother — documented in the changelog).
+ * production 2026-10-04 with controlled --cpus=0.5/1/2 load tests and a
+ * 60-minute parallel comparison, median ratio OLD/A = 1.29):
+ * - CPU: docker stats CPUPerc = Docker-style PER-CORE percentage —
+ *   1 fully-used core = 100%, 2 cores = 200%, 0.5 core = 50%.
+ *   Derivation: docker's (cpuDelta/systemDelta) × onlineCPUs × 100 with
+ *   systemDelta = total host CPU-seconds (all cores, idle included) gives
+ *   (c·W / 16·W) × 16 × 100 = c × 100. The cAdvisor counter rate is in
+ *   cores, so the equivalent is rate(...) × 100 — NO division by
+ *   machine_cpu_cores (that was v1.3.6's factor-16 regression, fixed in
+ *   v1.3.7). Values above 100% are valid and must not be clamped.
+ *   Averaged over CONTAINER_CPU_RATE_WINDOW (the old gauge was an ~instant
+ *   snapshot; values now move smoother — documented in the changelog).
  * - Memory used: container_memory_working_set_bytes equals docker's
  *   "MEM USAGE" (usage − inactive_file); shadow median Δ 0.02%.
  * - Memory limit: container_spec_memory_limit_bytes is 0 on cgroup-v2
@@ -131,9 +138,9 @@ export function cadvisorFreshnessGuard(): string {
 /** Average window for container CPU percent (rate lookback). */
 export const CONTAINER_CPU_RATE_WINDOW = "2m";
 
-/** CPU % of host capacity, per container, grouped by the `name` label. */
+/** Container CPU in Docker-style per-core percent: 1 core = 100%. */
 export const CONTAINER_CPU_QUERY = (rateWindow: string = CONTAINER_CPU_RATE_WINDOW) =>
-  `100 * sum by (name) (rate(container_cpu_usage_seconds_total{${CADVISOR_DOCKER_SELECTOR}}[${rateWindow}]) ${cadvisorFreshnessGuard()}) / scalar(machine_cpu_cores)`;
+  `100 * sum by (name) (rate(container_cpu_usage_seconds_total{${CADVISOR_DOCKER_SELECTOR}}[${rateWindow}]) ${cadvisorFreshnessGuard()})`;
 
 export const CONTAINER_MEMORY_USED_QUERY = () =>
   `container_memory_working_set_bytes{${CADVISOR_DOCKER_SELECTOR}} ${cadvisorFreshnessGuard()}`;
@@ -148,9 +155,9 @@ export const CONTAINER_MEMORY_LIMIT_QUERY = () =>
  */
 export function containerCpuQuery(idOrName: string, rateWindow: string = CONTAINER_CPU_RATE_WINDOW): string {
   if (/^[0-9a-f]{12,64}$/.test(idOrName)) {
-    return `100 * sum (rate(container_cpu_usage_seconds_total{id=~"/docker/${idOrName}[0-9a-f]*"}[${rateWindow}])) / scalar(machine_cpu_cores)`;
+    return `100 * sum (rate(container_cpu_usage_seconds_total{id=~"/docker/${idOrName}[0-9a-f]*"}[${rateWindow}]))`;
   }
-  return `100 * sum (rate(container_cpu_usage_seconds_total{name=${JSON.stringify(idOrName)}}[${rateWindow}])) / scalar(machine_cpu_cores)`;
+  return `100 * sum (rate(container_cpu_usage_seconds_total{name=${JSON.stringify(idOrName)}}[${rateWindow}]))`;
 }
 
 export function containerMemoryUsedQuery(idOrName: string): string {

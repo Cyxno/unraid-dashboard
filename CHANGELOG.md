@@ -3,6 +3,13 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.3.7
+
+### Fixed
+
+- **Container CPU was a factor-16 too low** (v1.3.6 regression): the cAdvisor query divided by `machine_cpu_cores`, but docker stats CPUPerc — Beacon's historical semantic — is a **per-core percentage**: 1 fully-used core = 100%, 2 cores = 200%. Proven with a controlled `--cpus=0.5/1/2` quota test (docker reported 50.7%/101.7%/202.3%) and a 60-minute parallel comparison (median ratio OLD/corrected = 1.29 vs OLD/host-normalized = 0.08 ≈ 1/16). All container-CPU consumers (overview, detail, history, top consumers, thermal attribution, thresholds) now use `rate(container_cpu_usage_seconds_total) × 100` — no division. The 80% high-CPU threshold again means "≈0.8 core", values above 100% remain valid and unclamped
+- Historical data needed no migration: CPU percentages are computed at query time from the raw cAdvisor counter, so the correction applies retroactively to all graphs
+
 ## v1.3.6
 
 ### Improved

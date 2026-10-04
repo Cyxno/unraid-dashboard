@@ -358,7 +358,7 @@ export async function getContainerHistoryPayload(
         getContainerHistory(client, name, {
           cpu: shortId
             ? containerCpuQuery(shortId)
-            : `100 * sum (rate(container_cpu_usage_seconds_total{name=${promqlString(name)}}[${CONTAINER_CPU_RATE_WINDOW}])) / scalar(machine_cpu_cores)`,
+            : `100 * sum (rate(container_cpu_usage_seconds_total{name=${promqlString(name)}}[${CONTAINER_CPU_RATE_WINDOW}]))`,
           memory: shortId
             ? containerMemoryUsedQuery(shortId)
             : `container_memory_working_set_bytes{name=${promqlString(name)}}`,
