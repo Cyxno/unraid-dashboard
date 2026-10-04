@@ -81,7 +81,11 @@ jobs:
       - name: Smoke helper image (boot, mock-docker fresh inventory, version contract)
         run: |
           chmod +x scripts/smoke-helper-image.sh
-          scripts/smoke-helper-image.sh beacon-helper:candidate "${{ steps.ver.outputs.version }}"
+          # The helper reports its INTERNAL version (package.json) — on
+          # main pushes the ref-name is "main" while the internal version
+          # stays semver, so expect the package version here.
+          HELPER_EXPECTED=$(node -p 'require("./package.json").version')
+          scripts/smoke-helper-image.sh beacon-helper:candidate "$HELPER_EXPECTED"
 
       - name: Export candidate images for the publish job
         run: |
