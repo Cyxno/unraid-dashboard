@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { useMemo } from "react";
 import { Boxes, PauseCircle, PlayCircle, StopCircle, TriangleAlert } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SectionStatus } from "./section-status";
+import { usePoll } from "@/hooks/use-poll";
 import { cn } from "@/lib/utils";
 import type { ContainerHealth, DockerSummary, Section } from "@/lib/api-types";
 
@@ -31,6 +33,20 @@ function healthBadge(health: ContainerHealth) {
 /** Compact Docker card for the overview page; full table lives on /docker. */
 export function DockerOverviewList({ docker }: { docker: Section<DockerSummary> }) {
   const data = docker.data;
+  // Canonical update verdicts (v1.3.9): the update badge shows ONLY when the
+  // shared updates cache says update_available — never the inventory's
+  // separate flag. Cache-only endpoint; never triggers a registry sweep.
+  const updateSummary = usePoll<{
+    available: boolean;
+    containers: Array<{ id: string; update_available: boolean }>;
+  }>("/api/docker/updates-summary", 120_000);
+  const updateIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const entry of updateSummary.data?.containers ?? []) {
+      if (entry.update_available) ids.add(entry.id);
+    }
+    return ids;
+  }, [updateSummary.data]);
   return (
     <Card>
       <CardHeader>
@@ -74,7 +90,7 @@ export function DockerOverviewList({ docker }: { docker: Section<DockerSummary> 
                   <div className="min-w-0 flex-1">
                     <p className="flex items-center gap-2 truncate text-sm font-medium">
                       {container.name}
-                      {container.updateAvailable && (
+                      {updateIds.has(container.id) && (
                         <Badge variant="warning" className="text-[10px]">
                           update
                         </Badge>

@@ -22,6 +22,10 @@ const REQUEST_TIMEOUT_MS = 10_000;
 export type RegistryCheckResult =
   | { kind: "digest"; remoteDigest: string }
   | { kind: "pinned"; remoteDigest: string }
+  /** Registry answered 404: no such repository remotely. This is the only
+   *  reliable "locally built/tagged image" evidence — never inferred from a
+   *  missing local digest, an auth wall or a network error (v1.3.9). */
+  | { kind: "not_found"; reason: string }
   | { kind: "auth_required"; reason: string }
   | { kind: "failed"; reason: string };
 
@@ -122,6 +126,12 @@ export async function checkRemoteDigest(image: string, ghcrToken?: string): Prom
           registry === "ghcr.io" && !ghcrToken
             ? "Private GHCR package — set GHCR_TOKEN (read:packages) or run login-ghcr.sh."
             : `${registry} requires credentials for ${repo}.`,
+      };
+    }
+    if (check.status === 404) {
+      return {
+        kind: "not_found",
+        reason: `${registry} has no repository ${repo} (404) — locally built or tagged image.`,
       };
     }
     if (check.status !== 200) {

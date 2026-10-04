@@ -69,7 +69,7 @@ let inventoryCache = null; // { at, body }
 let inventoryRefreshPromise = null; // single-flight coalescing
 function invalidateInventory() { inventoryCache = null; inventoryRefreshPromise = null; }
 
-const HELPER_VERSION = "1.3.8";
+const HELPER_VERSION = "1.3.9";
 
 /** Strict remote mode (v0.7.14): when UPDATE_REQUIRE_REMOTE=true, a
  * self-update pull failure aborts BEFORE any mutation — the local-image
@@ -1457,8 +1457,24 @@ const server = http.createServer(async (req, res) => {
         );
         let inspectResults = [];
         try {
-          inspectResults = JSON.parse(inspectRaw.stdout);
-          if (!Array.isArray(inspectResults)) inspectResults = [inspectResults];
+          // `docker container inspect --format {{json .}} id1 id2 …` emits
+          // ONE JSON OBJECT PER LINE — the whole stdout is not a single JSON
+          // document, so a bare JSON.parse() throws and silently degraded
+          // every container to null (no labels, no digests → everything
+          // looked like a local build). Parse line-delimited JSON instead.
+          for (const line of inspectRaw.stdout.split("\n")) {
+            const trimmed = line.trim();
+            if (trimmed.length === 0) continue;
+            try {
+              const parsed = JSON.parse(trimmed);
+              if (parsed && typeof parsed === "object") inspectResults.push(parsed);
+            } catch {
+              // skip malformed line; never fail the whole inventory for one
+            }
+          }
+          if (inspectRaw.stderr && inspectRaw.stderr.trim().length > 0) {
+            log("inventory", `batch inspect stderr: ${inspectRaw.stderr.trim().slice(0, 120)}`);
+          }
         } catch {
           inspectResults = [];
         }
@@ -1508,7 +1524,10 @@ const server = http.createServer(async (req, res) => {
             let repoDigests = [];
             if (imageDigestCache.has(image)) {
               repoDigests = imageDigestCache.get(image) ?? [];
-            } else {
+            } else if (current && typeof current.Image === "string" && current.Image.length > 0) {
+              // Guard: without inspect data the image reference is unknown;
+              // a failed lookup is NOT cached — a transient docker error must
+              // never permanently masquerade as "no registry digest".
               try {
                 const parsed = await dockerJson(
                   ["image", "inspect", "--format", "{{json .RepoDigests}}", current.Image],
@@ -1516,10 +1535,10 @@ const server = http.createServer(async (req, res) => {
                 );
                 const list = Array.isArray(parsed) ? parsed : [parsed];
                 repoDigests = list.map(String).slice(0, 4);
+                imageDigestCache.set(image, repoDigests);
               } catch {
-                repoDigests = [];
+                repoDigests = []; // uncached: retried on the next refresh
               }
-              imageDigestCache.set(image, repoDigests);
             }
             containers.push({
               id,

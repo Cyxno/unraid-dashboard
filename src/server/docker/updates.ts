@@ -2,13 +2,12 @@ import { getEnvSafe } from "@/server/env";
 import { getHelperStatus, getHelperSnapshots } from "@/server/update/helper-client";
 import { containerStatsBatch } from "@/server/update/history";
 import { computeAutoEligibility, pilotAllowlist } from "@/server/update/eligibility";
-import { checkRemoteDigest } from "./registry";
+import { checkRemoteDigest, type RegistryCheckResult } from "./registry";
 import {
   buildManagedContainer,
-  compareDigests,
+  canonicalUpdateState,
   localDigestOf,
   parseImageRef,
-  type CheckOutcome,
   type ContainerFacts,
   type ManagedContainer,
 } from "./model";
@@ -92,11 +91,7 @@ export async function fetchInventory(): Promise<{
 }
 
 /** Cached raw registry result per image (comparison happens per container). */
-type RawCheck =
-  | { kind: "digest"; remoteDigest: string }
-  | { kind: "pinned"; remoteDigest: string }
-  | { kind: "auth_required"; reason: string }
-  | { kind: "failed"; reason: string };
+type RawCheck = RegistryCheckResult;
 
 async function checkImageWithCache(image: string, force: boolean): Promise<void> {
   const cache = checkCache();
@@ -124,13 +119,14 @@ async function ensureChecks(images: Array<{ image: string }>, force: boolean): P
     return { pending: 0 };
   }
   const cache = checkCache();
-  const targets = images
-    .map((entry) => entry.image)
-    .filter((image) => {
-      if (force) return true;
-      const cached = cache.get(image);
-      return !cached || Date.now() - cached.at >= CHECK_TTL_MS;
-    });
+  // Deduplicate per unique image ref (v1.3.9): 20 containers sharing one
+  // image must produce ONE registry HEAD, not 20.
+  const uniqueRefs = Array.from(new Set(images.map((entry) => entry.image)));
+  const targets = uniqueRefs.filter((image) => {
+    if (force) return true;
+    const cached = cache.get(image);
+    return !cached || Date.now() - cached.at >= CHECK_TTL_MS;
+  });
   if (targets.length === 0) return { pending: 0 };
 
   const run = async () => {
@@ -182,31 +178,24 @@ export async function updatesOverview(options: { refresh?: boolean; wait?: boole
 
   // Koude cache: start de sweep en antwoord direct (checking-state in de
   // UI); handmatige refresh wacht wel tot alle HEADs klaar zijn.
+  // v1.3.9: every unique image ref is sweep-eligible — a container whose
+  // local digest is missing needs the 404-vs-200 evidence too, otherwise
+  // its state can never leave UNKNOWN (and true local builds would stay
+  // unclassified). Dedup happens per unique ref inside ensureChecks.
   const wait = options.wait ?? options.refresh === true;
   const sweep = await ensureChecks(
-    inventory.containers.filter((facts) => facts.repoDigests.length > 0),
+    inventory.containers,
     options.refresh === true,
   );
   const checking = !wait && sweep.pending > 0;
 
   const containers = inventory.containers.map((facts) => {
-    const localDigest = localDigestOf(facts);
     const raw = rawCheckFor(facts.image);
-    // Join the cached remote digest with this container's local digest.
-    const check: CheckOutcome | undefined = raw
-      ? raw.kind === "digest"
-        ? compareDigests(localDigest, raw.remoteDigest)
-        : raw.kind === "pinned"
-          ? { status: "PINNED", remoteDigest: raw.remoteDigest, localDigest }
-          : raw.kind === "auth_required"
-            ? { status: "AUTH_REQUIRED", remoteDigest: null, localDigest, reason: raw.reason }
-            : { status: "CHECK_FAILED", remoteDigest: null, localDigest, reason: raw.reason }
-      : undefined;
     const built = buildManagedContainer({
       facts,
       customDeployContainers: customDeployContainers(),
       extraHighRisk: extraHighRisk(),
-      check,
+      rawCheck: raw,
       checkedAt,
     });
     // Attach the read-only fact extensions (networks/volumes/compose paths)
@@ -305,6 +294,22 @@ export function resetUpdateDetection(): void {
  * sweep, NEVER touches the registry — the Docker page anchor badge and
  * collapsed Updates summary consume this instead of updatesOverview().
  */
+/**
+ * Cache invalidation (v1.3.9, Fase 22): called after a successful update/
+ * rollback so rows, counters, filter and summary refresh atomically from
+ * the next sweep instead of serving a pre-update verdict. Clearing the
+ * inventory cache too re-reads RepoDigests (the image changed on disk).
+ */
+export function invalidateUpdateState(imageRefs?: string[]): void {
+  const cache = checkCache();
+  if (imageRefs && imageRefs.length > 0) {
+    for (const ref of imageRefs) cache.delete(ref);
+  } else {
+    cache.clear();
+  }
+  globalStore.__dockerInventoryCache = undefined;
+}
+
 export function updatesSummaryFromCache(): {
   available: boolean;
   lastCheckAt: string | null;
@@ -314,6 +319,10 @@ export function updatesSummaryFromCache(): {
   knownUpdatesCount: number | null;
   containersChecked: number;
   containersTotal: number | null;
+  /** Canonical per-container verdicts — the ONLY source row badges, the
+   *  Update filter and counters may use (v1.3.9). Served from cache; the
+   *  endpoint never triggers a registry sweep. */
+  containers: Array<{ id: string; name: string; update_available: boolean; update_status: string; status: string }>;
 } {
   const checking = globalStore.__dockerRefreshInFlight != null;
   const inventory = globalStore.__dockerInventoryCache ?? null;
@@ -327,6 +336,7 @@ export function updatesSummaryFromCache(): {
       knownUpdatesCount: null,
       containersChecked: 0,
       containersTotal: null,
+      containers: [],
     };
   }
 
@@ -342,14 +352,19 @@ export function updatesSummaryFromCache(): {
 
   let knownUpdatesCount = 0;
   let containersChecked = 0;
-  for (const facts of inventory.containers) {
-    if (facts.repoDigests.length === 0) continue; // not sweep-eligible
-    const raw = rawCheckFor(facts.image);
-    if (!raw || raw.kind !== "digest") continue; // pinned/auth/failed carry no verdict
-    containersChecked += 1;
-    const localDigest = localDigestOf(facts);
-    if (localDigest !== null && localDigest !== raw.remoteDigest) knownUpdatesCount += 1;
-  }
+  const containers = inventory.containers.map((facts) => {
+    // Same canonical verdict the full overview uses — no second derivation.
+    const verdict = canonicalUpdateState(facts, rawCheckFor(facts.image));
+    if (verdict.update_status !== "UNKNOWN" && verdict.update_status !== "CHECK_FAILED") containersChecked += 1;
+    if (verdict.update_available) knownUpdatesCount += 1;
+    return {
+      id: facts.id,
+      name: facts.name,
+      update_available: verdict.update_available,
+      update_status: verdict.update_status,
+      status: facts.status,
+    };
+  });
 
   return {
     available: true,
@@ -360,5 +375,6 @@ export function updatesSummaryFromCache(): {
     knownUpdatesCount,
     containersChecked,
     containersTotal: inventory.containers.length,
+    containers,
   };
 }

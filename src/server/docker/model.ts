@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { RegistryCheckResult } from "@/server/docker/registry";
 
 /**
  * Central container model for the Docker Update Manager (v0.7.13).
@@ -110,29 +111,33 @@ export interface Provenance {
   note: string | null;
 }
 
-export function deriveProvenance(facts: ContainerFacts, check: CheckOutcome | undefined): Provenance {
-  const locallyBuilt = facts.repoDigests.length === 0;
+export function deriveProvenance(
+  facts: ContainerFacts,
+  verdict: ContainerUpdateVerdict,
+): Provenance {
   const base = {
     image_id: facts.imageId,
     local_digest: localDigestOf(facts),
-    registry_digest: check && "remoteDigest" in check ? check.remoteDigest : null,
-    locally_built: locallyBuilt,
+    registry_digest: verdict.remote_digest,
+    // Evidence-based (v1.3.9): only the registry's own 404 proves a local
+    // image — a missing digest proves nothing.
+    locally_built: verdict.update_status === "LOCAL_BUILD",
   } as const;
-  if (locallyBuilt) {
-    return { ...base, state: "local_build", note: "Image was built on this host (no registry digest) — updates come from its build pipeline." };
+  if (verdict.update_status === "LOCAL_BUILD") {
+    return { ...base, state: "local_build", note: verdict.reason ?? "Image was built on this host (registry has no such repository) — updates come from its build pipeline." };
   }
-  switch (check?.status) {
+  switch (verdict.update_status) {
     case "UP_TO_DATE":
     case "PINNED":
-      return { ...base, state: "synced", note: check.status === "PINNED" ? "Digest-pinned image — cannot drift from its pin." : "Running image matches the registry digest for its tag." };
+      return { ...base, state: "synced", note: verdict.update_status === "PINNED" ? "Digest-pinned image — cannot drift from its pin." : "Running image matches the registry digest for its tag." };
     case "UPDATE_AVAILABLE":
       return { ...base, state: "registry_ahead", note: "Registry tag points to a newer build than the one running — a release was published since this image was pulled." };
     case "AUTH_REQUIRED":
-      return { ...base, state: "auth_required", note: check.reason ?? "Registry requires credentials — provenance unverified." };
+      return { ...base, state: "auth_required", note: verdict.reason ?? "Registry requires credentials — provenance unverified." };
     case "CHECK_FAILED":
-      return { ...base, state: "check_failed", note: check.reason ?? "Registry check failed — provenance unknown." };
+      return { ...base, state: "check_failed", note: verdict.reason ?? "Registry check failed — provenance unknown." };
     default:
-      return { ...base, state: "unknown", note: "No registry check has run yet." };
+      return { ...base, state: "unknown", note: verdict.reason ?? "No registry check has run yet." };
   }
 }
 
@@ -276,13 +281,18 @@ export function pipelineOwnedProjects(): string[] {
 }
 
 /**
- * Management classification (v0.7.13) — label/metadata based, never name
- * based alone. Order matters: explicit operator labels are the strongest
- * ownership evidence; compose labels next (with pipeline-owned projects
- * taking precedence over plain compose); the Unraid dockerman label after
- * that; operator-configured custom deploys next; locally built images (no
- * registry digests) then; everything with registry digests but no owner is
- * standalone.
+ * Management classification (v0.7.13, evidence rules revised v1.3.9) —
+ * label/metadata based, never name based alone. Order matters: explicit
+ * operator labels are the strongest ownership evidence; compose labels next
+ * (with pipeline-owned projects taking precedence over plain compose); the
+ * Unraid dockerman label after that; operator-configured custom deploys
+ * next; everything else without an owner is standalone.
+ *
+ * v1.3.9: an EMPTY RepoDigests list is no longer local-build evidence.
+ * A transient docker inspect failure, a multi-arch pull quirk or an image
+ * loaded without digest metadata must never reclassify a registry image
+ * as a local build. LOCAL_BUILD is decided by {@link canonicalUpdateState}
+ * from registry evidence (a 404 from the image's own registry) instead.
  */
 export function classifyManagement(
   facts: ContainerFacts,
@@ -304,11 +314,10 @@ export function classifyManagement(
     };
   }
   if (composeProject && facts.labels["com.docker.compose.service"]) {
-    const localBuilt = facts.repoDigests.length === 0;
     return {
       management_type: "compose",
       management_source: `compose:${composeProject}/${facts.labels["com.docker.compose.service"]}`,
-      update_strategy: localBuilt ? "local_build" : "compose_service",
+      update_strategy: "compose_service",
     };
   }
   if (facts.labels["net.unraid.docker.managed"] === "dockerman") {
@@ -317,10 +326,10 @@ export function classifyManagement(
   if (customDeployContainers.includes(facts.name)) {
     return { management_type: "custom_deploy", management_source: "operator-config", update_strategy: "deploy_script" };
   }
-  if (facts.repoDigests.length === 0) {
-    return { management_type: "local_build", management_source: "no-registry-digest", update_strategy: "local_build" };
-  }
-  return { management_type: "standalone", management_source: "registry-digest-without-owner", update_strategy: "registry_recreate" };
+  // No owner evidence: registry-managed by default. Whether the image is
+  // truly local is proven (or refuted) by the registry check, see
+  // canonicalUpdateState — never from the digest list alone.
+  return { management_type: "standalone", management_source: "no-owner-evidence", update_strategy: "registry_recreate" };
 }
 
 /* ---- risk (Phase H): operational impact, not image novelty ---------------- */
@@ -357,16 +366,66 @@ export function defaultPolicyFor(risk: Risk): Policy {
 
 /* ---- remote digest comparison (Phase D) ------------------------------------ */
 
+/** Canonical per-container update verdict, shared by every consumer. */
+export interface ContainerUpdateVerdict {
+  update_status: UpdateStatus;
+  update_available: boolean;
+  remote_digest: string | null;
+  local_digest: string | null;
+  /** Evidence/reason when the verdict is not a definitive comparison. */
+  reason?: string;
+}
+
 export type CheckOutcome =
   | { status: "UP_TO_DATE" | "UPDATE_AVAILABLE" | "PINNED"; remoteDigest: string; localDigest: string | null }
   | { status: "LOCAL_BUILD" | "AUTH_REQUIRED" | "UNKNOWN" | "CHECK_FAILED"; remoteDigest: null; localDigest: string | null; reason?: string };
 
-/** Compares the local index digest with the remote tag digest. */
-export function compareDigests(localDigest: string | null, remoteDigest: string): CheckOutcome {
-  if (localDigest !== null && localDigest === remoteDigest) {
-    return { status: "UP_TO_DATE", remoteDigest, localDigest };
+/**
+ * CANONICAL update verdict (v1.3.9) — the single source of truth that row
+ * badges, counters, filters, the updates panel, notifications and agent
+ * issues all derive from. No consumer recomputes update state.
+ *
+ * Evidence rules:
+ *  - PINNED: image referenced by immutable digest (cannot drift).
+ *  - LOCAL_BUILD: ONLY when the image's own registry answers 404 for the
+ *    repository. A missing local RepoDigest is NOT evidence — a docker
+ *    inspect hiccup or a digest-less load must not reclassify registry
+ *    images (the v1.3.8 "62 local builds" bug).
+ *  - UPDATE_AVAILABLE: both digests known and different. Without a local
+ *    digest the honest answer is UNKNOWN — never a fabricated verdict.
+ *  - AUTH_REQUIRED / CHECK_FAILED / UNKNOWN: registry comparison did not
+ *    produce a verdict; no claim either way.
+ */
+export function canonicalUpdateState(
+  facts: ContainerFacts,
+  raw: RegistryCheckResult | null | undefined,
+): ContainerUpdateVerdict {
+  const { digestPin } = parseImageRef(facts.image);
+  const localDigest = localDigestOf(facts);
+  if (digestPin) {
+    return { update_status: "PINNED", update_available: false, remote_digest: digestPin, local_digest: localDigest };
   }
-  return { status: "UPDATE_AVAILABLE", remoteDigest, localDigest };
+  if (!raw) {
+    return { update_status: "UNKNOWN", update_available: false, remote_digest: null, local_digest: localDigest, reason: "No registry check has run yet." };
+  }
+  switch (raw.kind) {
+    case "pinned":
+      return { update_status: "PINNED", update_available: false, remote_digest: raw.remoteDigest, local_digest: localDigest };
+    case "not_found":
+      return { update_status: "LOCAL_BUILD", update_available: false, remote_digest: null, local_digest: localDigest, reason: raw.reason };
+    case "auth_required":
+      return { update_status: "AUTH_REQUIRED", update_available: false, remote_digest: null, local_digest: localDigest, reason: raw.reason };
+    case "failed":
+      return { update_status: "CHECK_FAILED", update_available: false, remote_digest: null, local_digest: localDigest, reason: raw.reason };
+    case "digest":
+      if (localDigest === null) {
+        return { update_status: "UNKNOWN", update_available: false, remote_digest: raw.remoteDigest, local_digest: null, reason: "Local registry digest unknown — image has no RepoDigests, cannot compare." };
+      }
+      if (localDigest === raw.remoteDigest) {
+        return { update_status: "UP_TO_DATE", update_available: false, remote_digest: raw.remoteDigest, local_digest: localDigest };
+      }
+      return { update_status: "UPDATE_AVAILABLE", update_available: true, remote_digest: raw.remoteDigest, local_digest: localDigest };
+  }
 }
 
 /** Build the full managed model from facts + an optional check result. */
@@ -374,7 +433,8 @@ export function buildManagedContainer(input: {
   facts: ContainerFacts;
   customDeployContainers: string[];
   extraHighRisk: string[];
-  check?: CheckOutcome;
+  /** Raw cached registry outcome (null = not checked yet). */
+  rawCheck?: RegistryCheckResult | null;
   policyOverride?: Policy;
   checkedAt: string;
   lastUpdated?: string | null;
@@ -384,7 +444,7 @@ export function buildManagedContainer(input: {
   autoEligibility?: { eligible: boolean; reasons: string[] };
 }): ManagedContainer {
   const { facts } = input;
-  const { registry, repo, tag, digestPin } = parseImageRef(facts.image);
+  const { registry, repo, tag } = parseImageRef(facts.image);
   const { management_type, management_source, update_strategy } = classifyManagement(
     facts,
     input.customDeployContainers,
@@ -399,30 +459,15 @@ export function buildManagedContainer(input: {
   const basePolicy = input.policyOverride ?? defaultPolicyFor(risk);
   const policy = basePolicy === "manual" ? "manual" : ownership.policy === "manual" ? "manual" : basePolicy;
 
-  let update_status: UpdateStatus;
-  let update_available = false;
-  let remote_digest: string | null = null;
-  const local_digest = localDigestOf(facts);
+  const canonical = canonicalUpdateState(facts, input.rawCheck ?? null);
+  let update_status: UpdateStatus = canonical.update_status;
+  // Pipeline-owned projects update through their own pipeline; the
+  // dashboard only observes their state.
+  if (management_type === "pipeline_owned") update_status = "LOCAL_BUILD";
 
-  if (digestPin) {
-    update_status = "PINNED";
-  } else if (management_type === "compose" && update_strategy === "local_build") {
-    update_status = "LOCAL_BUILD";
-  } else if (management_type === "local_build" || management_type === "pipeline_owned") {
-    // Pipeline-owned projects update through their own pipeline; the
-    // dashboard only observes their state.
-    update_status = "LOCAL_BUILD";
-  } else if (!input.check) {
-    update_status = "UNKNOWN";
-  } else if (input.check.status === "AUTH_REQUIRED") {
-    update_status = "AUTH_REQUIRED";
-  } else if (input.check.status === "CHECK_FAILED") {
-    update_status = "CHECK_FAILED";
-  } else {
-    update_status = input.check.status;
-    remote_digest = input.check.remoteDigest;
-    update_available = input.check.status === "UPDATE_AVAILABLE";
-  }
+  const update_available = management_type === "pipeline_owned" ? false : canonical.update_available;
+  const remote_digest = canonical.remote_digest;
+  const local_digest = canonical.local_digest;
 
   const externallyManaged =
     facts.labels["com.cyxno.update-manager"] === "external" ||
@@ -461,12 +506,12 @@ export function buildManagedContainer(input: {
     rollback_available: rollback.ready,
     externallyManaged,
     ownership,
-    provenance: deriveProvenance(facts, input.check),
+    provenance: deriveProvenance(facts, canonical),
     rollback,
     autoEligible: input.autoEligibility?.eligible ?? false,
     autoEligibilityReasons: input.autoEligibility?.reasons ?? [],
     health: facts.health,
-    last_checked: input.check ? input.checkedAt : null,
+    last_checked: input.rawCheck ? input.checkedAt : null,
     last_updated: input.lastUpdated ?? null,
   };
 }

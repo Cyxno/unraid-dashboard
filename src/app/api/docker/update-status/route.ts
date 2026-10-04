@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { guardRead } from "@/server/auth/guard";
 import { getContainerJob } from "@/server/update/helper-client";
 import { hasContainerRecord, recordContainerUpdate } from "@/server/update/history";
+import { invalidateUpdateState } from "@/server/docker/updates";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +43,10 @@ export async function GET(request: NextRequest) {
         rollbackPerformed: result === "rolled-back",
         ...(job.lastResult.error ? { error: job.lastResult.error } : {}),
       }).catch(() => {});
+      // Settled update (success, no-change or rollback): drop the cached
+      // verdict + inventory so every consumer re-derives from fresh facts
+      // on the next poll (v1.3.9 cache invalidation).
+      invalidateUpdateState(job.lastResult.image ? [job.lastResult.image] : undefined);
     }
   }
 

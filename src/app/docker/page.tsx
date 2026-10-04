@@ -275,6 +275,10 @@ export default function DockerPage() {
     stale: boolean;
     checking: boolean;
     knownUpdatesCount: number | null;
+    /** Canonical per-container verdicts (v1.3.9) — badges, the Update
+     *  filter and counters derive from THIS, never from the inventory's
+     *  separate updateAvailable flag. */
+    containers: Array<{ id: string; name: string; update_available: boolean; update_status: string }>;
   }>("/api/docker/updates-summary", 60_000);
   const updateCount = updateSummary.data?.knownUpdatesCount ?? null;
   const updateAge = updateSummary.data?.ageSeconds ?? null;
@@ -292,6 +296,22 @@ export default function DockerPage() {
     [data],
   );
 
+  // One canonical update state (v1.3.9): id-keyed from the updates cache.
+  const updateVerdicts = useMemo(() => {
+    const map = new Map<string, { update_available: boolean; update_status: string }>();
+    for (const entry of updateSummary.data?.containers ?? []) {
+      map.set(entry.id, { update_available: entry.update_available, update_status: entry.update_status });
+    }
+    return map;
+  }, [updateSummary.data]);
+  const isCanonicalUpdate = useCallback(
+    (container: DockerContainerSummary) => updateVerdicts.get(container.id)?.update_available === true,
+    [updateVerdicts],
+  );
+  const canonicalUpdateCount = useMemo(
+    () => containers.filter((c) => isCanonicalUpdate(c)).length,
+    [containers, isCanonicalUpdate],
+  );
   const composeProjects = useMemo(() => {
     const projects = new Set<string>();
     for (const container of containers) {
@@ -320,7 +340,8 @@ export default function DockerPage() {
       // restarting). Stopped/paused is a state, not an incident; resource
       // pressure has its own high-cpu / high-memory filters.
       list = list.filter((c) => isContainerProblem(c));
-    if (filter === "update") list = list.filter((c) => c.updateAvailable);
+    // v1.3.9: exact same set as the Updates counter — canonical verdicts only.
+    if (filter === "update") list = list.filter((c) => isCanonicalUpdate(c));
     if (filter === "high-cpu")
       list = list.filter(
         (c) => (c.metrics?.cpuPercent ?? -1) >= HIGH_CPU_PERCENT,
@@ -437,7 +458,7 @@ export default function DockerPage() {
         {(
           [
             ["containers", "Containers"],
-            ["updates", updateCount != null && updateCount > 0 ? `Updates (${updateCount})` : "Updates"],
+            ["updates", canonicalUpdateCount > 0 ? `Updates (${canonicalUpdateCount})` : "Updates"],
             ["projects", "Projects"],
             ["history", "History"],
           ] as const
@@ -488,7 +509,7 @@ export default function DockerPage() {
             running: containers.filter((c) => c.state === "RUNNING").length,
             stopped: containers.filter((c) => c.state === "EXITED").length,
             problems: containers.filter((c) => isContainerProblem(c)).length,
-            update: containers.filter((c) => c.updateAvailable).length,
+            update: canonicalUpdateCount,
           };
           const chip = (key: StatusFilter, label: string, count: number) => (
             <Button
@@ -507,7 +528,7 @@ export default function DockerPage() {
             <div className="-mb-1 flex flex-wrap items-center gap-1.5">
               {chip("running", "Running", counts.running)}
               {chip("problems", "Problems", counts.problems)}
-              {chip("update", "Updates", counts.update)}
+              {chip("update", "Update available", counts.update)}
               {chip("stopped", "Stopped", counts.stopped)}
             </div>
           );
@@ -533,6 +554,7 @@ export default function DockerPage() {
               aria-pressed={filter === option}
               onClick={() => setFilter(option)}
               className="h-8 shrink-0 whitespace-nowrap px-2.5 text-xs capitalize"
+              aria-label={option === "update" ? "Filter: update available" : undefined}
               title={
                 option === "high-cpu"
                   ? `CPU ≥ ${HIGH_CPU_PERCENT}%`
@@ -541,12 +563,19 @@ export default function DockerPage() {
                     : undefined
               }
             >
-              {option}
+              {option === "update" ? "update available" : option}
             </Button>
           ))}
         </div>
 
-        <div className="flex flex-wrap items-center gap-1 md:ml-auto">
+        {/* Sort / grouping / density controls (Fase 29 polish): grouped and
+            visually separated from the filter chips by an auto margin and a
+            divider — these are view controls, not column headers. */}
+        <div
+          role="group"
+          aria-label="Table view controls"
+          className="flex flex-wrap items-center gap-1 border-l pl-2 md:ml-auto md:border-l"
+        >
           {sortButton("cpu", "CPU")}
           {sortButton("memory", "Mem")}
           {sortButton("name", "Name")}
@@ -619,7 +648,7 @@ export default function DockerPage() {
                     <span className="min-w-0 flex-1 truncate text-sm font-medium">
                       {container.name}
                     </span>
-                    {container.updateAvailable && (
+                    {isCanonicalUpdate(container) && (
                       <Badge variant="warning" className="shrink-0 text-[10px]">
                         update
                       </Badge>
@@ -815,7 +844,7 @@ export default function DockerPage() {
                         <td className="max-w-[220px] px-4 py-2.5">
                           <p className="flex items-center gap-1.5 truncate font-medium">
                             {container.name}
-                            {container.updateAvailable && (
+                            {isCanonicalUpdate(container) && (
                               <Badge variant="warning" className="text-[10px]">
                                 update
                               </Badge>

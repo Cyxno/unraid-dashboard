@@ -11,9 +11,11 @@ import {
   deriveProvenance,
   parseOwnershipLabels,
   pipelineOwnedProjects,
-  type CheckOutcome,
+  canonicalUpdateState,
   type ContainerFacts,
+  type ContainerUpdateVerdict,
 } from "../src/server/docker/model";
+import type { RegistryCheckResult } from "../src/server/docker/registry";
 import { updateGate } from "../src/server/docker/policy";
 
 function facts(overrides: Partial<ContainerFacts> = {}): ContainerFacts {
@@ -35,42 +37,55 @@ function facts(overrides: Partial<ContainerFacts> = {}): ContainerFacts {
 }
 
 describe("v0.7.13 registry/image provenance", () => {
+  const verdict = (facts2: ContainerFacts, raw: RegistryCheckResult | null): ContainerUpdateVerdict =>
+    canonicalUpdateState(facts2, raw);
+
   it("synced when the running RepoDigest equals the registry digest", () => {
-    const check: CheckOutcome = { status: "UP_TO_DATE", remoteDigest: "sha256:aaaa", localDigest: "sha256:aaaa" };
-    const provenance = deriveProvenance(facts(), check);
+    const v = verdict(facts(), { kind: "digest", remoteDigest: "sha256:aaaa" });
+    const provenance = deriveProvenance(facts(), v);
     assert.equal(provenance.state, "synced");
     assert.equal(provenance.registry_digest, "sha256:aaaa");
     assert.equal(provenance.locally_built, false);
   });
 
   it("registry_ahead when the tag moved — never labeled a compromise", () => {
-    const check: CheckOutcome = { status: "UPDATE_AVAILABLE", remoteDigest: "sha256:bbbb", localDigest: "sha256:aaaa" };
-    const provenance = deriveProvenance(facts(), check);
+    const v = verdict(facts(), { kind: "digest", remoteDigest: "sha256:bbbb" });
+    const provenance = deriveProvenance(facts(), v);
     assert.equal(provenance.state, "registry_ahead");
     assert.ok(!/compromis|attack|malicious/i.test(provenance.note ?? ""));
     assert.match(provenance.note ?? "", /newer build/);
   });
 
-  it("local_build when no RepoDigests exist", () => {
-    const provenance = deriveProvenance(facts({ repoDigests: [] }), undefined);
+  it("missing RepoDigests alone is NOT local-build evidence (v1.3.9) — unknown", () => {
+    const v = verdict(facts({ repoDigests: [] }), { kind: "digest", remoteDigest: "sha256:bbbb" });
+    assert.equal(v.update_status, "UNKNOWN");
+    const provenance = deriveProvenance(facts({ repoDigests: [] }), v);
+    assert.equal(provenance.state, "unknown");
+    assert.equal(provenance.locally_built, false);
+  });
+
+  it("local_build proven by the registry's own 404", () => {
+    const v = verdict(facts({ repoDigests: [] }), { kind: "not_found", reason: "404" });
+    assert.equal(v.update_status, "LOCAL_BUILD");
+    const provenance = deriveProvenance(facts({ repoDigests: [] }), v);
     assert.equal(provenance.state, "local_build");
     assert.equal(provenance.locally_built, true);
   });
 
   it("auth_required propagates the reason", () => {
-    const check: CheckOutcome = { status: "AUTH_REQUIRED", remoteDigest: null, localDigest: "sha256:aaaa", reason: "ghcr denied" };
-    const provenance = deriveProvenance(facts(), check);
+    const v = verdict(facts(), { kind: "auth_required", reason: "ghcr denied" });
+    const provenance = deriveProvenance(facts(), v);
     assert.equal(provenance.state, "auth_required");
     assert.equal(provenance.note, "ghcr denied");
   });
 
   it("unknown without a check", () => {
-    const provenance = deriveProvenance(facts(), undefined);
+    const provenance = deriveProvenance(facts(), canonicalUpdateState(facts(), null));
     assert.equal(provenance.state, "unknown");
   });
 
   it("carries the running image id and local digest", () => {
-    const provenance = deriveProvenance(facts(), undefined);
+    const provenance = deriveProvenance(facts(), canonicalUpdateState(facts(), null));
     assert.equal(provenance.image_id, "sha256:imageid");
     assert.equal(provenance.local_digest, "sha256:aaaa");
   });
@@ -226,7 +241,7 @@ describe("v0.7.13 rollback readiness", () => {
       facts: facts({ snapshotPresent: false }),
       customDeployContainers: [],
       extraHighRisk: [],
-      check: { status: "UPDATE_AVAILABLE", remoteDigest: "sha256:bbbb", localDigest: "sha256:aaaa" },
+      rawCheck: { kind: "digest", remoteDigest: "sha256:bbbb" },
       checkedAt: "2026-09-28T00:00:00Z",
     });
     assert.equal(built.rollback.level, "unproven");

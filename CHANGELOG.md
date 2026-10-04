@@ -3,6 +3,18 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.3.9
+
+### Fixed
+
+- **Docker update badges, counters, filters and the update summary now use one consistent update state.** The row badges came from Unraid's inventory flag while the updates panel used Beacon's own registry checks, so the page could show "Updates 7" next to "0 known updates · stale". Every consumer now derives from a single canonical verdict (`canonicalUpdateState`), served from the same cache and invalidated together after an update completes
+- **Registry-managed images are no longer incorrectly classified as local builds.** A broken batch-inspect parse in the helper degraded every container's facts (no labels, no digests), which the "no registry digest ⇒ local build" shortcut turned into "62 local builds" — including obvious registry images like netdata/netdata. Line-delimited inspect output is parsed correctly now, and a missing local digest is no longer evidence: only the registry's own 404 proves a locally built image (8 of 62 containers on production; the other 54 are registry-managed)
+- **Stale update data no longer claims that all containers are up to date.** The updates panel shows "no known updates · stale data" / "last known" instead of a strong freshness claim over old cache, and a container whose local digest is unknown reports UNKNOWN rather than a fabricated up-to-date/update verdict
+
+### Improved
+
+- Clearer update-state and toolbar presentation: the "Update" filter is labelled "update available", the high-risk stat is labelled as the policy count it is, and the sort/density controls are visually grouped as view controls
+
 ## v1.3.8
 
 ### Fixed

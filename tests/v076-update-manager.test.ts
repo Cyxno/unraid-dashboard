@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-
 import {
   buildManagedContainer,
   classifyManagement,
   classifyRisk,
-  compareDigests,
+  canonicalUpdateState,
   defaultPolicyFor,
   localDigestOf,
   parseImageRef,
@@ -76,7 +75,7 @@ describe("v0.7.6 management classification (metadata-based, never name-based)", 
     assert.equal(result.update_strategy, "compose_service");
   });
 
-  it("compose with a locally built image keeps compose management but local_build strategy", () => {
+  it("compose with a missing local digest keeps compose management + compose_service strategy (v1.3.9: no digest-based local_build guess)", () => {
     const result = classifyManagement(
       facts({
         name: "tablet-dashboard-app",
@@ -87,7 +86,7 @@ describe("v0.7.6 management classification (metadata-based, never name-based)", 
       [],
     );
     assert.equal(result.management_type, "compose");
-    assert.equal(result.update_strategy, "local_build");
+    assert.equal(result.update_strategy, "compose_service");
   });
 
   it("tornscope compose project classifies pipeline_owned (v0.7.13)", () => {
@@ -119,13 +118,13 @@ describe("v0.7.6 management classification (metadata-based, never name-based)", 
     assert.equal(result.update_strategy, "deploy_script");
   });
 
-  it("unclassified containers without registry digests are local_build", () => {
+  it("unclassified containers without registry digests are NOT auto-local-build (v1.3.9) — standalone until registry evidence", () => {
     const result = classifyManagement(
       facts({ name: "tablet-dashboard", image: "tablet-dashboard:latest", repoDigests: [] }),
       [],
     );
-    assert.equal(result.management_type, "local_build");
-    assert.equal(result.update_strategy, "local_build");
+    assert.equal(result.management_type, "standalone");
+    assert.equal(result.update_strategy, "registry_recreate");
   });
 
   it("registry-digest containers without ownership evidence are standalone", () => {
@@ -142,15 +141,32 @@ describe("v0.7.6 management classification (metadata-based, never name-based)", 
   });
 });
 
-describe("v0.7.6 digest comparison (Phase D)", () => {
+describe("v1.3.9 canonical update state (single source of truth)", () => {
   it("up-to-date when local index digest equals remote", () => {
-    const outcome = compareDigests("sha256:same", "sha256:same");
-    assert.equal(outcome.status, "UP_TO_DATE");
+    const v = canonicalUpdateState(facts(), { kind: "digest", remoteDigest: "sha256:aaaa" });
+    assert.equal(v.update_status, "UP_TO_DATE");
+    assert.equal(v.update_available, false);
   });
 
   it("update available when digests differ (multi-arch index digest)", () => {
-    const outcome = compareDigests("sha256:old", "sha256:new");
-    assert.equal(outcome.status, "UPDATE_AVAILABLE");
+    const v = canonicalUpdateState(facts(), { kind: "digest", remoteDigest: "sha256:new" });
+    assert.equal(v.update_status, "UPDATE_AVAILABLE");
+    assert.equal(v.update_available, true);
+  });
+
+  it("missing local digest + known remote digest is UNKNOWN, never a fabricated verdict", () => {
+    const v = canonicalUpdateState(facts({ repoDigests: [] }), { kind: "digest", remoteDigest: "sha256:new" });
+    assert.equal(v.update_status, "UNKNOWN");
+    assert.equal(v.update_available, false);
+  });
+
+  it("registry 404 is the ONLY local-build evidence; auth/timeout errors are not", () => {
+    const nf = canonicalUpdateState(facts({ repoDigests: [] }), { kind: "not_found", reason: "404" });
+    assert.equal(nf.update_status, "LOCAL_BUILD");
+    const auth = canonicalUpdateState(facts(), { kind: "auth_required", reason: "denied" });
+    assert.equal(auth.update_status, "AUTH_REQUIRED");
+    const fail = canonicalUpdateState(facts(), { kind: "failed", reason: "timeout" });
+    assert.equal(fail.update_status, "CHECK_FAILED");
   });
 
   it("localDigestOf reads the RepoDigest", () => {
@@ -189,7 +205,7 @@ describe("v0.7.6 full model build", () => {
       facts: facts({ name: "Dozzle", image: "amir20/dozzle:latest" }),
       customDeployContainers: [],
       extraHighRisk: [],
-      check: compareDigests("sha256:old", "sha256:new"),
+      rawCheck: { kind: "digest", remoteDigest: "sha256:new" },
       checkedAt: "2026-09-26T20:00:00Z",
     });
     assert.equal(model.update_status, "UPDATE_AVAILABLE");
@@ -207,7 +223,7 @@ describe("v0.7.6 full model build", () => {
       facts: facts({ image: "postgres:16@sha256:feed" }),
       customDeployContainers: [],
       extraHighRisk: [],
-      check: { status: "UPDATE_AVAILABLE", remoteDigest: "sha256:x", localDigest: "sha256:y" },
+      rawCheck: { kind: "digest", remoteDigest: "sha256:x" },
       checkedAt: "now",
     });
     assert.equal(pinned.update_status, "PINNED");
@@ -217,15 +233,25 @@ describe("v0.7.6 full model build", () => {
       facts: facts({ image: "tablet-dashboard:latest", repoDigests: [] }),
       customDeployContainers: [],
       extraHighRisk: [],
+      rawCheck: { kind: "not_found", reason: "404" },
       checkedAt: "now",
     });
     assert.equal(localBuild.update_status, "LOCAL_BUILD");
+
+    // v1.3.9: the same image WITHOUT registry evidence stays UNKNOWN.
+    const unverified = buildManagedContainer({
+      facts: facts({ image: "tablet-dashboard:latest", repoDigests: [] }),
+      customDeployContainers: [],
+      extraHighRisk: [],
+      checkedAt: "now",
+    });
+    assert.equal(unverified.update_status, "UNKNOWN");
 
     const auth = buildManagedContainer({
       facts: facts({ name: "private", image: "ghcr.io/me/private:1", repoDigests: ["ghcr.io/me/private@sha256:zzz"] }),
       customDeployContainers: [],
       extraHighRisk: [],
-      check: { status: "AUTH_REQUIRED", remoteDigest: null, localDigest: null, reason: "private" },
+      rawCheck: { kind: "auth_required", reason: "private" },
       checkedAt: "now",
     });
     assert.equal(auth.update_status, "AUTH_REQUIRED");

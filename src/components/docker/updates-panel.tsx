@@ -64,6 +64,8 @@ interface ManagedContainerDto {
 interface UpdatesPayload {
   checking?: boolean;
   pending?: number;
+  /** Shared freshness flag from the updates cache (v1.3.9). */
+  stale?: boolean;
   available: boolean;
   reason?: string;
   containers: ManagedContainerDto[];
@@ -322,7 +324,10 @@ export function DockerUpdatesPanel() {
           {s.updatesAvailable > 0 ? (
             <Badge variant="warning">
               {s.updatesAvailable} update{s.updatesAvailable === 1 ? "" : "s"} available
+              {data.stale ? " (last known)" : ""}
             </Badge>
+          ) : data.stale ? (
+            <Badge variant="muted">no known updates · stale data</Badge>
           ) : (
             <Badge variant="success">all up to date</Badge>
           )}
@@ -346,7 +351,9 @@ export function DockerUpdatesPanel() {
         )}
         <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
           <span>{s.total} containers</span>
-          <span>{s.highRisk} high-risk (manual policy)</span>
+          {/* Fase 12 (v1.3.9): a POLICY count — HIGH-risk containers are
+              manual-policy by default — not an update or health count. */}
+          <span>{s.highRisk} high-risk containers (policy: manual)</span>
           <span>{s.pinned} pinned</span>
           <span>{s.localBuilds} local builds</span>
           <span>last check {formatDateTimeIso(data.checkedAt)}</span>
@@ -362,7 +369,9 @@ export function DockerUpdatesPanel() {
         {filtered.length === 0 ? (
           <p className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">
             {filter === "updates"
-              ? "No registry updates detected — local builds and pinned images are excluded by definition."
+              ? data.stale
+                ? "No known registry updates — data is stale; run Check now for a fresh verdict."
+                : "No registry updates detected — local builds and pinned images are excluded by definition."
               : "No containers match this filter."}
           </p>
         ) : (

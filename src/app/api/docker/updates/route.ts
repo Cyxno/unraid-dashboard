@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { guardRead } from "@/server/auth/guard";
-import { updatesOverview } from "@/server/docker/updates";
+import { updatesOverview, updatesSummaryFromCache } from "@/server/docker/updates";
 import { managedContainerSchema } from "@/server/docker/model";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +17,9 @@ export async function GET(request: NextRequest) {
   if (!overview.available) {
     return NextResponse.json(overview, { headers: { "cache-control": "no-store" } });
   }
+  // Freshness flag shared with the light summary — the panel may not claim
+  // "all up to date" over stale data (v1.3.9).
+  const summaryCache = updatesSummaryFromCache();
   // Validate output against the model schema — never leak raw inspect data.
   const containers = overview.containers.map((container) =>
     managedContainerSchema.safeParse(container),
@@ -32,6 +35,7 @@ export async function GET(request: NextRequest) {
       checkedAt: overview.checkedAt,
       checking: overview.checking,
       pending: overview.pending,
+      stale: summaryCache.stale,
       summary: {
         total: valid.length,
         updatesAvailable: valid.filter((container) => container.update_available).length,
