@@ -3,6 +3,12 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.3.14
+
+### Fixed
+
+- Helper release fix: the v1.3.13 inventory module import was missing in the shipped entrypoint, so every inventory refresh failed (helper correctly served last-known-good + degraded health instead of an empty wipe — the new safety net working as designed). Import restored; both components now ship as 1.3.14
+
 ## v1.3.13
 
 ### Fixed

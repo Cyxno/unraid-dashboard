@@ -38,6 +38,7 @@ const { spawn } = require("node:child_process");
 const { randomUUID, timingSafeEqual, createHash } = require("node:crypto");
 const nodePath = require("node:path");
 const { inspectToSnapshot, findUnsupported, snapshotToRunArgs, UNSUPPORTED_PREFIX } = require("./recreate");
+const inventoryLib = require("./inventory");
 const compose = require("./compose");
 const { writeFile, unlink, mkdir } = require("node:fs/promises");
 const { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } = require("node:fs");
@@ -78,7 +79,7 @@ let inventoryStatus = {
 let inventoryRefreshPromise = null; // single-flight coalescing
 function invalidateInventory() { inventoryCache = null; inventoryRefreshPromise = null; }
 
-const HELPER_VERSION = "1.3.13";
+const HELPER_VERSION = "1.3.14";
 
 /** Strict remote mode (v0.7.14): when UPDATE_REQUIRE_REMOTE=true, a
  * self-update pull failure aborts BEFORE any mutation — the local-image

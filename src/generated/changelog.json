@@ -1,7 +1,20 @@
 {
   "generatedFrom": "CHANGELOG.md",
-  "latestVersion": "v1.3.13",
+  "latestVersion": "v1.3.14",
   "releases": [
+    {
+      "version": "v1.3.14",
+      "anchor": "v1-3-14",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "Helper release fix: the v1.3.13 inventory module import was missing in the shipped entrypoint, so every inventory refresh failed (helper correctly served last-known-good + degraded health instead of an empty wipe — the new safety net working as designed). Import restored; both components now ship as 1.3.14"
+          ]
+        }
+      ]
+    },
     {
       "version": "v1.3.13",
       "anchor": "v1-3-13",
