@@ -196,5 +196,16 @@ jobs:
         run: |
           chmod +x scripts/verify-published.sh
           V="${{ needs.build-and-smoke.outputs.version }}"
-          scripts/verify-published.sh dashboard "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$V" "$V"
-          scripts/verify-published.sh helper "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper:$V" "$(node -p 'require("./package.json").version')"
+          CH="${{ needs.build-and-smoke.outputs.channel }}"
+          HELPERV=$(node -p 'require("./package.json").version')
+          # Channel-aware target: release builds verify their immutable
+          # semver tag; main builds verify :latest (they never publish $V).
+          if [ "$CH" = "release" ]; then
+            DASH="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$V"
+            HELP="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper:$V"
+          else
+            DASH="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+            HELP="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper:latest"
+          fi
+          scripts/verify-published.sh dashboard "$DASH" "$V" "$CH"
+          scripts/verify-published.sh helper "$HELP" "$HELPERV" "$CH"
