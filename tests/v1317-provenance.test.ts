@@ -1,8 +1,5 @@
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import vm from "node:vm";
 import process from "node:process";
 
 process.env.UNRAID_URL ??= "http://127.0.0.1:442";
