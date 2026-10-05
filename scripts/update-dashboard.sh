@@ -36,7 +36,7 @@ echo "==> Target image:  $TARGET_IMAGE"
 
 # Fase 33 (v1.3.16): version-label precheck before any mutation.
 EXPECTED_VERSION="${TARGET_IMAGE##*:}"
-LABEL_VERSION=$(docker inspect "$TARGET_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null || true)
+LABEL_VERSION=$(docker inspect "$TARGET_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null | sed 's/^ *//;s/ *$//' || true)
 if [ -n "$LABEL_VERSION" ] && [ "$LABEL_VERSION" != "$EXPECTED_VERSION" ]; then
   echo "ERROR: image label version '$LABEL_VERSION' != requested '$EXPECTED_VERSION' — deploy blocked." >&2
   exit 1

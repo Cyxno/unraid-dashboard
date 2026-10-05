@@ -62,7 +62,7 @@ docker pull "$IMAGE" 2>/dev/null || docker image inspect "$IMAGE" >/dev/null 2>&
 # Fase 33 (v1.3.16): version precheck — never deploy an image whose
 # internal version does not match the requested tag.
 EXPECTED_VERSION="${IMAGE##*:}"
-LABEL_VERSION=$(docker inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null || true)
+LABEL_VERSION=$(docker inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null | sed 's/^ *//;s/ *$//' || true)
 if [ -n "$LABEL_VERSION" ] && [ "$LABEL_VERSION" != "$EXPECTED_VERSION" ]; then
   echo "ERROR: image label version '$LABEL_VERSION' does not match requested '$EXPECTED_VERSION' — deploy blocked." >&2
   exit 1

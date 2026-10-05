@@ -23,7 +23,7 @@ fi
 echo "==> pull OK"
 
 # image-level identity check before boot (Fase 10/28)
-LABEL_VERSION=$(docker inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null || true)
+LABEL_VERSION=$(docker inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null | sed 's/^ *//;s/ *$//' || true)
 if [ -n "$LABEL_VERSION" ] && [ "$LABEL_VERSION" != "$EXPECTED" ]; then
   note "label version '$LABEL_VERSION' != expected '$EXPECTED'"
   exit 1
