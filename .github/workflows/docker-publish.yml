@@ -72,8 +72,8 @@ jobs:
             GIT_SHA=${{ github.sha }}
             BUILD_CHANNEL=${{ steps.ver.outputs.channel }}
             BUILD_TIME=${{ github.event.head_commit.timestamp }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=dash-v${{ steps.ver.outputs.version }}
+          cache-to: type=gha,mode=max,scope=dash-v${{ steps.ver.outputs.version }}
 
       - name: Compute helper internal version
         id: helperver
@@ -101,8 +101,8 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
             org.cyxno.image.channel=${{ steps.ver.outputs.channel }}
-          cache-from: type=gha,scope=helper
-          cache-to: type=gha,scope=helper,mode=max
+          cache-from: type=gha,scope=helper-v${{ steps.helperver.outputs.version }}
+          cache-to: type=gha,scope=helper-v${{ steps.helperver.outputs.version }},mode=max
 
       - name: Smoke dashboard image (boot, version contract, PWA, SSE)
         run: |
