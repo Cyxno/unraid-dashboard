@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Shield, ShieldCheck, ShieldAlert, Loader2, LogOut } from "lucide-react";
+import { Shield, Loader2, LogOut } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatDateTimeIso } from "@/lib/utils";
 
 /**
  * Settings → Security: auth mode, HTTPS state, credential status,
@@ -31,8 +30,7 @@ export function SecuritySection() {
   const [status, setStatus] = useState<SecurityStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [signingOut, setSigningOut] = useState(false);
-  const [signOutAll, setSignOutAll] = useState(false);
-
+  
   useEffect(() => {
     fetch("/api/security/status", { cache: "no-store" })
       .then((res) => (res.ok ? res.json() : null))
@@ -46,12 +44,15 @@ export function SecuritySection() {
   const doLogout = async () => {
     setSigningOut(true);
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
-    window.location.href = "/login";
+    // Hard navigation is intentional after logout (state reset).
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+    window.location.assign("/login");
   };
 
   const doLogoutAll = async () => {
     setSigningOut(true);
     await fetch("/api/auth/logout-all", { method: "POST" }).catch(() => {});
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- hard reset after logout
     window.location.href = "/login";
   };
 

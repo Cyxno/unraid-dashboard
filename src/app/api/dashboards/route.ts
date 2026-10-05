@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { guardRead, guardWrite } from "@/server/auth/guard";
 import {
-  canView,
   createDashboard,
   DashboardError,
   listDashboards,

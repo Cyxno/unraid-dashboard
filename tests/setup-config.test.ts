@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -76,7 +76,7 @@ describe("setup state detection", () => {
   });
 
   it("fresh install (no env, no config) is 'unconfigured'", async () => {
-    const dir = await isolatedConfig();
+    const _dir = await isolatedConfig();
     const previousUrl = process.env.UNRAID_URL;
     const previousKey = process.env.UNRAID_API_KEY;
     delete process.env.UNRAID_URL;

@@ -650,7 +650,6 @@ export async function getDiagnostics(): Promise<DiagnosticsPayload> {
     dataVolumeFreeBytes = null;
   }
   const helperStatus = await getHelperStatus().catch(() => null);
-  const agentCounters = getAgentCounters();
   const agentApiEnabled = isAgentApiEnabled();
   const env = getEnvSafe();
   const release = await checkForUpdate().catch(() => null);

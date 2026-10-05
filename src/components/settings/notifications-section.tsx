@@ -97,9 +97,9 @@ export function NotificationsSection() {
   const { online } = usePwa();
   const [config, setConfig] = useState<NotificationConfig | null>(null);
   const [permission, setPermission] = useState<NotificationPermission | "unsupported">("default");
-  const [support, setSupport] = useState<{ kind: string; installed: boolean } | null>(null);
+  const [, setSupport] = useState<{ kind: string; installed: boolean } | null>(null);
   const [presentation, setPresentation] = useState<ReturnType<typeof derivePermissionPresentation> | null>(null);
-  const [subscribed, setSubscribed] = useState<boolean | null>(null);
+  const [, setSubscribed] = useState<boolean | null>(null);
   const [busy, setBusy] = useState<"subscribe" | "unsubscribe" | "test" | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [history, setHistory] = useState<HistoryEvent[]>([]);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Boxes,
   Filter,
@@ -15,22 +15,16 @@ import { isContainerProblem } from "@/lib/container-health";
 import { usePoll } from "@/hooks/use-poll";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import {
-  HISTORY_INTERVAL_MS,
   PAGE_INTERVAL_MS,
   usePrefs,
-  type HistoryWindowPref,
 } from "@/lib/prefs";
 import { PageHeader, LoadingPanel } from "@/components/dashboard/page-primitives";
 import { DockerUpdatesPanel } from "@/components/docker/updates-panel";
 import { useDockerAction } from "@/components/actions/use-docker-action";
 import { ConfirmDialog } from "@/components/actions/confirm-dialog";
-import { useToast } from "@/components/layout/toast";
-import { useDashboardEvents } from "@/hooks/use-dashboard-events";
 import { ComposeProjectsPanel } from "@/components/docker/projects-panel";
 import { UpdateHistoryPanel } from "@/components/docker/update-history-panel";
 import { MetricStatus, SectionStatus } from "@/components/dashboard/section-status";
-import { SeriesChart } from "@/components/dashboard/series-chart";
-import { WindowPicker } from "@/components/dashboard/window-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -41,7 +35,6 @@ import {
 } from "@/lib/utils";
 import type {
   ContainerHealth,
-  ContainerHistoryPayload,
   DockerContainerSummary,
   DockerSummary,
   Section,
@@ -55,7 +48,6 @@ const HIGH_CPU_PERCENT = 80;
 const HIGH_MEMORY_BYTES = 4 * 1024 * 1024 * 1024; // 4 GiB
 const HIGH_MEMORY_PERCENT_OF_LIMIT = 80;
 
-type QuickFilter = "all" | "running" | "problems" | "update" | "stopped";
 type StatusFilter =
   | "all"
   | "running"
@@ -93,7 +85,6 @@ function LazySection({
   label,
   openHint,
   summary,
-  highlight,
   children,
 }: {
   sectionKey: string;
@@ -101,8 +92,9 @@ function LazySection({
   onOpenChange: (key: string, open: boolean) => void;
   label: string;
   openHint?: string;
-  summary?: React.ReactNode;
+  /** Accepted for API stability; the lazy section itself is never tinted. */
   highlight?: boolean;
+  summary?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -374,7 +366,7 @@ export default function DockerPage() {
       return sortAsc ? comparison : -comparison;
     });
     return sorted;
-  }, [containers, debouncedQuery, filter, sortKey, sortAsc]);
+  }, [containers, debouncedQuery, filter, sortKey, sortAsc, isCanonicalUpdate]);
 
   const grouped = useMemo<
     Array<{ project: string | null; items: DockerContainerSummary[] }>

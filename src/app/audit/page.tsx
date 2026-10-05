@@ -47,7 +47,7 @@ export default function AuditPage() {
   const debouncedTarget = useDebouncedValue(targetQuery, 150);
 
   const audit = usePoll<AuditLogPayload>(`/api/audit?limit=${limit}`, 30_000);
-  const entries = audit.data?.entries ?? [];
+  const entries = useMemo(() => audit.data?.entries ?? [], [audit.data]);
 
   const filtered = useMemo(() => {
     const actor = debouncedActor.trim().toLowerCase();

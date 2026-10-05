@@ -9,7 +9,7 @@ import {
 } from "../src/server/actions/action-client";
 import { resetEnvCache } from "../src/server/env";
 
-const originalFetch = globalThis.fetch;
+const _originalFetch = globalThis.fetch;
 
 /**
  * Mock Unraid:

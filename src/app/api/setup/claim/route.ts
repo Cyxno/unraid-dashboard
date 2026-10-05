@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getSetupState, ensureSetupToken, claimSetup, SetupError } from "@/server/setup";
+import { ensureSetupToken, claimSetup, SetupError } from "@/server/setup";
 import { startNotificationLoop } from "@/server/notifications";
 
 export const dynamic = "force-dynamic";

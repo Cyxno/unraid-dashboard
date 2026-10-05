@@ -16,7 +16,6 @@ import {
   digestAgeMs,
   recordEvent,
   removeJobs,
-  saveQueue,
   targetState,
   updateJob,
   updateTarget,

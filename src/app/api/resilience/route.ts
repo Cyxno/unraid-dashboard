@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { guardRead, guardWrite } from "@/server/auth/guard";
 import { checkWriteRate } from "@/server/dashboards/rate-limit";
-import { createBackup, listBackups, validateBackup } from "@/server/resilience/backup";
+import { createBackup, listBackups } from "@/server/resilience/backup";
 import { recordAudit } from "@/server/actions/audit";
 
 export const dynamic = "force-dynamic";

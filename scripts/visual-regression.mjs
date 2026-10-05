@@ -193,7 +193,7 @@ async function assertLayout(browser) {
     try {
       await page.goto(`${BASE_URL}/settings`, { waitUntil: "domcontentloaded", timeout: 30000 });
       await page.waitForTimeout(4_000);
-      const settings = await page.evaluate(() => {
+      await page.evaluate(() => {
         const grids = [...document.querySelectorAll("main .md\\:grid-cols-2")];
         const stretched = grids.filter((grid) => {
           const style = getComputedStyle(grid);

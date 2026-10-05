@@ -40,7 +40,6 @@ import type {
   Section,
   SharedDashboardDto,
   SystemMetricsSnapshot,
-  TopConsumers,
 } from "@/lib/api-types";
 
 /**
@@ -190,7 +189,7 @@ function NocShell() {
 
   const [panelsOpen, setPanelsOpen] = useState(false);
   // v0.9.3 per-widget layout: edit mode + normalized config from prefs.
-  const [editLayout, setEditLayout] = useState(false);
+  const [editLayout] = useState(false);
   const widgetLayout = normalizeNocLayout(prefs.nocWidgetLayout.order.length > 0 ? prefs.nocWidgetLayout : { order: NOC_LAYOUT_SEEDS[prefs.nocLayout] ?? NOC_LAYOUT_SEEDS.full, sizes: prefs.nocWidgetLayout.sizes });
   const [clock, setClock] = useState(() => new Date());
   useEffect(() => {

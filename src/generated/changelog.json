@@ -1,7 +1,29 @@
 {
   "generatedFrom": "CHANGELOG.md",
-  "latestVersion": "v1.3.16",
+  "latestVersion": "v1.3.17",
   "releases": [
+    {
+      "version": "v1.3.17",
+      "anchor": "v1-3-17",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Improved",
+          "items": [
+            "**Version and build provenance are now consistent across dashboard, helper, GHCR and Settings**: the product version is always the package semver; release builds take it from the tag and main/latest builds from package.json, with the build channel and revision exposed separately (`/api/version`, OCI labels) — a branch name is never a version",
+            "**Release metadata is validated before publication**: image boot smokes now include the version/channel contract and the published-artifact re-verification annotates every failure cause",
+            "Settings-facing version reporting includes the build channel alongside version, SHA and build time"
+          ]
+        },
+        {
+          "name": "Removed",
+          "items": [
+            "Removed temporary QA scratch scripts and screenshots (tmp-qa) and tightened the lint scope (first-party sources, tests and scripts only; generated/temp/fixture paths are documented exclusions)",
+            "Zero-warning lint target reached for the full lint scope; unused imports now get a safe autofix via eslint-plugin-unused-imports"
+          ]
+        }
+      ]
+    },
     {
       "version": "v1.3.16",
       "anchor": "v1-3-16",

@@ -221,7 +221,6 @@ export function detectThermalEpisodes(
 
   // Window ended with an open candidate: confirm/close what we have.
   if (candidate) {
-    const lastT = points.length > 0 ? points[points.length - 1]!.t : candidate.lastAboveEndT;
     if (!candidate.confirmed && candidate.lastAboveEndT - candidate.startT >= minDuration) {
       candidate.confirmed = true;
     }

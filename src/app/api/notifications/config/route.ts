@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { guardRead } from "@/server/auth/guard";
 import { pushConfigured } from "@/server/notifications/push";
-import { loadStateFromDisk, loadState } from "@/server/notifications/store";
+import { loadStateFromDisk } from "@/server/notifications/store";
 import { startNotificationLoop } from "@/server/notifications";
 
 export const dynamic = "force-dynamic";

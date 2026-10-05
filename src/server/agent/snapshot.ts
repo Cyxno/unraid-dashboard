@@ -1,8 +1,6 @@
-import { getEnvSafe } from "@/server/env";
 import { getOverview } from "@/server/unraid/service";
 import { getDiagnostics } from "@/server/metrics-service";
 import { enrichedOverview } from "@/server/docker/updates";
-import { getHelperStatus } from "@/server/update/helper-client";
 import { getAutomationStatus } from "@/server/automation/status";
 import { listProjects } from "@/server/docker/project-service";
 import { AGENT_API_VERSION } from "@/server/agent/auth";

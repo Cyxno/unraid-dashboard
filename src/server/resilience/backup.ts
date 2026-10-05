@@ -1,10 +1,8 @@
 import { z } from "zod";
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { getEnvSafe } from "@/server/env";
-import { listDashboards } from "@/server/dashboards/store";
-import { readUpdateHistory } from "@/server/update/history";
 
 /**
  * Backup/restore voor de persistente dashboard-state (v0.7.12).
@@ -23,7 +21,7 @@ import { readUpdateHistory } from "@/server/update/history";
 const BACKUP_DIR = "resilience";
 const MAX_BACKUPS = 7;
 
-const backupManifestSchema = z.object({
+export const backupManifestSchema = z.object({
   createdAt: z.string().datetime(),
   schemaVersion: z.number(),
   contents: z.array(z.object({ file: z.string(), sha256: z.string(), bytes: z.number() })),
@@ -94,7 +92,6 @@ export async function createBackup(): Promise<{ file: string; bytes: number; sha
   const file = `resilience-${stamp}.json`;
   const filePath = path.join(dir, file);
   await writeFile(filePath, archiveStr, { mode: 0o600 });
-  const bytes = Buffer.byteLength(archiveStr);
 
   // Retentie: houd de laatste MAX_BACKUPS
   const names = (await readdir(dir)).filter((n) => n.startsWith("resilience-") && n.endsWith(".json")).sort();

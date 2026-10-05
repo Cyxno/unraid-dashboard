@@ -2,9 +2,8 @@
 
 import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ArrowDown, ArrowUp, Eye, EyeOff, Pencil, Plus, RotateCcw, Save, TriangleAlert, X } from "lucide-react";
+import { ArrowLeft, ArrowDown, ArrowUp, Eye, EyeOff, Pencil, Plus, Save, TriangleAlert, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { PageHeader, LoadingPanel } from "@/components/dashboard/page-primitives";
 import { WidgetGrid, WIDGET_ICONS } from "@/components/dashboard/widget-registry";
@@ -18,7 +17,6 @@ import {
 } from "@/lib/dashboards";
 import { setBusyScope } from "@/lib/busy-guard";
 import { WIDGET_IDS, WIDGET_LABELS, type WidgetEntry, type WidgetId, type WidgetSize } from "@/lib/widgets";
-import { cn } from "@/lib/utils";
 import type { OverviewPayload, SharedDashboardDto } from "@/lib/api-types";
 
 /**

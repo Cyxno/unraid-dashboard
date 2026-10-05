@@ -10,7 +10,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
-const require = createRequire(import.meta.url);
+const _require = createRequire(import.meta.url);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const helperSource = readFileSync(path.join(repoRoot, "helper", "server.js"), "utf8");
 

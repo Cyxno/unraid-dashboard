@@ -53,7 +53,6 @@ export interface UpdateHistoryEntry {
 }
 
 const MAX_BYTES = 512 * 1024;
-const KEEP_ROTATED = 2;
 
 const globalStore = globalThis as unknown as {
   __dashboardUpdateHistoryQueue?: Promise<boolean | void>;

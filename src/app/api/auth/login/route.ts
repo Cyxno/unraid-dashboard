@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { guardWrite } from "@/server/auth/guard";
-import { verifyLocalLogin, newSessionPayload, signSession, sessionSecret, sessionCookieName, SESSION_MAX_AGE_SECONDS, localAuthState } from "@/server/auth/local";
+import { verifyLocalLogin, newSessionPayload, signSession, sessionCookieName, SESSION_MAX_AGE_SECONDS, localAuthState } from "@/server/auth/local";
 import { checkWriteRate } from "@/server/dashboards/rate-limit";
 import { loadConfig } from "@/server/config/store";
 
@@ -63,7 +62,7 @@ export async function POST(request: NextRequest) {
 
 /** Logout: clears the cookie. The session token itself expires on TTL or
  *  credential change (sessionEpoch bump). */
-export async function DELETE(request: NextRequest) {
+export async function DELETE() {
   const mode = localAuthState();
   if (!mode.enabled) {
     return NextResponse.json({ error: "Local login is not enabled." }, { status: 404 });

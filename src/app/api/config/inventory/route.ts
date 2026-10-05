@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { guardRead } from "@/server/auth/guard";
 import { resolveUnraidUrl, resolveUnraidApiKey, resolvePrometheusUrl, resolveAuthMode } from "@/server/config/runtime";
-import { getEnvSafe } from "@/server/env";
 import { getHelperStatus } from "@/server/update/helper-client";
 import { pushConfigured } from "@/server/notifications/push";
 
@@ -11,7 +10,6 @@ export async function GET(request: NextRequest) {
   const guard = guardRead(request);
   if (!guard.ok) return guard.response;
 
-  const env = getEnvSafe();
   const helper = await getHelperStatus().catch(() => null);
   const push = pushConfigured();
   const unraidUrl = resolveUnraidUrl();

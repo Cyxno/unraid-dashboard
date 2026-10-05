@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { guardWrite } from "@/server/auth/guard";
 import { loadConfig, saveConfig } from "@/server/config/store";
-import { hashPassword } from "@/server/auth/local";
 
 export const dynamic = "force-dynamic";
 

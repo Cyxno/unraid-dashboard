@@ -1,11 +1,10 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { rename, readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { readFile, rm as rmProm, mkdir as mkdirProm, writeFile as writeFileProm, rename as renameProm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getEnvSafe } from "@/server/env";
 import { loadConfigFresh, saveConfig, loadConfig } from "./config/store";
-import { unraidConnectionConfigured } from "./config/runtime";
-import { setLocalCredentials, hashPassword, verifyPassword } from "./auth/local";
+import { hashPassword, verifyPassword } from "./auth/local";
 import type { AuthMode } from "./config/types";
 
 /**

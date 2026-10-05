@@ -151,7 +151,7 @@ export function DockerUpdatesPanel() {
   const { online } = usePwa();
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(false);
+  const [showAll] = useState(false);
   // §12 filter-chips: updates / blocked / local build / alles
   type PanelFilter = "updates" | "blocked" | "local" | "all";
   const [filter, setFilter] = useState<PanelFilter>("updates");
@@ -165,7 +165,7 @@ export function DockerUpdatesPanel() {
     return () => clearInterval(timer);
   }, [checking, updates]);
   const [updateTarget, setUpdateTarget] = useState<ManagedContainerDto | null>(null);
-  const [updating, setUpdating] = useState(false);
+  const [updating] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [rollbackTarget, setRollbackTarget] = useState<string | null>(null);
   // Active job: polled every 2s while a machine runs.
@@ -234,17 +234,6 @@ export function DockerUpdatesPanel() {
     return () => clearInterval(timer);
   }, [activeJob, jobRunning, pollJob, updates]);
 
-  const interesting = useMemo(() => {
-    if (!data) return [];
-    const rows = data.containers.filter(
-      (container) =>
-        container.update_available ||
-        container.update_status === "AUTH_REQUIRED" ||
-        container.update_status === "CHECK_FAILED",
-    );
-    void rows;
-    return data.containers;
-  }, [data]);
 
   const filtered = useMemo(() => {
     if (!data) return [];

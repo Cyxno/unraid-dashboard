@@ -33,7 +33,7 @@ export default function SetupPage() {
   const [token, setToken] = useState("");
   const [unraidUrl, setUnraidUrl] = useState("http://127.0.0.1:442");
   const [unraidApiKey, setUnraidApiKey] = useState("");
-  const [prometheusUrl, setPrometheusUrl] = useState("");
+  const [prometheusUrl] = useState("");
   const [securityMode, setSecurityMode] = useState<"trusted" | "local">("trusted");
   const [localUsername, setLocalUsername] = useState("");
   const [localPassword, setLocalPassword] = useState("");

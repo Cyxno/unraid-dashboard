@@ -1,13 +1,11 @@
 import { getEnvSafe } from "@/server/env";
-import { getHelperStatus, getHelperSnapshots } from "@/server/update/helper-client";
+import { getHelperSnapshots } from "@/server/update/helper-client";
 import { containerStatsBatch } from "@/server/update/history";
 import { computeAutoEligibility, pilotAllowlist } from "@/server/update/eligibility";
 import { checkRemoteDigest, type RegistryCheckResult } from "./registry";
 import { describeInventoryIssues, helperInventorySchema } from "./helper-contract";
 import {
   buildManagedContainer,
-  localDigestOf,
-  parseImageRef,
   updateVerdictForFacts,
   type ContainerFacts,
   type ManagedContainer,

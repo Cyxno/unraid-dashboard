@@ -3,6 +3,19 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.3.17
+
+### Improved
+
+- **Version and build provenance are now consistent across dashboard, helper, GHCR and Settings**: the product version is always the package semver; release builds take it from the tag and main/latest builds from package.json, with the build channel and revision exposed separately (`/api/version`, OCI labels) — a branch name is never a version
+- **Release metadata is validated before publication**: image boot smokes now include the version/channel contract and the published-artifact re-verification annotates every failure cause
+- Settings-facing version reporting includes the build channel alongside version, SHA and build time
+
+### Removed
+
+- Removed temporary QA scratch scripts and screenshots (tmp-qa) and tightened the lint scope (first-party sources, tests and scripts only; generated/temp/fixture paths are documented exclusions)
+- Zero-warning lint target reached for the full lint scope; unused imports now get a safe autofix via eslint-plugin-unused-imports
+
 ## v1.3.16
 
 ### Improved

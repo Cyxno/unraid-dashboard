@@ -37,7 +37,6 @@ import { NotificationsSection } from "@/components/settings/notifications-sectio
 import { SecuritySection as SecurityStatusSection } from "@/components/settings/security-section";
 import { ConfigurationSection } from "@/components/settings/configuration-section";
 import type {
-  BuildInfoDto,
   ConnectionStatus,
   DiagnosticsPayload,
 } from "@/lib/api-types";

@@ -143,7 +143,7 @@ export function AppearanceProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   const reset = useCallback(() => {
-    setAppearance((current) => {
+    setAppearance((_current) => {
       const next = { ...DEFAULT_APPEARANCE };
       saveAppearance(next);
       const media = window.matchMedia("(prefers-color-scheme: dark)");

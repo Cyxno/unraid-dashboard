@@ -82,7 +82,8 @@ function normalizeUser(value: string | null): string | null {
  */
 export function resolveAuth(
   headers: Headers,
-  remoteAddress: string | null | undefined,
+  /** Present for API parity with the proxy path; proxy auth reads the header only. */
+  _remoteAddress: string | null | undefined,
 ): AuthResult {
   const env = getEnv();
 

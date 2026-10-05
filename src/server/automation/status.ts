@@ -2,7 +2,7 @@ import { access, constants } from "node:fs/promises";
 import { getEnvSafe } from "@/server/env";
 import { getHelperStatus } from "@/server/update/helper-client";
 import { POLICY_VERSION, type AutomationConfig } from "./policy";
-import { automationTick, ensureScheduler, lastEvaluation, requestRefresh, schedulerMeta, snapshotAgeMs, type TargetAutomationView } from "./scheduler";
+import { automationTick, ensureScheduler, lastEvaluation, requestRefresh, schedulerMeta, snapshotAgeMs } from "./scheduler";
 import {
   loadQueue,
   loadState,
@@ -14,7 +14,7 @@ import {
   recordEvent,
   type QueuedJob,
 } from "./store";
-import { projectRegistryView, type ProjectRegistryView } from "./project-registry";
+import { type ProjectRegistryView } from "./project-registry";
 
 /**
  * Automation status (v0.8.0): everything the Automation UI and Operations

@@ -16,6 +16,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Build provenance (overridable); baked into the image and exposed via /api/version.
 ARG APP_VERSION=0.7.0
 ARG GIT_SHA=dev
+ARG BUILD_CHANNEL=release
 ARG BUILD_TIME
 LABEL org.opencontainers.image.title="unraid-dashboard" \
       org.opencontainers.image.description="Self-hosted Unraid server dashboard (Unraid GraphQL + Prometheus)" \
@@ -23,9 +24,11 @@ LABEL org.opencontainers.image.title="unraid-dashboard" \
       org.opencontainers.image.source=https://github.com/Cyxno/unraid-dashboard \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.version=${APP_VERSION} \
-      org.opencontainers.image.revision=${GIT_SHA}
+      org.opencontainers.image.revision=${GIT_SHA} \
+      org.cyxno.image.channel=${BUILD_CHANNEL}
 ENV APP_VERSION=${APP_VERSION} \
     GIT_SHA=${GIT_SHA} \
+    BUILD_CHANNEL=${BUILD_CHANNEL} \
     BUILD_TIME=${BUILD_TIME}
 RUN npm run build
 
@@ -35,6 +38,7 @@ WORKDIR /app
 # ARGs are per-stage: re-declare so provenance reaches the runtime process.
 ARG APP_VERSION=0.7.0
 ARG GIT_SHA=dev
+ARG BUILD_CHANNEL=release
 ARG BUILD_TIME
 # OCI labels on the RUNTIME image too — local docker builds otherwise have
 # no version/revision labels, which the update helper's validation and
@@ -45,13 +49,15 @@ LABEL org.opencontainers.image.title="unraid-dashboard" \
       org.opencontainers.image.source=https://github.com/Cyxno/unraid-dashboard \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.version=${APP_VERSION} \
-      org.opencontainers.image.revision=${GIT_SHA}
+      org.opencontainers.image.revision=${GIT_SHA} \
+      org.cyxno.image.channel=${BUILD_CHANNEL}
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \
     HOSTNAME=0.0.0.0 \
     APP_VERSION=${APP_VERSION} \
     GIT_SHA=${GIT_SHA} \
+    BUILD_CHANNEL=${BUILD_CHANNEL} \
     BUILD_TIME=${BUILD_TIME}
 
 RUN addgroup --system --gid 1001 nodejs \

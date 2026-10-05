@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { guardAgentRequest, agentCounters, setAgentSseClients, AGENT_API_VERSION } from "@/server/agent/auth";
+import { guardAgentRequest, agentCounters, AGENT_API_VERSION } from "@/server/agent/auth";
 import { subscribe } from "@/server/events/sampler";
 import { getOverview } from "@/server/unraid/service";
 import { getBuildInfo } from "@/server/version";

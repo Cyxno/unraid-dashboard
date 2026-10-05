@@ -62,7 +62,7 @@ import {
   isHighMemory,
   type ContainerNetworkRate,
 } from "@/server/prometheus/containers";
-import type { ContainerHealth, ContainerMetrics, MetricMeta } from "@/lib/api-types";
+import type { ContainerMetrics, MetricMeta } from "@/lib/api-types";
 import type {
   ConnectionStatus,
   DashboardNotification,

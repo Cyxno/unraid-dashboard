@@ -736,7 +736,7 @@ export interface ActionsCapabilities {
 }
 
 export interface ContainerDetailPayload {
-  /* eslint-disable-next-line -- dto */
+   
   id: string;
   name: string;
   image: string;

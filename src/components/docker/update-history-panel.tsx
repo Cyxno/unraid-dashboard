@@ -72,7 +72,7 @@ export function UpdateHistoryPanel() {
         return true;
       })
       .slice(0, 100);
-  }, [all, debouncedTarget, resultFilter, scopeFilter]);
+  }, [all, debouncedTarget, resultFilter, scopeFilter, sourceFilter]);
 
   const exportCsv = useCallback(() => {
     const header = "timestamp,actor,scope,target,adapter,from,to,result,rollback,durationMs";

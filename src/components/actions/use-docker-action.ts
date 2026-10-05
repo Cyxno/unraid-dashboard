@@ -59,7 +59,7 @@ export function actionTimeoutMs(action: DockerActionName): number {
 }
 
 export function useDockerAction() {
-  const { runAction, pending, result: rawResult } = useActionRunner();
+  const { runAction, pending } = useActionRunner();
   const { toast } = useToast();
   const [pendingConfirm, setPendingConfirm] = useState<DockerActionRequest | null>(null);
   const [phase, setPhase] = useState<DockerActionPhase | null>(null);

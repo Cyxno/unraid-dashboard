@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { sessionCookieName, localAuthState } from "@/server/auth/local";
 
 export const dynamic = "force-dynamic";

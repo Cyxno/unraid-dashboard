@@ -1,6 +1,5 @@
 import { getPromClient, isPrometheusConfigured } from "@/server/prometheus/client";
 import { getUnraidClient } from "@/server/unraid/client";
-import { deriveHealth } from "@/server/health";
 
 /**
  * Shared server-side sampler for SSE. ONE loop per process (never per

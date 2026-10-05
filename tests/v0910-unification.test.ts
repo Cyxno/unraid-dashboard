@@ -11,7 +11,7 @@ describe("v0.9.10 shared action controller + capability model + thermal context"
   const controller = read("src/components/actions/use-docker-action.ts");
   const listPage = read("src/app/docker/page.tsx");
   const detailPage = read("src/app/docker/[name]/page.tsx");
-  const caps = read("src/lib/action-capabilities.ts");
+  const _caps = read("src/lib/action-capabilities.ts");
 
   it("normalized capability model: enabled → start/stop true, restart/pause/unpause always false", async () => {
     const { normalizeActionCapabilities } = await import("../src/lib/action-capabilities");

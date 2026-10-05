@@ -7,8 +7,10 @@
  */
 
 export interface BuildInfo {
-  /** App version, e.g. "0.3.0". */
+  /** App version, always semantic semver — never a branch name. */
   version: string;
+  /** Build channel: "release" (tag build) or "main" (latest build). */
+  channel: "release" | "main";
   /** Git commit SHA the image was built from (short), if provided. */
   gitSha: string | null;
   /** ISO build timestamp, if provided by the build. */
@@ -23,6 +25,7 @@ export function getBuildInfo(): BuildInfo {
   if (cached) return cached;
   cached = {
     version: process.env.APP_VERSION || process.env.APP_VERSION_FALLBACK || "unknown",
+    channel: process.env.BUILD_CHANNEL === "main" ? "main" : "release",
     gitSha: process.env.GIT_SHA || null,
     buildTime: process.env.BUILD_TIME || null,
     imageRef: process.env.IMAGE_REF || null,

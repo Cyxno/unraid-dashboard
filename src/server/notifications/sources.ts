@@ -2,7 +2,7 @@ import { getHelperStatus } from "@/server/update/helper-client";
 import { checkForUpdate } from "@/server/actions/update-check";
 import { getOverview } from "@/server/unraid/service";
 import { enrichedOverview } from "@/server/docker/updates";
-import type { EventSeverity, RawEvent } from "./types";
+import type { RawEvent } from "./types";
 
 /**
  * Event sources: derive raw notification events from Beacon's EXISTING
@@ -12,12 +12,6 @@ import type { EventSeverity, RawEvent } from "./types";
  * identity, not by poll cycle. Sources never trigger registry sweeps.
  */
 
-function healthSeverityFromReason(reason: string): EventSeverity {
-  // deriveHealth reasons carry their level contextually; classification
-  // follows the wording produced by the health module.
-  if (/unhealthy|red|failed|stopped array|array state is|alert/i.test(reason)) return "critical";
-  return "warning";
-}
 
 async function healthEvents(): Promise<RawEvent[]> {
   const events: RawEvent[] = [];

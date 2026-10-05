@@ -233,7 +233,6 @@ export function guardAgentRequestWithRotation(
   endpoint: keyof typeof RATE_LIMITS,
   nextToken: string | null,
 ): AgentAuthResult {
-  const env = getEnvSafe();
   const authHeader = request.headers.get("authorization") ?? "";
   const match = authHeader.match(/^Bearer (.+)$/);
   if (match && nextToken && constantTimeEqual(match[1] as string, nextToken)) {

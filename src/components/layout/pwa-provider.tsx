@@ -76,9 +76,9 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
     // Browser-only state must sync post-hydration to match SSR output.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setOnline(navigator.onLine);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     setStandalone(detectStandalone());
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     setIsIos(detectIos());
 
     const goOnline = () => setOnline(true);
@@ -102,12 +102,12 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
     window.addEventListener("appinstalled", onInstalled);
 
     // Register the service worker (production builds only — no SW in dev).
-    let registration: ServiceWorkerRegistration | null = null;
+    let _registration: ServiceWorkerRegistration | null = null;
     if ("serviceWorker" in navigator && process.env.NODE_ENV === "production") {
       navigator.serviceWorker
         .register("/sw.js", { scope: "/" })
         .then((reg) => {
-          registration = reg;
+          _registration = reg;
           setSw("ready");
           const notifyWaiting = () => {
             if (reg.waiting && navigator.serviceWorker.controller) {

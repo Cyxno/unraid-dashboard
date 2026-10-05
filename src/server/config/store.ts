@@ -49,7 +49,6 @@ export async function loadConfigFresh(): Promise<BeaconConfig> {
     const raw = await readFile(path, "utf8");
     if (raw.length > MAX_SIZE) throw new Error("config file too large");
     const parsed = JSON.parse(raw) as Partial<BeaconConfig>;
-    const base = defaultConfig();
     const config: BeaconConfig = {
       schemaVersion: 1,
       setup: {

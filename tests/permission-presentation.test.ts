@@ -18,7 +18,7 @@ import {
   evaluatePushSupport,
 } from "../src/lib/push-support";
 
-const secure = { secureContext: true, isAppleMobile: false, standalone: false };
+const _secure = { secureContext: true, isAppleMobile: false, standalone: false };
 
 describe("permission presentation truth table", () => {
   it("permission default (secure) → not asked, NOT blocked, enable possible", () => {

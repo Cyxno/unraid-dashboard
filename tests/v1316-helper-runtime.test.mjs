@@ -70,7 +70,7 @@ function writeFixtures(dir, containerCount) {
 }
 
 /** Boot the REAL helper entrypoint on an ephemeral port with mocked Docker. */
-async function bootHelper({ serverPath = path.join(ROOT, "helper", "server.js"), fixtureDir, version = HELPER_VERSION }) {
+async function bootHelper({ serverPath = path.join(ROOT, "helper", "server.js"), fixtureDir, _version = HELPER_VERSION }) {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "beacon-helper-smoke-"));
   const mockBin = fs.mkdtempSync(path.join(os.tmpdir(), "beacon-mock-bin-"));
   fs.symlinkSync(path.join(MOCK_DOCKER, "docker"), path.join(mockBin, "docker"));

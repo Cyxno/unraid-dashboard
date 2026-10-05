@@ -31,9 +31,23 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Compute app version
+      - name: Compute build provenance
         id: ver
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          # Fase 4 (v1.3.17): the product version is ALWAYS the package
+          # semver — release builds take it from the tag (the version
+          # contract test pins them equal), main/latest builds take it
+          # from package.json and expose the channel separately. A branch
+          # name is never a version.
+          VERSION=$(node -p 'require("./package.json").version')
+          if [[ "$GITHUB_REF_NAME" == v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "channel=release" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "channel=main" >> "$GITHUB_OUTPUT"
+          fi
+          echo "revision=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Build dashboard image (local, not pushed yet)
         uses: docker/build-push-action@v6
@@ -50,9 +64,12 @@ jobs:
             org.opencontainers.image.licenses=MIT
             org.opencontainers.image.version=${{ steps.ver.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+            org.cyxno.image.channel=${{ steps.ver.outputs.channel }}
           build-args: |
             APP_VERSION=${{ steps.ver.outputs.version }}
             GIT_SHA=${{ github.sha }}
+            BUILD_CHANNEL=${{ steps.ver.outputs.channel }}
             BUILD_TIME=${{ github.event.head_commit.timestamp }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -77,6 +94,8 @@ jobs:
             # precheck that compares label vs requested tag on semver tags
             org.opencontainers.image.version=${{ steps.helperver.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+            org.cyxno.image.channel=${{ steps.ver.outputs.channel }}
           cache-from: type=gha,scope=helper
           cache-to: type=gha,scope=helper,mode=max
 

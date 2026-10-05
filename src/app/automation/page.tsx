@@ -102,7 +102,8 @@ export default function AutomationPage() {
   // updates (independent of the lifecycle action key). If a lifecycle
   // capability is unavailable, surface it instead of implying targets
   // are fully actionable.
-  const caps = usePoll<{ enabled: boolean; reason: string | null; docker: string[] }>(
+  // Poll result unused here; the poll itself keeps the actions-status cache warm.
+  void usePoll<{ enabled: boolean; reason: string | null; docker: string[] }>(
     "/api/actions/status",
     30_000,
   );
