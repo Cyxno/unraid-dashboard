@@ -24,6 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
+      channel: ${{ steps.ver.outputs.channel }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -86,6 +87,10 @@ jobs:
           push: false
           load: true
           tags: beacon-helper:candidate
+          build-args: |
+            APP_VERSION=${{ steps.helperver.outputs.version }}
+            GIT_SHA=${{ github.sha }}
+            BUILD_CHANNEL=${{ steps.ver.outputs.channel }}
           labels: |
             org.opencontainers.image.title=unraid-dashboard-helper
             org.opencontainers.image.source=https://github.com/Cyxno/unraid-dashboard
@@ -155,22 +160,37 @@ jobs:
       - name: Push validated dashboard image
         run: |
           V="${{ needs.build-and-smoke.outputs.version }}"
-          for tag in "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$V" \
-                    "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" \
-                    "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"; do
-            docker tag beacon-dashboard:candidate "$tag"
-            docker push "$tag"
-          done
+          CH="${{ needs.build-and-smoke.outputs.channel }}"
+          R="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          # Immutable-semver policy (v1.3.18): ONLY release builds may publish
+          # the semver tag. Main/latest builds push :latest and :sha- only —
+          # they must never overwrite a released version tag.
+          docker tag beacon-dashboard:candidate "$R:latest"
+          docker push "$R:latest"
+          docker tag beacon-dashboard:candidate "$R:sha-${{ github.sha }}"
+          docker push "$R:sha-${{ github.sha }}"
+          if [ "$CH" = "release" ]; then
+            docker tag beacon-dashboard:candidate "$R:$V"
+            docker push "$R:$V"
+          else
+            echo "main build: semver tag $V not touched (immutable)"
+          fi
 
       - name: Push validated helper image
         run: |
           V="${{ needs.build-and-smoke.outputs.version }}"
-          for tag in "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper:$V" \
-                    "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper:latest" \
-                    "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper:sha-${{ github.sha }}"; do
-            docker tag beacon-helper:candidate "$tag"
-            docker push "$tag"
-          done
+          CH="${{ needs.build-and-smoke.outputs.channel }}"
+          R="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-helper"
+          docker tag beacon-helper:candidate "$R:latest"
+          docker push "$R:latest"
+          docker tag beacon-helper:candidate "$R:sha-${{ github.sha }}"
+          docker push "$R:sha-${{ github.sha }}"
+          if [ "$CH" = "release" ]; then
+            docker tag beacon-helper:candidate "$R:$V"
+            docker push "$R:$V"
+          else
+            echo "main build: semver tag $V not touched (immutable)"
+          fi
 
       - name: Re-verify published artifacts match the validated candidates
         run: |

@@ -9,6 +9,14 @@ COPY helper/inventory.js ./inventory.js
 COPY helper/recreate.js ./recreate.js
 COPY helper/compose.js ./compose.js
 RUN apk add --no-cache docker-cli docker-cli-compose docker-cli-buildx
+ARG APP_VERSION=dev
+ARG GIT_SHA=dev
+ARG BUILD_CHANNEL=release
+LABEL org.opencontainers.image.title="unraid-dashboard-helper" \
+      org.opencontainers.image.source=https://github.com/Cyxno/unraid-dashboard \
+      org.opencontainers.image.version=${APP_VERSION} \
+      org.opencontainers.image.revision=${GIT_SHA} \
+      org.cyxno.image.channel=${BUILD_CHANNEL}
 ENV HELPER_PORT=8790
 # Runs as root: the mounted Docker socket requires it; the container has no
 # host paths besides the socket itself.

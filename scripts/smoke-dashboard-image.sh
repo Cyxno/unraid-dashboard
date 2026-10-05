@@ -47,6 +47,19 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
 done
 [ -n "$healthy" ] || fail "dashboard did not become healthy within 90s"
 
+# --- v1.3.18 RAW LABEL ASSERTIONS ----------------------------------------
+# Exact string equality — no trimming. Whitespace in our own artifact is a
+# release blocker.
+RAWV=$(docker inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')
+[ "$RAWV" = "$EXPECTED" ] || { echo "SMOKE FAIL: RAW version label \"$RAWV\" != \"$EXPECTED\" (exact, no trim)"; exit 1; }
+[ "$RAWV" = "$(printf '%s' "$RAWV" | tr -d ' ')" ] || { echo "SMOKE FAIL: version label contains whitespace"; exit 1; }
+RAWR=$(docker inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+[ -n "$RAWR" ] || { echo "SMOKE FAIL: revision label missing"; exit 1; }
+[ "$RAWR" = "$(printf '%s' "$RAWR" | tr -d ' ')" ] || { echo "SMOKE FAIL: revision label contains whitespace"; exit 1; }
+RAWC=$(docker inspect "$IMAGE" --format '{{index .Config.Labels "org.cyxno.image.channel"}}')
+[ -n "$RAWC" ] || { echo "SMOKE FAIL: channel label missing"; exit 1; }
+[ "$RAWC" = "$(printf '%s' "$RAWC" | tr -d ' ')" ] || { echo "SMOKE FAIL: channel label contains whitespace"; exit 1; }
+
 # version + build metadata contract (Fase 9/10)
 VER=$(auth_curl -sf -m 10 "http://127.0.0.1:$HOST_PORT/api/version")
 echo "$VER" | grep -q "\"version\":\"$EXPECTED\"" || fail "dashboard version mismatch: $VER"

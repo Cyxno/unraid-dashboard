@@ -87,4 +87,19 @@ describe("Fase 19/22: provenance release gates", () => {
     const script = fs.readFileSync(path.join(ROOT, "scripts", "verify-published.sh"), "utf8");
     assert.match(script, /org\.opencontainers\.image\.version/);
   });
+
+  test("Fase 9 (v1.3.18): main builds never push the immutable semver tag", () => {
+    // The publish push loops must gate the semver tag on channel=release.
+    assert.match(workflow, /if \[ "\$CH" = "release" \]; then/);
+    assert.match(workflow, /semver tag \$V not touched \(immutable\)/);
+  });
+
+  test("v1.3.18: image smokes assert RAW labels exactly (no trim)", () => {
+    for (const f of ["scripts/smoke-helper-image.sh", "scripts/smoke-dashboard-image.sh"]) {
+      const smoke = fs.readFileSync(path.join(ROOT, f), "utf8");
+      assert.match(smoke, /RAWV/, "raw version assertion missing");
+      assert.match(smoke, /exact, no trim/, "exact-match assertion missing");
+      assert.match(smoke, /contains whitespace/, "whitespace assertion missing");
+    }
+  });
 });

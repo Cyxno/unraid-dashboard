@@ -8,9 +8,10 @@
 # =============================================================================
 set -eu
 
-KIND="${1:?usage: verify-published.sh <dashboard|helper> <image> <expected-version>}"
+KIND="${1:?usage: verify-published.sh <dashboard|helper> <image> <expected-version> [expected-channel]}"
 IMAGE="${2:?}"
 EXPECTED="${3:?}"
+EXPECTED_CHANNEL="${4:-}"
 
 note() { echo "::error::verify-published[$KIND]: $1" || true; }
 
@@ -22,7 +23,20 @@ if ! docker pull "$IMAGE" >/tmp/pull.log 2>&1; then
 fi
 echo "==> pull OK"
 
-# image-level identity check before boot (Fase 10/28)
+# image-level identity check before boot (Fase 10/28).
+# RAW assertions first (v1.3.18): our own artifacts must be canonical with
+# NO trimming — the trimmed comparison below stays only as a defensive
+# second layer against third-party/registry oddities.
+RAW_VERSION=$(docker inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null || true)
+[ "$RAW_VERSION" = "$EXPECTED" ] || { note "RAW version label '$RAW_VERSION' != '$EXPECTED' (exact match required, no trimming)"; exit 1; }
+RAW_REVISION=$(docker inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' 2>/dev/null || true)
+[ -n "$RAW_REVISION" ] || { note "RAW revision label missing"; exit 1; }
+[ "$RAW_REVISION" = "${RAW_REVISION%%*( )}" ] || { note "RAW revision label has trailing whitespace"; exit 1; }
+RAW_CHANNEL=$(docker inspect "$IMAGE" --format '{{index .Config.Labels "org.cyxno.image.channel"}}' 2>/dev/null || true)
+if [ -n "$EXPECTED_CHANNEL" ] && [ "$RAW_CHANNEL" != "$EXPECTED_CHANNEL" ]; then
+  note "RAW channel label '$RAW_CHANNEL' != expected '$EXPECTED_CHANNEL'"
+  exit 1
+fi
 LABEL_VERSION=$(docker inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null | sed 's/^ *//;s/ *$//' || true)
 if [ -n "$LABEL_VERSION" ] && [ "$LABEL_VERSION" != "$EXPECTED" ]; then
   note "label version '$LABEL_VERSION' != expected '$EXPECTED'"

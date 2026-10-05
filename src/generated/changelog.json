@@ -1,7 +1,21 @@
 {
   "generatedFrom": "CHANGELOG.md",
-  "latestVersion": "v1.3.17",
+  "latestVersion": "v1.3.18",
   "releases": [
+    {
+      "version": "v1.3.18",
+      "anchor": "v1-3-18",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "**OCI provenance labels are now exact and whitespace-free on both images**: the helper image bakes its version/revision/channel labels in-image (matching the dashboard), and every image smoke asserts the RAW label values with exact equality — leading/trailing whitespace in a produced artifact is a release blocker. Deploy prechecks keep their defensive trimming for third-party artifacts",
+            "**Release semver tags on GHCR are immutable again**: main/latest builds no longer push the package version tag (they publish `:latest` and `:sha-` only), so a main push can no longer overwrite a released version with a main-channel build"
+          ]
+        }
+      ]
+    },
     {
       "version": "v1.3.17",
       "anchor": "v1-3-17",

@@ -3,6 +3,13 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.3.18
+
+### Fixed
+
+- **OCI provenance labels are now exact and whitespace-free on both images**: the helper image bakes its version/revision/channel labels in-image (matching the dashboard), and every image smoke asserts the RAW label values with exact equality — leading/trailing whitespace in a produced artifact is a release blocker. Deploy prechecks keep their defensive trimming for third-party artifacts
+- **Release semver tags on GHCR are immutable again**: main/latest builds no longer push the package version tag (they publish `:latest` and `:sha-` only), so a main push can no longer overwrite a released version with a main-channel build
+
 ## v1.3.17
 
 ### Improved

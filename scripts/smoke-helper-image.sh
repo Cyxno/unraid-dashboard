@@ -40,6 +40,16 @@ for f in server.js inventory.js recreate.js compose.js; do
 done
 echo "==> image filesystem OK (inventory.js + entrypoint present)"
 
+# --- v1.3.18 RAW LABEL ASSERTIONS ----------------------------------------
+# Exact string equality — no trimming. Whitespace in our own artifact is a
+# release blocker. (Trimming in deploy code stays defensive-only.)
+RAWV=$(docker inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')
+[ "$RAWV" = "$EXPECTED" ] || { echo "SMOKE FAIL: RAW version label \"$RAWV\" != \"$EXPECTED\" (exact, no trim)"; exit 1; }
+[ "$RAWV" = "$(printf '%s' "$RAWV" | tr -d ' ')" ] || { echo "SMOKE FAIL: version label contains whitespace"; exit 1; }
+RAWR=$(docker inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+[ -n "$RAWR" ] || { echo "SMOKE FAIL: revision label missing"; exit 1; }
+[ "$RAWR" = "$(printf '%s' "$RAWR" | tr -d ' ')" ] || { echo "SMOKE FAIL: revision label contains whitespace"; exit 1; }
+
 # --- Fase 11/12: boot with mock docker, bounded health deadline --------------
 # Wrapper dir forces MOCK_DOCKER_DIR to the fixture; mounted read-only so the
 # mock works inside the container (the wrapper dir itself must be mounted).
