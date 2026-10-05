@@ -18,6 +18,10 @@
  */
 
 const VERSION = "v1.3.18";
+/** Build identity for the SW version handshake (GET_VERSION postMessage).
+ *  The server injects the git revision at build time when available. */
+const BEACON_SW_REVISION = "dev";
+const BEACON_SW_VERSION = `${VERSION}+${BEACON_SW_REVISION === "__GIT_SHA__" ? "dev" : BEACON_SW_REVISION.slice(0, 7)}`;
 const SHELL_CACHE = `unraid-dash-shell-${VERSION}`;
 const STATIC_CACHE = `unraid-dash-static-${VERSION}`;
 
@@ -74,6 +78,13 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("message", (event) => {
   if (event.data === "SKIP_WAITING") {
     self.skipWaiting();
+    return;
+  }
+  // Fase 4: worker build/version handshake so client diagnostics can show
+  // exactly which worker owns push on this device.
+  const data = event.data || null;
+  if (data && data.type === "GET_VERSION" && event.ports && event.ports[0]) {
+    event.ports[0].postMessage({ type: "VERSION", version: BEACON_SW_VERSION });
   }
 });
 
@@ -171,20 +182,38 @@ self.addEventListener("fetch", (event) => {
  * HTML — and are truncated server-side.
  * ------------------------------------------------------------------------ */
 self.addEventListener("push", (event) => {
+  // Fase 13 (v1.3.19): a push event must NEVER be silently dropped. Valid
+  // payloads render their fields; malformed/empty payloads render a generic
+  // fallback notification so delivery stays visible on the device.
   let payload = null;
   try {
     payload = event.data ? event.data.json() : null;
   } catch {
     payload = null;
   }
-  if (!payload || typeof payload.title !== "string" || !payload.title.trim()) return;
-  const url = typeof payload.url === "string" && payload.url.startsWith("/") ? payload.url : "/";
+  const title =
+    payload && typeof payload.title === "string" && payload.title.trim()
+      ? payload.title.slice(0, 90)
+      : "Beacon";
+  const body =
+    payload && typeof payload.body === "string"
+      ? payload.body.slice(0, 220)
+      : payload
+        ? "Notification received (payload could not be parsed)."
+        : "Notification received.";
+  const url =
+    payload && typeof payload.url === "string" && payload.url.startsWith("/") ? payload.url : "/";
+  const tag =
+    payload && typeof payload.tag === "string" && payload.tag ? payload.tag.slice(0, 160) : "beacon";
   event.waitUntil(
-    self.registration.showNotification(payload.title.slice(0, 90), {
-      body: typeof payload.body === "string" ? payload.body.slice(0, 220) : "",
-      tag: typeof payload.tag === "string" ? payload.tag.slice(0, 160) : "beacon",
+    self.registration.showNotification(title, {
+      body,
+      tag,
+      // iOS/Safari: replace superseded notifications instead of stacking.
+      renotify: true,
       icon: "/icons/icon-192.png",
       badge: "/icons/icon-maskable-192.png",
+      silent: false,
       data: { url },
     }),
   );
@@ -195,18 +224,22 @@ self.addEventListener("notificationclick", (event) => {
   const target = event.notification.data && typeof event.notification.data.url === "string"
     ? event.notification.data.url
     : "/";
+  // clients.openWindow requires an ABSOLUTE URL — a relative deep link is
+  // rejected by the browser and the tap would do nothing (v1.3.19).
+  const absolute = new URL(target, self.location.origin).href;
+  const targetPath = new URL(absolute).pathname;
   event.waitUntil(
     (async () => {
       const clientList = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       for (const client of clientList) {
         const path = new URL(client.url).pathname;
-        if (path === target || path === "/") {
+        if (path === targetPath || path === "/") {
           await client.focus();
-          if (path !== target) client.navigate(target).catch(() => {});
+          if (path !== targetPath) await client.navigate(targetPath).catch(() => {});
           return;
         }
       }
-      await self.clients.openWindow(target);
+      await self.clients.openWindow(absolute);
     })(),
   );
 });

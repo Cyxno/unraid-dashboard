@@ -8,6 +8,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { usePwa } from "@/components/layout/pwa-provider";
 import { cn, formatDateTimeIso } from "@/lib/utils";
 import { derivePermissionPresentation, evaluatePushSupport, isAppleMobile, isStandalone } from "@/lib/push-support";
+import {
+  diagnoseDevice,
+  diagnosticsIndicateRepair,
+  enablePush,
+  type DevicePushDiagnostics,
+  type PushRegistrationLike,
+} from "@/lib/push-client";
 
 /**
  * Notification settings (v1.2.0): permission UX, delivery preferences,
@@ -84,15 +91,6 @@ const CATEGORY_SHORT: Record<string, string> = {
   resolved: "Resolved",
 };
 
-function b64urlToUint8Array(base64: string): Uint8Array {
-  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
-  const normalized = (base64 + padding).replaceAll("-", "+").replaceAll("_", "/");
-  const raw = atob(normalized);
-  const bytes = new Uint8Array(new ArrayBuffer(raw.length));
-  for (let index = 0; index < raw.length; index += 1) bytes[index] = raw.charCodeAt(index);
-  return bytes;
-}
-
 export function NotificationsSection() {
   const { online } = usePwa();
   const [config, setConfig] = useState<NotificationConfig | null>(null);
@@ -102,6 +100,29 @@ export function NotificationsSection() {
   const [, setSubscribed] = useState<boolean | null>(null);
   const [busy, setBusy] = useState<"subscribe" | "unsubscribe" | "test" | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [deviceDiag, setDeviceDiag] = useState<DevicePushDiagnostics | null>(null);
+
+  // Fase 3/16 (v1.3.19): device-specific push diagnostics — which worker owns
+  // push, is a subscription present, and does the server know it.
+  const loadDiagnostics = useCallback(async () => {
+    if (!("serviceWorker" in navigator)) return;
+    try {
+      setDeviceDiag(await diagnoseDevice(
+        { serviceWorker: async () => {
+            const registration = await navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
+            return registration as unknown as PushRegistrationLike;
+          } },
+        { listServerSubscriptions: async () => {
+            const response = await fetch("/api/notifications/config", { cache: "no-store" });
+            if (!response.ok) throw new Error("config unavailable");
+            const body = (await response.json()) as { subscriptions?: Array<{ endpointTail: string; enabled: boolean }> };
+            return body.subscriptions ?? [];
+          } },
+      ));
+    } catch {
+      setDeviceDiag(null);
+    }
+  }, []);
   const [history, setHistory] = useState<HistoryEvent[]>([]);
 
   const loadConfig = useCallback(async () => {
@@ -220,24 +241,40 @@ export function NotificationsSection() {
         } catch {}
         return;
       }
-      const registration = await navigator.serviceWorker.ready;
-      const existing = await registration.pushManager.getSubscription();
-      const subscription =
-        existing ??
-        (await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: b64urlToUint8Array(config.push.publicKey) as BufferSource,
-        }));
-      const response = await fetch("/api/notifications/subscriptions", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ endpoint: subscription.endpoint, keys: subscription.toJSON().keys }),
-      });
-      if (!response.ok) throw new Error(`Subscription failed (HTTP ${response.status})`);
+      // v1.3.19: the enable pipeline lives in the tested push-client module —
+      // explicit /sw.js registration (never navigator.serviceWorker.ready),
+      // validated VAPID decoding and categorized outcomes.
+      const outcome = await enablePush(
+        {
+          permission: () => Notification.permission,
+          requestPermission: () => Notification.requestPermission(),
+          serviceWorker: async () => {
+            const registration = await navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
+            return registration as unknown as PushRegistrationLike;
+          },
+        },
+        {
+          vapidPublicKey: async () => config.push.publicKey,
+          registerSubscription: async (subscription: { endpoint: string; keys: { p256dh: string; auth: string } }) => {
+            const response = await fetch("/api/notifications/subscriptions", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ endpoint: subscription.endpoint, keys: subscription.keys }),
+            });
+            if (!response.ok) throw new Error(`Subscription failed (HTTP ${response.status})`);
+          },
+          listServerSubscriptions: async () => [],
+        },
+      );
+      if (!outcome.ok) {
+        setNotice({ tone: "error", text: `Push could not be enabled (${outcome.kind}).` });
+        return;
+      }
       try {
         window.localStorage.setItem("beacon.notifications.pushConfigured", "1");
       } catch {}
       await refreshSubscriptionState();
+      await loadDiagnostics();
       void loadConfig();
       setNotice({ tone: "success", text: "Push notifications enabled for this device." });
     } catch (error) {
@@ -353,6 +390,44 @@ export function NotificationsSection() {
             </Badge>
           )}
         </div>
+        {deviceDiag && (
+          <div className="rounded-md border bg-muted/30 p-3 text-xs" data-testid="push-device-diagnostics">
+            <p className="mb-1.5 font-medium text-foreground">This device (push pipeline)</p>
+            <ul className="grid grid-cols-1 gap-x-6 gap-y-0.5 sm:grid-cols-2">
+              <li>Service worker: {deviceDiag.registrationExists ? (deviceDiag.active ? "active" : deviceDiag.installing ? "installing" : deviceDiag.waiting ? "waiting" : "registered") : "not registered"}</li>
+              <li>Controller: {deviceDiag.controller ? "present" : "none"}</li>
+              <li>Worker version: {deviceDiag.workerVersion ?? deviceDiag.activeScriptUrl?.split("/").pop() ?? "unknown"}</li>
+              <li>Push subscription: {deviceDiag.subscriptionPresent ? "present on device" : "absent"}</li>
+              <li>
+                Server knows subscription:{" "}
+                {deviceDiag.serverKnowsSubscription === null
+                  ? "unknown"
+                  : deviceDiag.serverKnowsSubscription
+                    ? "yes (endpoint tail matches)"
+                    : "NO — mismatch"}
+              </li>
+              <li>Server registered devices: {deviceDiag.serverHasNoDevices === null ? "unknown" : deviceDiag.serverHasNoDevices ? "none" : "≥1"}</li>
+              <li>Secure context: {deviceDiag.secureContext ? "yes" : "no"}</li>
+              <li>Standalone (installed PWA): {deviceDiag.standalone ? "yes" : "no"}</li>
+            </ul>
+            {(diagnosticsIndicateRepair(deviceDiag) || deviceDiag.waiting) && (
+              <p className="mt-1.5 text-warning">
+                {deviceDiag.waiting && "A newer service worker is waiting and will activate on the next reload. "}
+                {diagnosticsIndicateRepair(deviceDiag) && "Use “Repair this device” to re-register the subscription."}
+              </p>
+            )}
+            <div className="mt-2 flex gap-2">
+              <Button size="sm" variant="outline" disabled={!online || busy !== null} onClick={() => { void loadDiagnostics(); }}>
+                Refresh diagnostics
+              </Button>
+              {presentation?.canEnable && (
+                <Button size="sm" variant="outline" disabled={!online || busy !== null} onClick={() => void enableNotifications()}>
+                  {busy === "subscribe" ? "Repairing…" : "Repair this device"}
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
         <div className="flex flex-wrap gap-2">
           {presentation?.canEnable && (
             <Button size="sm" disabled={!online || busy !== null} onClick={() => void enableNotifications()}>

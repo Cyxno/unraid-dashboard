@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { guardWrite } from "@/server/auth/guard";
 import { checkWriteRate } from "@/server/dashboards/rate-limit";
 import { sendTestNotification, startNotificationLoop } from "@/server/notifications";
+import { loadStateFromDisk } from "@/server/notifications/store";
 
 export const dynamic = "force-dynamic";
 
@@ -24,9 +25,24 @@ export async function POST(request: NextRequest) {
   }
 
   startNotificationLoop();
+  // Fase 11 (v1.3.19): every manual test carries a trace id so UI → engine →
+  // provider → history can be correlated. Delivery semantics (Fase 12):
+  // "pushed" means the PROVIDER accepted the message — that is not proof the
+  // iPhone rendered a notification; the device-side trace is the acceptance.
+  const state = await loadStateFromDisk();
+  const traceId = `test-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const subscribedDevices = state.subscriptions.filter((entry) => entry.enabled).length;
   const result = await sendTestNotification();
   return NextResponse.json(
-    { ok: result.delivered === "pushed" || result.delivered === "in-app", delivery: result.delivered, detail: result.detail },
+    {
+      ok: result.delivered === "pushed" || result.delivered === "in-app",
+      delivery: result.delivered,
+      detail: result.detail,
+      traceId,
+      subscribedDevices,
+      // provider_accepted implies delivery to the push service only.
+      providerAccepted: result.delivered === "pushed",
+    },
     { headers: { "cache-control": "no-store" } },
   );
 }

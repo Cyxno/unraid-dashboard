@@ -15,7 +15,10 @@ if (!sw.includes("const VERSION")) {
   console.error(`sw.js at ${swPath.href} has no VERSION line (bytes=${sw.length})`);
   process.exit(1);
 }
-const updated = sw.replace(/const VERSION = "[^"]+";/, `const VERSION = "${version}";`);
+const revision = process.env.GIT_SHA ? String(process.env.GIT_SHA).slice(0, 7) : "dev";
+const updated = sw
+  .replace(/const VERSION = "[^"]+";/, `const VERSION = "${version}";`)
+  .replace(/const BEACON_SW_REVISION = "[^"]*";/, `const BEACON_SW_REVISION = "${revision}";`);
 if (updated === sw) {
   if (sw.includes(`const VERSION = "${version}";`)) {
     console.log(`sw.js cache version already ${version}`);

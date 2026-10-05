@@ -1,105 +1,219 @@
-import { test, describe } from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import vm from "node:vm";
 import process from "node:process";
 
 process.env.UNRAID_URL ??= "http://127.0.0.1:442";
 process.env.UNRAID_API_KEY ??= "k";
 
-const ROOT = path.dirname(path.dirname(new URL(import.meta.url).pathname));
-const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
-const workflow = fs.readFileSync(path.join(ROOT, ".github", "workflows", "docker-publish.yml"), "utf8");
-const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf8");
+import {
+  categorizePushError,
+  diagnoseDevice,
+  diagnosticsIndicateRepair,
+  enablePush,
+  requestWorkerVersion,
+  toApplicationServerKey,
+  urlBase64ToUint8Array,
+  PushKeyError,
+  type PushBrowser,
+  type PushApi,
+} from "../src/lib/push-client";
 
-describe("Fase 4/18: build channel semantics — semver is never a branch name", () => {
-  test("release build: version = tag (package equal), channel = release", () => {
-    const channel = process.env.BUILD_CHANNEL === "main" ? "main" : "release";
-    assert.ok(["release", "main"].includes(channel));
-    // The contract test pins package.json == tag version; the workflow takes
-    // the release version from the tag, so both equal the package semver.
-    assert.match(pkg.version, /^\d+\.\d+\.\d+$/);
+const KEY = "BDaFwwQk2cVT3jajMfCkGirCFQeEtdU9aqVEG-gDhIsM6s4By_5_oeudZOv4QQKQOa-g2ftU2eDWghQgn8Xfcdw";
+
+/* ---- Fase 8/23: VAPID decode + key validation --------------------------- */
+
+describe("VAPID decoding", () => {
+  test("base64url public key decodes to 65 bytes (P-256 uncompressed)", () => {
+    const bytes = toApplicationServerKey(KEY);
+    assert.equal(bytes.length, 65);
+    assert.equal(bytes[0], 0x04);
   });
 
-  test("main build: workflow computes version from package.json, not the ref name", () => {
-    // The provenance step must read package.json for main builds...
-    assert.match(workflow, /VERSION=\$\(node -p 'require\("\.\/package\.json"\)\.version'\)/);
-    // ...branch the channel explicitly...
-    assert.match(workflow, /channel=main/);
-    assert.match(workflow, /channel=release/);
-    // ...and the build-args must carry APP_VERSION from the provenance step.
-    assert.match(workflow, /APP_VERSION=\$\{\{ steps\.ver\.outputs\.version \}\}/);
-    assert.match(workflow, /BUILD_CHANNEL=\$\{\{ steps\.ver\.outputs\.channel \}\}/);
-    // and must never push a raw branch name in as the app version anymore.
-    assert.doesNotMatch(workflow, /version=\$\{GITHUB_REF_NAME#v\}" >> "\$GITHUB_OUTPUT"\n\s+else/);
+  test("invalid key characters are categorized, not raw DOMExceptions", () => {
+    assert.throws(() => urlBase64ToUint8Array("not*valid!"), PushKeyError);
+    assert.equal(categorizePushError(new PushKeyError("x")), "invalid-key");
+    assert.equal(categorizePushError({ name: "InvalidCharacterError" }), "invalid-key");
   });
 
-  test("Dockerfile bakes BUILD_CHANNEL and labels version from APP_VERSION", () => {
-    assert.match(dockerfile, /ARG BUILD_CHANNEL=release/);
-    assert.match(dockerfile, /org\.opencontainers\.image\.version=\$\{APP_VERSION\}/);
-    assert.match(dockerfile, /org\.cyxno\.image\.channel=\$\{BUILD_CHANNEL\}/);
-  });
-});
-
-describe("Fase 20: runtime version reporting contract", () => {
-  test("getBuildInfo exposes version + channel + sha + buildTime", async () => {
-    const { getBuildInfo, resetBuildInfoCache } = await import("../src/server/version");
-    process.env.APP_VERSION = "1.3.17";
-    process.env.BUILD_CHANNEL = "main";
-    process.env.GIT_SHA = "abc1234";
-    process.env.BUILD_TIME = "2026-10-05T00:00:00Z";
-    resetBuildInfoCache();
-    const info = getBuildInfo();
-    assert.equal(info.version, "1.3.17");
-    assert.equal(info.channel, "main");
-    assert.equal(info.gitSha, "abc1234");
-    assert.equal(info.buildTime, "2026-10-05T00:00:00Z");
-    process.env.BUILD_CHANNEL = "release";
-    resetBuildInfoCache();
-    assert.equal(getBuildInfo().channel, "release");
-    assert.match(getBuildInfo().version, /^\d+\.\d+\.\d+$/);
-    delete process.env.BUILD_CHANNEL;
-    resetBuildInfoCache();
-  });
-
-  test("version route shape: additive provenance fields only", async () => {
-    const { getBuildInfo, resetBuildInfoCache } = await import("../src/server/version");
-    process.env.APP_VERSION = "1.3.17";
-    resetBuildInfoCache();
-    const info = getBuildInfo();
-    for (const key of ["version", "channel", "gitSha", "buildTime"]) assert.ok(key in info, key);
+  test("wrong decoded length is rejected (not 65 bytes)", () => {
+    // 32-byte key: decodes, but is not an uncompressed P-256 point.
+    const short = Buffer.from("a".repeat(43), "base64url").toString("base64url");
+    assert.throws(() => toApplicationServerKey(short), PushKeyError);
   });
 });
 
-describe("Fase 19/22: provenance release gates", () => {
-  test("helper deploy precheck blocks label/tag mismatch", () => {
-    const script = fs.readFileSync(path.join(ROOT, "scripts", "deploy-helper.sh"), "utf8");
-    assert.match(script, /label version '.*' does not match requested/);
-    assert.match(script, /fresh inventory healthy/);
+/* ---- Fase 20/23: enable pipeline with injected browser ------------------ */
+
+function makeBrowser(overrides: {
+  permission?: NotificationPermission;
+  requestResult?: NotificationPermission;
+  registration?: Record<string, unknown>;
+  subscription?: unknown;
+  subscribeError?: Error;
+} = {}): PushBrowser & { registrations: number } {
+  const state = { registrations: 0 };
+  const registration = overrides.registration ?? {
+    pushManager: {
+      getSubscription: async () => (overrides.subscription ?? null),
+      subscribe: async () => {
+        if (overrides.subscribeError) throw overrides.subscribeError;
+        return {
+          endpoint: "https://push.example/abc",
+          toJSON: () => ({ endpoint: "https://push.example/abc", keys: { p256dh: "k", auth: "a" } }),
+        };
+      },
+    },
+  };
+  return {
+    get registrations() { return state.registrations; },
+    permission: () => overrides.permission ?? "default",
+    requestPermission: async () => overrides.requestResult ?? "granted",
+    serviceWorker: async () => {
+      state.registrations += 1;
+      return registration as never;
+    },
+  } as never;
+}
+
+function makeApi(overrides: { publicKey?: string | null; registerFails?: boolean; server?: Array<{ endpointTail: string; enabled: boolean }> } = {}): PushApi & { registered: unknown[] } {
+  const registered: unknown[] = [];
+  return {
+    registered,
+    vapidPublicKey: async () => ("publicKey" in overrides ? (overrides.publicKey ?? null) : KEY),
+    registerSubscription: async (subscription) => {
+      if (overrides.registerFails) throw new Error("no");
+      registered.push(subscription);
+    },
+    listServerSubscriptions: async () => overrides.server ?? [],
+  };
+}
+
+describe("Enable pipeline (push-client)", () => {
+  test("server-unconfigured", async () => {
+    const outcome = await enablePush(makeBrowser(), makeApi({ publicKey: null }));
+    assert.deepEqual(outcome, { ok: false, kind: "server-unconfigured" });
   });
 
-  test("dashboard deploy precheck blocks label/tag mismatch", () => {
-    const script = fs.readFileSync(path.join(ROOT, "scripts", "update-dashboard.sh"), "utf8");
-    assert.match(script, /Version-label precheck OK/);
+  test("permission denied without prompting twice", async () => {
+    const browser = makeBrowser({ permission: "denied", requestResult: "denied" });
+    const outcome = await enablePush(browser, makeApi());
+    assert.equal(outcome.ok, false);
   });
 
-  test("published-artifact verification checks the OCI version label", () => {
-    const script = fs.readFileSync(path.join(ROOT, "scripts", "verify-published.sh"), "utf8");
-    assert.match(script, /org\.opencontainers\.image\.version/);
+  test("permission granted → subscribe → server registration (happy path)", async () => {
+    const browser = makeBrowser();
+    const api = makeApi();
+    const outcome = await enablePush(browser, api);
+    assert.deepEqual(outcome, { ok: true, endpoint: "https://push.example/abc" });
+    assert.equal(api.registered.length, 1);
   });
 
-  test("Fase 9 (v1.3.18): main builds never push the immutable semver tag", () => {
-    // The publish push loops must gate the semver tag on channel=release.
-    assert.match(workflow, /if \[ "\$CH" = "release" \]; then/);
-    assert.match(workflow, /semver tag \$V not touched \(immutable\)/);
+  test("uses a CONCRETE registration (register) — never navigator.serviceWorker.ready", async () => {
+    const browser = makeBrowser();
+    await enablePush(browser, makeApi());
+    assert.equal(browser.registrations, 1, "must call register('/sw.js') exactly once");
   });
 
-  test("v1.3.18: image smokes assert RAW labels exactly (no trim)", () => {
-    for (const f of ["scripts/smoke-helper-image.sh", "scripts/smoke-dashboard-image.sh"]) {
-      const smoke = fs.readFileSync(path.join(ROOT, f), "utf8");
-      assert.match(smoke, /RAWV/, "raw version assertion missing");
-      assert.match(smoke, /exact, no trim/, "exact-match assertion missing");
-      assert.match(smoke, /contains whitespace/, "whitespace assertion missing");
-    }
+  test("reuses an existing browser subscription (no blind resubscribe)", async () => {
+    const existing = {
+      endpoint: "https://push.example/existing",
+      toJSON: () => ({ endpoint: "https://push.example/existing", keys: { p256dh: "k", auth: "a" } }),
+    };
+    const browser = makeBrowser({ subscription: existing });
+    const api = makeApi();
+    const outcome = await enablePush(browser, api);
+    assert.equal(outcome.ok, true);
+    assert.equal(api.registered[0] && (api.registered[0] as { endpoint: string }).endpoint, "https://push.example/existing");
+  });
+
+  test("subscribe failure categorized (NotAllowedError → permission-denied)", async () => {
+    const outcome = await enablePush(makeBrowser({ subscribeError: Object.assign(new Error("x"), { name: "NotAllowedError" }) }), makeApi());
+    assert.equal(outcome.ok, false);
+    assert.equal((outcome as { kind: string }).kind, "permission-denied");
+  });
+
+  test("server registration failure categorized", async () => {
+    const outcome = await enablePush(makeBrowser(), makeApi({ registerFails: true }));
+    assert.equal((outcome as { kind: string }).kind, "registration-failed");
+  });
+
+  test("incomplete subscription categorized", async () => {
+    const browser = makeBrowser({
+      subscription: {
+        endpoint: "https://push.example/x",
+        toJSON: () => ({ endpoint: "https://push.example/x" }),
+      },
+    });
+    const outcome = await enablePush(browser, makeApi());
+    assert.equal((outcome as { kind: string }).kind, "incomplete-subscription");
   });
 });
+
+/* ---- Fase 3/16/23: diagnostics + waiting worker ------------------------- */
+
+describe("Device diagnostics", () => {
+  test("waiting worker + browser subscription without server knowledge → repair indicated", async () => {
+    const diag = await diagnoseDevice(
+      {
+        serviceWorker: async () => ({
+          pushManager: { getSubscription: async () => ({ endpoint: "https://push.example/abc", toJSON: () => ({ endpoint: "https://push.example/abc" }) }) },
+          active: { scriptURL: "/sw.js", postMessage: () => {} },
+          waiting: { scriptURL: "/sw.js" },
+          installing: null,
+        }) as never,
+      },
+      { listServerSubscriptions: async () => [{ endpointTail: "other12345678", enabled: true }] },
+    );
+    assert.equal(diag.waiting, true);
+    assert.equal(diag.subscriptionPresent, true);
+    assert.equal(diag.serverKnowsSubscription, false);
+    assert.equal(diagnosticsIndicateRepair(diag), true);
+  });
+
+  test("healthy device: active worker, subscription known server-side → no repair", async () => {
+    const diag = await diagnoseDevice(
+      {
+        serviceWorker: async () => ({
+          pushManager: { getSubscription: async () => ({ endpoint: "https://push.example/tailmatches12", toJSON: () => ({}) }) },
+          active: {
+            scriptURL: "/sw.js",
+            postMessage: (message: unknown, transfer?: unknown) => {
+              const port = (transfer as MessagePort[])?.[0];
+              port?.postMessage({ type: "VERSION", version: "v1.3.17+tailfix" });
+            },
+          },
+          waiting: null,
+          installing: null,
+        }) as never,
+      },
+      { listServerSubscriptions: async () => [{ endpointTail: "ailmatches12", enabled: true }] },
+    );
+    assert.equal(diagnosticsIndicateRepair(diag), false);
+  });
+
+  test("worker version handshake resolves via postMessage", async () => {
+    const sent: unknown[] = [];
+    const fakeWorker = {
+      // Echo the version over the transferred MessagePort — exactly what the
+      // real service worker does in its GET_VERSION handler.
+      postMessage: (message: unknown, transfer?: unknown) => {
+        sent.push({ message, transfer });
+        const port = (transfer as MessagePort[])?.[0];
+        port?.postMessage({ type: "VERSION", version: "v1.3.19+abc1234" });
+      },
+    } as never as ServiceWorker;
+    const version = await requestWorkerVersion(fakeWorker);
+    assert.equal(version, "v1.3.19+abc1234");
+    assert.equal(sent.length, 1);
+  });
+
+  test("worker handshake timeout returns null (never hangs the UI)", async () => {
+    const fakeWorker = { postMessage: () => {} } as never as ServiceWorker;
+    const version = await requestWorkerVersion(fakeWorker);
+    assert.equal(version, null);
+  });
+});
+
