@@ -126,3 +126,21 @@ export async function sendToSubscription(
 function envPrivateKey(): string {
   return getEnvSafe().BEACON_VAPID_PRIVATE_KEY ?? "";
 }
+
+/* ---- v1.3.22: test-push semantics (pure, testable) ----------------------- */
+
+export interface TestPushClassification {
+  ok: boolean;
+  delivery: "pushed" | "in-app-only";
+  reason: "no-subscribed-devices" | null;
+  providerAccepted: boolean;
+}
+
+/** Fase 13 (v1.3.22): a Web Push test with zero registered devices is an
+ *  explicit failure — in-app SSE delivery must never read as push success. */
+export function classifyTestPush(enabledDevices: number): TestPushClassification {
+  if (enabledDevices <= 0) {
+    return { ok: false, delivery: "in-app-only", reason: "no-subscribed-devices", providerAccepted: false };
+  }
+  return { ok: true, delivery: "pushed", reason: null, providerAccepted: true };
+}

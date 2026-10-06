@@ -3,6 +3,14 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.3.22
+
+### Fixed
+
+- **Web Push state model**: permission, browser subscription, server registration and delivery are four separate dimensions now. The UI shows the canonical state (READY / not subscribed / LOCAL ONLY / MISMATCH / permission states) and never implies "push enabled" from browser permission alone
+- **Disable Web Push actually disables**: the disable flow uses the same explicit `/sw.js` registration as enable/repair (never `serviceWorker.ready`), unsubscribes the local subscription and removes the server registration by endpoint fingerprint — browser permission intentionally stays granted and the UI explains that
+- **Web Push test with zero registered devices is an explicit failure** (`no-subscribed-devices`), no longer presented as a green in-app success; server registration responses now include a privacy-safe SHA-256 endpoint fingerprint so devices can verify their own registration and stale server-only entries can be removed
+
 ## v1.3.21
 
 ### Fixed

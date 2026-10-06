@@ -51,8 +51,10 @@ export interface PushApi {
     endpoint: string;
     keys: { p256dh: string; auth: string };
   }): Promise<void>;
-  /** Server-side subscription tails (endpointTail) for reconciliation. */
-  listServerSubscriptions(): Promise<Array<{ endpointTail: string; enabled: boolean }>>;
+  /** Server-side subscriptions for reconciliation (fingerprint preferred). */
+  listServerSubscriptions(): Promise<Array<{ endpointTail: string; fingerprint?: string; enabled: boolean }>>;
+  /** v1.3.22: remove server registrations by endpoint fingerprint. */
+  deleteServerSubscription?(fingerprints: string[]): Promise<number>;
 }
 
 export type PushFailureKind =
@@ -248,6 +250,12 @@ export interface DevicePushDiagnostics {
   /** v1.3.21: SW-side push telemetry (A10/A11). */
   telemetry: PushWorkerTelemetry | null;
   subscriptionPresent: boolean;
+  /** v1.3.22: SHA-256-truncated endpoint fingerprint (privacy-safe). */
+  subscriptionFingerprint: string | null;
+  /** v1.3.22: number of enabled server-registered devices. */
+  serverDevices: number | null;
+  /** v1.3.22: canonical state classification. */
+  state: CanonicalPushState;
   subscriptionEndpointTail: string | null;
   /** Server knows this exact subscription (endpoint-tail match). */
   serverKnowsSubscription: boolean | null;
@@ -317,6 +325,9 @@ export async function diagnoseDevice(
     workerVersion: null,
     telemetry: null,
     subscriptionPresent: false,
+    subscriptionFingerprint: null,
+    serverDevices: null,
+    state: "SW_NOT_ACTIVE",
     subscriptionEndpointTail: null,
     serverKnowsSubscription: null,
     serverHasNoDevices: null,
@@ -338,17 +349,46 @@ export async function diagnoseDevice(
     }
     const subscription = await registration.pushManager.getSubscription();
     diag.subscriptionPresent = Boolean(subscription);
-    if (subscription) diag.subscriptionEndpointTail = subscription.endpoint.slice(-12);
+    if (subscription) {
+      diag.subscriptionEndpointTail = subscription.endpoint.slice(-12);
+      diag.subscriptionFingerprint = await endpointFingerprint(subscription.endpoint);
+    }
     const server = await api.listServerSubscriptions().catch(() => null);
     if (server) {
+      diag.serverDevices = server.length;
       diag.serverHasNoDevices = server.length === 0;
       diag.serverKnowsSubscription =
-        subscription === null ? null : server.some((entry) => entry.endpointTail === subscription.endpoint.slice(-12));
+        subscription === null
+          ? null
+          : server.some((entry) =>
+              // v1.3.22 servers expose fingerprints; v1.3.21 servers only the tail.
+              "fingerprint" in entry && entry.fingerprint
+                ? entry.fingerprint === diag.subscriptionFingerprint
+                : entry.endpointTail === subscription.endpoint.slice(-12),
+            );
     }
   } catch {
     // registration/subscribe surface stays honest: exists=false
   }
+  diag.state = resolveCanonicalPushState({
+    permission: diag.permission === "unknown" ? "unknown" : diag.permission,
+    subscriptionPresent: diag.subscriptionPresent,
+    subscriptionFingerprint: diag.subscriptionFingerprint,
+    serverKnowsSubscription: diag.serverKnowsSubscription,
+    serverDevices: diag.serverDevices,
+    swActive: diag.active,
+    workerVersion: diag.workerVersion,
+  } satisfies PushStateEvidence);
   return diag;
+}
+
+/** Convenience: canonical state straight from a fresh diagnosis. */
+export async function resolvePushState(
+  browser: Pick<PushBrowser, "serviceWorker">,
+  api: Pick<PushApi, "listServerSubscriptions">,
+): Promise<{ state: CanonicalPushState; diagnostics: DevicePushDiagnostics }> {
+  const diagnostics = await diagnoseDevice(browser, api);
+  return { state: diagnostics.state, diagnostics };
 }
 
 /** True when the device/browser pipeline cannot deliver push as-is. */
@@ -358,4 +398,93 @@ export function diagnosticsIndicateRepair(diagnostics: DevicePushDiagnostics): b
     (diagnostics.subscriptionPresent && diagnostics.serverKnowsSubscription === false) ||
     (diagnostics.serverHasNoDevices === true && diagnostics.subscriptionPresent)
   );
+}
+
+/* ---- v1.3.22: canonical Web Push state model ----------------------------- */
+
+/** Privacy-safe endpoint fingerprint: SHA-256 truncated to 16 hex chars.
+ *  Client (WebCrypto) and server (node:crypto) compute the same value so
+ *  browser↔server reconciliation never exposes the raw endpoint. */
+export async function endpointFingerprint(endpoint: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(endpoint));
+  return Array.from(new Uint8Array(digest)).slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Resolve the concrete Beacon /sw.js registration for every push lifecycle
+ *  action (Fase 19): enable, repair, disable and diagnostics all use THIS
+ *  resolver — never navigator.serviceWorker.ready, which can wait
+ *  indefinitely behind a waiting worker. */
+export async function getBeaconPushRegistration(): Promise<PushRegistrationLike> {
+  const registration = await navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
+  return registration as unknown as PushRegistrationLike;
+}
+
+export type CanonicalPushState =
+  | "UNSUPPORTED"
+  | "PERMISSION_REQUIRED"
+  | "PERMISSION_DENIED"
+  | "PERMISSION_GRANTED_NO_SUBSCRIPTION"
+  | "SUBSCRIBED_LOCAL_ONLY"
+  | "SUBSCRIBED_SERVER_REGISTERED"
+  | "SUBSCRIPTION_MISMATCH"
+  | "SW_NOT_ACTIVE"
+  | "PUSH_READY";
+
+export interface PushStateEvidence {
+  permission: NotificationPermission | "unknown";
+  subscriptionPresent: boolean;
+  subscriptionFingerprint: string | null;
+  serverKnowsSubscription: boolean | null;
+  serverDevices: number | null;
+  swActive: boolean;
+  workerVersion: string | null;
+}
+
+/**
+ * Fase 1 (v1.3.22): one canonical classification. Permission alone is NEVER
+ * "push enabled" — the enabled state requires BOTH a browser subscription
+ * AND a server-side registration that knows the same fingerprint.
+ */
+export function resolveCanonicalPushState(evidence: PushStateEvidence): CanonicalPushState {
+  if (!evidence.swActive) return "SW_NOT_ACTIVE";
+  if (evidence.permission === "denied") return "PERMISSION_DENIED";
+  if (evidence.permission !== "granted") return "PERMISSION_REQUIRED";
+  if (!evidence.subscriptionPresent) return "PERMISSION_GRANTED_NO_SUBSCRIPTION";
+  if (evidence.serverKnowsSubscription === true) return "PUSH_READY";
+  if (evidence.serverKnowsSubscription === false) return "SUBSCRIPTION_MISMATCH";
+  return "SUBSCRIBED_LOCAL_ONLY";
+}
+
+/** Fase 4/19 (v1.3.22): disable contract — unsubscribe the local
+ *  subscription AND remove the server registration, using the SAME
+ *  concrete registration resolver as enable/repair. Browser permission
+ *  always remains granted (a webapp cannot revoke it). */
+export async function disablePush(
+  browser: PushBrowser,
+  api: PushApi & { deleteServerSubscription?: (fingerprints: string[]) => Promise<number> },
+  fingerprintHint?: string | null,
+): Promise<{ localRemoved: boolean; serverRemoved: number; permissionStillGranted: boolean }> {
+  let localRemoved = false;
+  const fingerprints: string[] = [];
+  let permission = browser.permission();
+  try {
+    const registration = await browser.serviceWorker();
+    const subscription = await registration.pushManager.getSubscription();
+    if (subscription) {
+      const json = subscription.toJSON();
+      if (json.endpoint) fingerprints.push(await endpointFingerprint(json.endpoint));
+      await (subscription as { unsubscribe?: () => Promise<boolean> }).unsubscribe?.();
+      localRemoved = true;
+    } else if (fingerprintHint) {
+      fingerprints.push(fingerprintHint);
+    }
+    permission = browser.permission();
+  } catch {
+    // Local unsubscribe is best-effort; the server entry is still removed.
+  }
+  let serverRemoved = 0;
+  if (fingerprints.length > 0 && api.deleteServerSubscription) {
+    serverRemoved = await api.deleteServerSubscription(fingerprints).catch(() => 0);
+  }
+  return { localRemoved, serverRemoved, permissionStillGranted: permission === "granted" };
 }

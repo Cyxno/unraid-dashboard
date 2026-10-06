@@ -13,8 +13,10 @@ import {
   diagnosticsIndicateRepair,
   enablePush,
   ensureActiveWorker,
+  disablePush,
   type DevicePushDiagnostics,
   type PushRegistrationLike,
+  getBeaconPushRegistration,
 } from "@/lib/push-client";
 
 /**
@@ -150,7 +152,7 @@ export function NotificationsSection() {
       return;
     }
     try {
-      const registration = await navigator.serviceWorker.ready;
+      const registration = await getBeaconPushRegistration();
       const existing = await registration.pushManager.getSubscription();
       setSubscribed(Boolean(existing));
     } catch {
@@ -238,7 +240,6 @@ export function NotificationsSection() {
       if (!config?.push.configured || !config.push.publicKey) {
         setNotice({ tone: "success", text: "Browser notifications enabled. Server push is not configured (VAPID keys missing), so notifications only work while a Beacon tab is open." });
         try {
-          window.localStorage.setItem("beacon.notifications.pushConfigured", "0");
         } catch {}
         return;
       }
@@ -273,9 +274,6 @@ export function NotificationsSection() {
         setNotice({ tone: "error", text: `Push could not be enabled (${outcome.kind}).` });
         return;
       }
-      try {
-        window.localStorage.setItem("beacon.notifications.pushConfigured", "1");
-      } catch {}
       await refreshSubscriptionState();
       await loadDiagnostics();
       void loadConfig();
@@ -291,24 +289,43 @@ export function NotificationsSection() {
     setBusy("unsubscribe");
     setNotice(null);
     try {
-      if ("serviceWorker" in navigator && "PushManager" in window) {
-        const registration = await navigator.serviceWorker.ready;
-        const existing = await registration.pushManager.getSubscription();
-        if (existing) {
-          await existing.unsubscribe();
-          await fetch("/api/notifications/subscriptions", {
-            method: "DELETE",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ endpoint: existing.endpoint }),
-          });
-        }
-      }
-      try {
-        window.localStorage.setItem("beacon.notifications.pushConfigured", "0");
-      } catch {}
+      // v1.3.22: same concrete registration resolver as enable/repair (never
+      // serviceWorker.ready) + fingerprint-based server removal so a
+      // server-only stale device can also be removed.
+      const result = await disablePush(
+        {
+          permission: () => Notification.permission,
+          requestPermission: () => Notification.requestPermission(),
+          serviceWorker: () => getBeaconPushRegistration(),
+        },
+        {
+          vapidPublicKey: async () => config?.push.publicKey ?? null,
+          registerSubscription: async () => {},
+          listServerSubscriptions: async () => (config?.subscriptions ?? []).map((entry) => ({ endpointTail: entry.endpointTail, enabled: entry.enabled })),
+          deleteServerSubscription: async (fingerprints: string[]) => {
+            let removed = 0;
+            for (const fingerprint of fingerprints) {
+              const response = await fetch("/api/notifications/subscriptions", {
+                method: "DELETE",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ fingerprint }),
+              });
+              const body = (await response.json().catch(() => null)) as { removed?: number } | null;
+              removed += body?.removed ?? 0;
+            }
+            return removed;
+          },
+        },
+        deviceDiag?.subscriptionFingerprint ?? null,
+      );
       await refreshSubscriptionState();
+      await loadDiagnostics();
       void loadConfig();
-      setNotice({ tone: "success", text: "Push notifications disabled for this device." });
+      setNotice({
+        tone: "success",
+        text: "Web Push disabled for this device. Browser permission remains granted, but Beacon push is disabled.",
+      });
+      void result;
     } catch (error) {
       setNotice({ tone: "error", text: error instanceof Error ? error.message : "Disabling failed." });
     } finally {
@@ -321,13 +338,23 @@ export function NotificationsSection() {
     setNotice(null);
     try {
       const response = await fetch("/api/notifications/test", { method: "POST", headers: { "content-type": "application/json" } });
-      const body = (await response.json().catch(() => null)) as { ok?: boolean; delivery?: string; detail?: string | null; error?: string } | null;
-      if (!response.ok || !body?.ok) {
+      const body = (await response.json().catch(() => null)) as {
+        ok?: boolean; delivery?: string; reason?: string; detail?: string | null; error?: string;
+        traceId?: string; subscribedDevices?: number; providerAccepted?: boolean;
+      } | null;
+      // Fase 13 (v1.3.22): in-app SSE delivery must never read as a Web Push
+      // success — zero registered devices is an explicit failure state.
+      if (body?.reason === "no-subscribed-devices") {
+        setNotice({
+          tone: "error",
+          text: "No Web Push device is registered. This message was only delivered inside the open Beacon app.",
+        });
+      } else if (!response.ok || !body?.ok) {
         setNotice({ tone: "error", text: body?.detail ?? body?.error ?? `Test failed (HTTP ${response.status}).` });
-      } else if (body.delivery === "pushed") {
-        setNotice({ tone: "success", text: "Test notification pushed to all subscribed devices." });
+      } else if (body.providerAccepted) {
+        setNotice({ tone: "success", text: `Web Push test: provider accepted (trace ${body.traceId ?? "n/a"}).` });
       } else {
-        setNotice({ tone: "success", text: `Test notification delivered in-app (${body.detail ?? body.delivery}).` });
+        setNotice({ tone: "success", text: `Web Push test delivered in-app (${body.detail ?? body.delivery}).` });
       }
       void loadHistory();
     } catch (error) {
@@ -383,6 +410,33 @@ export function NotificationsSection() {
           Opt-in per browser/device. Critical and warning conditions come from Beacon&apos;s health
           semantics; stopped containers are never a notification.
         </p>
+        {/* Fase 2 (v1.3.22): canonical overall state — permission, subscription
+            and server registration are three separate dimensions. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs uppercase tracking-wider text-muted-foreground">Web Push</span>
+          {deviceDiag && (
+            <Badge variant={deviceDiag.state === "PUSH_READY" ? "success" : "muted"}>
+              {deviceDiag.state === "PUSH_READY"
+                ? "READY"
+                : deviceDiag.state === "SUBSCRIPTION_MISMATCH"
+                  ? "MISMATCH — repair"
+                  : deviceDiag.state === "SUBSCRIBED_LOCAL_ONLY"
+                    ? "LOCAL ONLY — not registered"
+                    : deviceDiag.state === "SW_NOT_ACTIVE"
+                      ? "service worker not active"
+                      : deviceDiag.state === "PERMISSION_DENIED"
+                        ? "permission blocked"
+                        : deviceDiag.state === "PERMISSION_REQUIRED"
+                          ? "permission not asked"
+                          : "not subscribed"}
+            </Badge>
+          )}
+        </div>
+        {permission === "granted" && deviceDiag && !deviceDiag.subscriptionPresent && (
+          <p className="text-xs text-muted-foreground">
+            Notification permission is allowed on this device, but Beacon does not currently have an active push subscription.
+          </p>
+        )}
         {/* Permission / push capability */}
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs uppercase tracking-wider text-muted-foreground">Browser permission</span>
@@ -439,16 +493,16 @@ export function NotificationsSection() {
           </div>
         )}
         <div className="flex flex-wrap gap-2">
-          {presentation?.canEnable && (
-            <Button size="sm" disabled={!online || busy !== null} onClick={() => void enableNotifications()}>
+          {presentation?.canEnable && deviceDiag?.state !== "PUSH_READY" && (
+            <Button size="sm" disabled={!online || busy !== null} onClick={() => void enableNotifications(deviceDiag?.subscriptionPresent ? "repair" : "enable")}>
               {busy === "subscribe" ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : <Bell className="size-3.5" aria-hidden="true" />}
-              Enable notifications
+              {deviceDiag?.subscriptionPresent ? "Repair Web Push" : "Enable Web Push"}
             </Button>
           )}
-          {permission === "granted" && (
+          {(deviceDiag?.state === "PUSH_READY" || deviceDiag?.state === "SUBSCRIBED_LOCAL_ONLY" || deviceDiag?.state === "SUBSCRIPTION_MISMATCH") && (
             <Button size="sm" variant="outline" disabled={!online || busy !== null} onClick={() => void disableNotifications()}>
               {busy === "unsubscribe" ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : <BellOff className="size-3.5" aria-hidden="true" />}
-              Disable on this device
+              Disable Web Push
             </Button>
           )}
           <Button size="sm" variant="outline" disabled={!online || busy !== null} onClick={() => void sendTest()}>

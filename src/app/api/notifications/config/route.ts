@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { guardRead } from "@/server/auth/guard";
 import { pushConfigured } from "@/server/notifications/push";
@@ -22,6 +23,7 @@ export async function GET(request: NextRequest) {
       subscriptions: state.subscriptions.map((entry) => ({
         label: entry.label,
         endpointTail: entry.endpoint.slice(-12),
+        fingerprint: createHash("sha256").update(entry.endpoint).digest("hex").slice(0, 16),
         createdAt: entry.createdAt,
         lastSuccessAt: entry.lastSuccessAt,
         lastFailureAt: entry.lastFailureAt,

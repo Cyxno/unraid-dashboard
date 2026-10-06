@@ -2,6 +2,14 @@ import { NextResponse, type NextRequest } from "next/server";
 import { guardDelete, guardWrite } from "@/server/auth/guard";
 import { checkWriteRate } from "@/server/dashboards/rate-limit";
 import { loadStateFromDisk, scheduleSave } from "@/server/notifications/store";
+import { createHash } from "node:crypto";
+
+/** v1.3.22: privacy-safe endpoint fingerprint (SHA-256, 16 hex). Mirrors
+ *  the browser's WebCrypto computation so reconciliation never exposes the
+ *  raw endpoint. */
+function endpointFingerprint(endpoint: string): string {
+  return createHash("sha256").update(endpoint).digest("hex").slice(0, 16);
+}
 import { startNotificationLoop } from "@/server/notifications";
 
 export const dynamic = "force-dynamic";
@@ -58,7 +66,11 @@ export async function POST(request: NextRequest) {
     });
   }
   scheduleSave(0);
-  return NextResponse.json({ ok: true, devices: state.subscriptions.length }, { headers: { "cache-control": "no-store" } });
+  const fingerprint = endpointFingerprint(endpoint);
+  return NextResponse.json(
+    { ok: true, registered: true, devices: state.subscriptions.length, endpointFingerprint: fingerprint },
+    { headers: { "cache-control": "no-store" } },
+  );
 }
 
 /** Removes a subscription (explicit unsubscribe from this device). */
@@ -68,11 +80,24 @@ export async function DELETE(request: NextRequest) {
   const guard = guardDelete(request);
   if (!guard.ok) return guard.response;
 
-  const body = (await request.json().catch(() => null)) as { endpoint?: string } | null;
-  if (!body?.endpoint) return NextResponse.json({ error: "invalid endpoint" }, { status: 400 });
+  const body = (await request.json().catch(() => null)) as { endpoint?: string; fingerprint?: string } | null;
+  if (!body?.endpoint && !body?.fingerprint) {
+    return NextResponse.json({ error: "invalid request" }, { status: 400 });
+  }
 
   const state = await loadStateFromDisk();
-  state.subscriptions = state.subscriptions.filter((entry) => entry.endpoint !== body.endpoint);
+  const before = state.subscriptions.length;
+  // v1.3.22: removal by endpoint OR by fingerprint (for the server-only
+  // disable edge where the browser subscription no longer exists).
+  state.subscriptions = state.subscriptions.filter((entry) => {
+    if (body.endpoint && entry.endpoint === body.endpoint) return false;
+    if (body.fingerprint) {
+      const fp = createHash("sha256").update(entry.endpoint).digest("hex").slice(0, 16);
+      if (fp === body.fingerprint) return false;
+    }
+    return true;
+  });
+  const removed = before - state.subscriptions.length;
   scheduleSave(0);
-  return NextResponse.json({ ok: true, devices: state.subscriptions.length }, { headers: { "cache-control": "no-store" } });
+  return NextResponse.json({ ok: true, removed, devices: state.subscriptions.length }, { headers: { "cache-control": "no-store" } });
 }

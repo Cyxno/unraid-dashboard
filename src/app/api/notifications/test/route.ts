@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { guardWrite } from "@/server/auth/guard";
 import { checkWriteRate } from "@/server/dashboards/rate-limit";
 import { sendTestNotification, startNotificationLoop } from "@/server/notifications";
+import { classifyTestPush } from "@/server/notifications/push";
 import { loadStateFromDisk } from "@/server/notifications/store";
 
 export const dynamic = "force-dynamic";
@@ -32,6 +33,23 @@ export async function POST(request: NextRequest) {
   const state = await loadStateFromDisk();
   const traceId = `test-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const subscribedDevices = state.subscriptions.filter((entry) => entry.enabled).length;
+  // Fase 13 (v1.3.22): a "Send Web Push Test" with zero devices is NOT a
+  // success — in-app SSE delivery must not be presented as Web Push.
+  const precheck = classifyTestPush(subscribedDevices);
+  if (!precheck.ok) {
+    return NextResponse.json(
+      {
+        ok: false,
+        delivery: precheck.delivery,
+        reason: precheck.reason,
+        detail: "No Web Push device is registered. This message was only delivered inside the open Beacon app.",
+        traceId,
+        subscribedDevices: 0,
+        providerAccepted: false,
+      },
+      { headers: { "cache-control": "no-store" } },
+    );
+  }
   const result = await sendTestNotification();
   return NextResponse.json(
     {
