@@ -42,6 +42,14 @@ export const METRICS_QUERY = /* GraphQL */ `
         bytesSent
         operstate
       }
+    /* sensoren verhuisd naar de aparte traag-pollende query hieronder (standby-aware, 15 min TTL) */
+    }
+  }
+`;
+
+export const TEMPERATURE_QUERY = /* GraphQL */ `
+  query Temperature {
+    metrics {
       temperature {
         summary {
           hottest {

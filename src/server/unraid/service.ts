@@ -23,6 +23,7 @@ import {
   LOG_FILE_QUERY,
   DETAIL_QUERY,
   METRICS_QUERY,
+  TEMPERATURE_QUERY,
   NETWORK_INTERFACES_QUERY,
   NOTIFICATIONS_LIST_QUERY,
   NOTIFICATIONS_SUMMARY_QUERY,
@@ -101,7 +102,6 @@ interface RawMetrics {
   memoryAvailableBytes: number | null;
   memoryTotalBytes: number;
   throughput: NetworkThroughput;
-  temperature: TemperatureInfo;
   interfaces: any;
   infoCpu: any;
 }
@@ -133,12 +133,11 @@ const metricsProvider = new SectionProvider<RawMetrics>(
       memoryAvailableBytes: availableBytes,
       memoryTotalBytes: totalBytes,
       throughput: mapNetworkThroughput(payload),
-      temperature: mapTemperature(payload),
       interfaces: (payload as any)?.metrics?.network,
       infoCpu: (payload as any)?.info?.cpu,
     };
   },
-  3_000,
+  5_000,
 );
 
 /* Samples history on every fresh metrics fetch. */
@@ -155,6 +154,18 @@ async function getMetricsSection() {
   return section;
 }
 
+/* Standby-aware temperature collector: own section + 15 min TTL, so the
+   SMART/sensor resolution no longer rides along with every metrics poll. */
+const temperatureProvider = new SectionProvider<TemperatureInfo>(
+  "temperature",
+  async () => mapTemperature(await getUnraidClient().request(TEMPERATURE_QUERY)),
+  15 * 60_000,
+);
+
+async function getTemperatureSection(): Promise<Section<TemperatureInfo>> {
+  return temperatureProvider.get();
+}
+
 const identityProvider = new SectionProvider<SystemIdentity>(
   "identity",
   async () => mapIdentity(await getUnraidClient().request(IDENTITY_QUERY)),
@@ -164,7 +175,7 @@ const identityProvider = new SectionProvider<SystemIdentity>(
 const storageProvider = new SectionProvider<StorageUsage>(
   "storage",
   async () => mapStorage(await getUnraidClient().request(ARRAY_QUERY)),
-  20_000,
+  60_000,
 );
 
 const dockerProvider = new SectionProvider<DockerSummary>(
@@ -179,7 +190,7 @@ const notificationsProvider = new SectionProvider<NotificationsSummary>(
     mapNotifications(
       await getUnraidClient().request(NOTIFICATIONS_SUMMARY_QUERY),
     ),
-  20_000,
+  60_000,
 );
 
 const vmsProvider = new SectionProvider<VmsSummary>(
@@ -192,7 +203,10 @@ const systemProvider = new SectionProvider<SystemInfo>(
   "system",
   async () => {
     const client = getUnraidClient();
-    const [infoPayload, metricsSection] = await Promise.all([
+    const [infoPayload, metricsSection, tempSection] = await Promise.all([
+      client.request(SYSTEM_QUERY),
+      getMetricsSection(),
+      getTemperatureSection(),
       client.request(SYSTEM_QUERY),
       getMetricsSection(),
     ]);
@@ -207,7 +221,7 @@ const systemProvider = new SectionProvider<SystemInfo>(
         metrics && metrics.memoryTotalBytes > 0
           ? Math.max(0, metrics.memoryTotalBytes - metrics.memoryUsedBytes)
           : null,
-      temperature: metrics?.temperature ?? null,
+      temperature: tempSection.data ?? null,
     };
   },
   30_000,
@@ -314,20 +328,21 @@ export async function getOverview(
         reason: metrics.reason,
       };
 
+  const temperatureSection = await getTemperatureSection();
+
   const cpuSection = {
     ...metrics,
     data: metrics.data
-      ? mapCpu({ metrics: {}, info: { cpu: metrics.data.infoCpu } }, metrics.data.temperature)
+      ? mapCpu(
+          { metrics: {}, info: { cpu: metrics.data.infoCpu } },
+          temperatureSection.data ?? null,
+        )
       : null,
   };
   if (cpuSection.data) {
     cpuSection.data.percentTotal = metrics.data!.cpuPercent;
   }
 
-  const temperatureSection: Section<TemperatureInfo> = {
-    ...metrics,
-    data: metrics.data ? metrics.data.temperature : null,
-  };
 
   const networkSection: Section<NetworkThroughput> = {
     ...metrics,
@@ -382,7 +397,7 @@ export async function getOverview(
     docker,
     notifications,
     memoryPercent: metrics.data?.memoryPercent ?? null,
-    temperatureCriticalCount: metrics.data?.temperature.criticalCount ?? null,
+    temperatureCriticalCount: temperatureSection.data?.criticalCount ?? null,
     cpuPackageC: extras?.thermal?.packageC ?? null,
     cpuPackage5mAvgC: extras?.thermal?.package5mAvgC ?? null,
     sustainedCpuPercent: extras?.sustainedCpuPercent ?? null,
