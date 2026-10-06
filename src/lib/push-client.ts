@@ -114,8 +114,51 @@ export function categorizePushError(err: unknown): PushFailureKind {
   return "unknown";
 }
 
+export interface EnableOptions {
+  /** v1.3.21 (Fase A6/A20/A21): unsubscribe + resubscribe instead of reusing
+   *  an existing subscription. iOS can silently deactivate subscriptions that
+   *  belonged to an old, still-dropping worker — reusing those keeps push
+   *  broken on background/closed. Repair flows should set this after a
+   *  diagnosis, never on every load. */
+  recreate?: boolean;
+}
+
+/** Wait (bounded) until the registration has an ACTIVE worker; asks any
+ *  waiting worker to skip waiting first (push-capable worker policy). */
+export async function ensureActiveWorker(
+  registration: PushRegistrationLike & {
+    update?: () => Promise<void>;
+    active?: ServiceWorker | null;
+    waiting?: ServiceWorker | null;
+  },
+  timeoutMs = 8000,
+): Promise<{ active: ServiceWorker | null; workerVersion: string | null }> {
+  const deadline = Date.now() + timeoutMs;
+  // Ask a waiting worker to take over — it contains the current push handler.
+  try {
+    registration.waiting?.postMessage("SKIP_WAITING");
+  } catch {}
+  let active: ServiceWorker | null = registration.active ?? null;
+  while (!active && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 200));
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      active = reg?.active ?? null;
+    } catch {
+      active = registration.active ?? null;
+    }
+  }
+  let workerVersion: string | null = null;
+  if (active) workerVersion = await requestWorkerVersion(active);
+  return { active, workerVersion };
+}
+
 /** The complete enable pipeline, categorized at every step. */
-export async function enablePush(browser: PushBrowser, api: PushApi): Promise<PushOutcome> {
+export async function enablePush(
+  browser: PushBrowser,
+  api: PushApi,
+  options: EnableOptions = {},
+): Promise<PushOutcome> {
   let publicKey: string | null = null;
   try {
     publicKey = await api.vapidPublicKey();
@@ -151,9 +194,17 @@ export async function enablePush(browser: PushBrowser, api: PushApi): Promise<Pu
 
   let subscription: PushSubscriptionLike | null = null;
   try {
+    const existing = await registration.pushManager.getSubscription();
+    if (existing && options.recreate) {
+      // Stale iOS subscription (old worker silently dropped pushes): a fresh
+      // subscription re-arms the platform delivery path.
+      await (existing as { unsubscribe?: () => Promise<boolean> }).unsubscribe?.();
+      subscription = null;
+    }
     subscription =
-      (await registration.pushManager.getSubscription()) ??
-      (await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }));
+      existing && !options.recreate
+        ? existing
+        : await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
   } catch (err) {
     return { ok: false, kind: categorizePushError(err) === "invalid-key" ? "subscribe-failed" : categorizePushError(err) };
   }
@@ -173,6 +224,13 @@ export async function enablePush(browser: PushBrowser, api: PushApi): Promise<Pu
 
 /* ---- Fase 3/16: device diagnostics -------------------------------------- */
 
+export interface PushWorkerTelemetry {
+  pushReceived: number;
+  lastPushAt: string | null;
+  lastShowResult: "shown" | "error" | null;
+  lastShowErrorName: string | null;
+}
+
 export interface DevicePushDiagnostics {
   secureContext: boolean;
   standalone: boolean;
@@ -187,6 +245,8 @@ export interface DevicePushDiagnostics {
   controller: boolean;
   activeScriptUrl: string | null;
   workerVersion: string | null;
+  /** v1.3.21: SW-side push telemetry (A10/A11). */
+  telemetry: PushWorkerTelemetry | null;
   subscriptionPresent: boolean;
   subscriptionEndpointTail: string | null;
   /** Server knows this exact subscription (endpoint-tail match). */
@@ -196,28 +256,44 @@ export interface DevicePushDiagnostics {
 }
 
 /** Ask a worker for its build identity via postMessage (Fase 4). */
-export function requestWorkerVersion(worker: ServiceWorker): Promise<string | null> {
+export interface WorkerInfo {
+  version: string | null;
+  telemetry: PushWorkerTelemetry | null;
+}
+
+/** Fase A10/A11: version + push telemetry from the worker (no payloads). */
+export function requestWorkerInfo(worker: ServiceWorker): Promise<WorkerInfo> {
   return new Promise((resolve) => {
     const channel = new MessageChannel();
-    const finish = (result: string | null) => {
+    const finish = (result: WorkerInfo) => {
       // Close both ports: an open MessagePort keeps the event loop alive
       // (this hung the test runner and would keep worker threads alive).
       try { channel.port1.close(); channel.port2.close(); } catch {}
       resolve(result);
     };
-    const timer = setTimeout(() => finish(null), 2000);
+    const timer = setTimeout(() => finish({ version: null, telemetry: null }), 2000);
     channel.port1.onmessage = (event: MessageEvent) => {
       clearTimeout(timer);
-      const data = event.data as { type?: string; version?: string } | null;
-      finish(data?.type === "VERSION" && typeof data.version === "string" ? data.version : null);
+      const data = event.data as
+        | { type?: string; version?: string; telemetry?: PushWorkerTelemetry }
+        | null;
+      finish({
+        version: data?.type === "VERSION" && typeof data.version === "string" ? data.version : null,
+        telemetry: data?.telemetry ?? null,
+      });
     };
     try {
       worker.postMessage({ type: "GET_VERSION" }, [channel.port2]);
     } catch {
       clearTimeout(timer);
-      finish(null);
+      finish({ version: null, telemetry: null });
     }
   });
+}
+
+/** Back-compat helper: just the worker version string. */
+export function requestWorkerVersion(worker: ServiceWorker): Promise<string | null> {
+  return requestWorkerInfo(worker).then((info) => info.version);
 }
 
 /** Full device snapshot for Settings → Notifications (no secrets). */
@@ -236,9 +312,10 @@ export async function diagnoseDevice(
     installing: false,
     waiting: false,
     active: false,
-    controller: Boolean(navigator.serviceWorker?.controller),
+    controller: Boolean(typeof navigator !== "undefined" && navigator.serviceWorker?.controller),
     activeScriptUrl: navigator.serviceWorker?.controller?.scriptURL ?? null,
     workerVersion: null,
+    telemetry: null,
     subscriptionPresent: false,
     subscriptionEndpointTail: null,
     serverKnowsSubscription: null,
@@ -255,7 +332,9 @@ export async function diagnoseDevice(
     diag.active = Boolean(registration.active);
     if (registration.active) {
       diag.activeScriptUrl = registration.active.scriptURL;
-      diag.workerVersion = await requestWorkerVersion(registration.active);
+      const info = await requestWorkerInfo(registration.active);
+      diag.workerVersion = info.version;
+      diag.telemetry = info.telemetry;
     }
     const subscription = await registration.pushManager.getSubscription();
     diag.subscriptionPresent = Boolean(subscription);

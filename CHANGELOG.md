@@ -3,6 +3,17 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.3.21
+
+### Fixed
+
+- **iOS background push reliability**: "Repair this device" now ensures the ACTIVE service worker is the current build (asks a waiting worker to skip waiting and waits for activation) and then **recreates** the push subscription (unsubscribe + fresh subscribe) — a stale subscription from an older worker can keep background/closed delivery broken on iOS even when the foreground (in-app) path works
+- Service worker push telemetry: push events received, last push timestamp and showNotification failures (error name only) are exposed through the worker version handshake — provider acceptance is now distinguishable from on-device display
+
+### Improved
+
+- Push pipeline centralized in one tested client module; the repair flow avoids `navigator.serviceWorker.ready` (can wait indefinitely behind a waiting worker) and uses an explicit `/sw.js` registration with `updateViaCache: "none"`
+
 ## v1.3.20
 
 ### Fixed

@@ -12,6 +12,7 @@ import {
   diagnoseDevice,
   diagnosticsIndicateRepair,
   enablePush,
+  ensureActiveWorker,
   type DevicePushDiagnostics,
   type PushRegistrationLike,
 } from "@/lib/push-client";
@@ -214,7 +215,7 @@ export function NotificationsSection() {
     return () => clearTimeout(timer);
   }, [loadConfig, loadHistory, refreshSubscriptionState]);
 
-  const enableNotifications = async () => {
+  const enableNotifications = async (mode: "enable" | "repair" = "enable") => {
     setBusy("subscribe");
     setNotice(null);
     try {
@@ -244,14 +245,15 @@ export function NotificationsSection() {
       // v1.3.19: the enable pipeline lives in the tested push-client module —
       // explicit /sw.js registration (never navigator.serviceWorker.ready),
       // validated VAPID decoding and categorized outcomes.
+      // v1.3.21: ensure the ACTIVE worker is the current build before (re)subscribing —
+      // a subscription bound to an old waiting worker never sees background push.
+      const registration = await navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
+      await ensureActiveWorker(registration as unknown as Parameters<typeof ensureActiveWorker>[0]);
       const outcome = await enablePush(
         {
           permission: () => Notification.permission,
           requestPermission: () => Notification.requestPermission(),
-          serviceWorker: async () => {
-            const registration = await navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
-            return registration as unknown as PushRegistrationLike;
-          },
+          serviceWorker: async () => registration as unknown as PushRegistrationLike,
         },
         {
           vapidPublicKey: async () => config.push.publicKey,
@@ -265,6 +267,7 @@ export function NotificationsSection() {
           },
           listServerSubscriptions: async () => [],
         },
+        { recreate: mode === "repair" },
       );
       if (!outcome.ok) {
         setNotice({ tone: "error", text: `Push could not be enabled (${outcome.kind}).` });
@@ -397,6 +400,13 @@ export function NotificationsSection() {
               <li>Service worker: {deviceDiag.registrationExists ? (deviceDiag.active ? "active" : deviceDiag.installing ? "installing" : deviceDiag.waiting ? "waiting" : "registered") : "not registered"}</li>
               <li>Controller: {deviceDiag.controller ? "present" : "none"}</li>
               <li>Worker version: {deviceDiag.workerVersion ?? deviceDiag.activeScriptUrl?.split("/").pop() ?? "unknown"}</li>
+              {deviceDiag.telemetry && (
+                <li>
+                  Push events received: {deviceDiag.telemetry.pushReceived}
+                  {deviceDiag.telemetry.lastPushAt ? ` · last at ${deviceDiag.telemetry.lastPushAt}` : ""}
+                  {deviceDiag.telemetry.lastShowResult === "error" ? ` · show failed (${deviceDiag.telemetry.lastShowErrorName})` : ""}
+                </li>
+              )}
               <li>Push subscription: {deviceDiag.subscriptionPresent ? "present on device" : "absent"}</li>
               <li>
                 Server knows subscription:{" "}
@@ -421,7 +431,7 @@ export function NotificationsSection() {
                 Refresh diagnostics
               </Button>
               {presentation?.canEnable && (
-                <Button size="sm" variant="outline" disabled={!online || busy !== null} onClick={() => void enableNotifications()}>
+                <Button size="sm" variant="outline" disabled={!online || busy !== null} onClick={() => void enableNotifications("repair")}>
                   {busy === "subscribe" ? "Repairing…" : "Repair this device"}
                 </Button>
               )}

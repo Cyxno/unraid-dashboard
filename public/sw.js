@@ -17,11 +17,19 @@
  * mid-action by a version flip.
  */
 
-const VERSION = "v1.3.20";
+const VERSION = "v1.3.21";
 /** Build identity for the SW version handshake (GET_VERSION postMessage).
  *  The server injects the git revision at build time when available. */
 const BEACON_SW_REVISION = "dev";
 const BEACON_SW_VERSION = `${VERSION}+${BEACON_SW_REVISION === "__GIT_SHA__" ? "dev" : BEACON_SW_REVISION.slice(0, 7)}`;
+/** Fase A10/A11: privacy-safe push telemetry — counters and outcomes only,
+ *  never payloads, endpoints or keys. Kept in SW memory (per worker life). */
+const PUSH_TELEMETRY = {
+  pushReceived: 0,
+  lastPushAt: null,
+  lastShowResult: null,
+  lastShowErrorName: null,
+};
 const SHELL_CACHE = `unraid-dash-shell-${VERSION}`;
 const STATIC_CACHE = `unraid-dash-static-${VERSION}`;
 
@@ -84,7 +92,11 @@ self.addEventListener("message", (event) => {
   // exactly which worker owns push on this device.
   const data = event.data || null;
   if (data && data.type === "GET_VERSION" && event.ports && event.ports[0]) {
-    event.ports[0].postMessage({ type: "VERSION", version: BEACON_SW_VERSION });
+    event.ports[0].postMessage({
+      type: "VERSION",
+      version: BEACON_SW_VERSION,
+      telemetry: { ...PUSH_TELEMETRY },
+    });
   }
 });
 
@@ -205,17 +217,29 @@ self.addEventListener("push", (event) => {
     payload && typeof payload.url === "string" && payload.url.startsWith("/") ? payload.url : "/";
   const tag =
     payload && typeof payload.tag === "string" && payload.tag ? payload.tag.slice(0, 160) : "beacon";
+  PUSH_TELEMETRY.pushReceived += 1;
+  PUSH_TELEMETRY.lastPushAt = new Date().toISOString();
   event.waitUntil(
-    self.registration.showNotification(title, {
-      body,
-      tag,
-      // iOS/Safari: replace superseded notifications instead of stacking.
-      renotify: true,
-      icon: "/icons/icon-192.png",
-      badge: "/icons/icon-maskable-192.png",
-      silent: false,
-      data: { url },
-    }),
+    (async () => {
+      try {
+        await self.registration.showNotification(title, {
+          body,
+          tag,
+          // iOS/Safari: replace superseded notifications instead of stacking.
+          renotify: true,
+          icon: "/icons/icon-192.png",
+          badge: "/icons/icon-maskable-192.png",
+          silent: false,
+          data: { url },
+        });
+        PUSH_TELEMETRY.lastShowResult = "shown";
+        PUSH_TELEMETRY.lastShowErrorName = null;
+      } catch (error) {
+        // Fase A11: capture the failure category — never the payload.
+        PUSH_TELEMETRY.lastShowResult = "error";
+        PUSH_TELEMETRY.lastShowErrorName = (error && error.name) || "UnknownError";
+      }
+    })(),
   );
 });
 
