@@ -1,7 +1,27 @@
 {
   "generatedFrom": "CHANGELOG.md",
-  "latestVersion": "v1.3.22",
+  "latestVersion": "v1.3.23",
   "releases": [
+    {
+      "version": "v1.3.23",
+      "anchor": "v1-3-23",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Improved",
+          "items": [
+            "**Clean baseline release**: dashboard and helper release provenance is fully aligned (exact semver labels, channel `release`, identical revision) and the v1.3.x line closes as the production baseline",
+            "Release notes summarize all major improvements since the historic v1.3.5 GitHub release; known historical artifact quirks are documented transparently"
+          ]
+        },
+        {
+          "name": "Removed",
+          "items": [
+            "Documentation-only release: v1.3.x close-out status and notes files; no functional changes"
+          ]
+        }
+      ]
+    },
     {
       "version": "v1.3.22",
       "anchor": "v1-3-22",

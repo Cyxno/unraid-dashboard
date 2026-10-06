@@ -3,6 +3,17 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.3.23
+
+### Improved
+
+- **Clean baseline release**: dashboard and helper release provenance is fully aligned (exact semver labels, channel `release`, identical revision) and the v1.3.x line closes as the production baseline
+- Release notes summarize all major improvements since the historic v1.3.5 GitHub release; known historical artifact quirks are documented transparently
+
+### Removed
+
+- Documentation-only release: v1.3.x close-out status and notes files; no functional changes
+
 ## v1.3.22
 
 ### Fixed
