@@ -44,6 +44,13 @@ jobs:
           if [[ "$GITHUB_REF_NAME" == v* ]]; then
             echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
             echo "channel=release" >> "$GITHUB_OUTPUT"
+            # v1.3.20 hygiene: a release tag must carry the package semver,
+            # so image metadata and the bundled changelog can never drift.
+            PKG=$(node -p 'require("./package.json").version')
+            if [[ "$PKG" != "${GITHUB_REF_NAME#v}" ]]; then
+              echo "::error::tag ${GITHUB_REF_NAME} does not match package.json version ${PKG} — bump package.json before tagging"
+              exit 1
+            fi
           else
             echo "version=$VERSION" >> "$GITHUB_OUTPUT"
             echo "channel=main" >> "$GITHUB_OUTPUT"

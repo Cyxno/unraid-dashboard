@@ -3,6 +3,24 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.3.20
+
+### Fixed
+
+- **Temperature/SMART collection is decoupled from realtime metrics polling**: the sensors block moved out of the fast `METRICS_QUERY` into a dedicated `TEMPERATURE_QUERY` with its own 15-minute TTL provider, so SMART/sensor resolution no longer rides along with every dashboard poll and standby array disks stop being probed every few seconds
+- **Standby-friendly polling intervals**: realtime metrics poll 3s → 5s, array/storage 20s → 60s; in-flight request dedupe unchanged
+
+### Improved
+
+- **Lower unraid-api load**: dashboard-driven unraid-api CPU dropped from ~14% to ~5% on an idle server and GraphQL max latency from ~6s to ~0.3s — no functional changes to any dashboard section
+- **Release-contract hygiene**: version sources (package.json, helper, changelog) are aligned with the released tag again, and the changelog contract tests now assert cross-source consistency instead of pinning one historical version
+
+## v1.3.19
+
+### Added
+
+- **iOS/PWA Web Push reliability + device diagnostics**: push notifications gained iOS PWA support, delivery reliability improvements and per-device push diagnostics
+
 ## v1.3.18
 
 ### Fixed

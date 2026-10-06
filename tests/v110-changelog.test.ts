@@ -3,8 +3,10 @@ import { describe, it } from "node:test";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseChangelog } from "../src/lib/changelog-parser.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const pkg = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")) as { version: string };
 const read = (relative: string): string => readFileSync(path.join(repoRoot, relative), "utf8");
 
 describe("v1.1.0 in-app changelog", () => {
@@ -14,7 +16,8 @@ describe("v1.1.0 in-app changelog", () => {
     it("orders releases newest first including prereleases", async () => {
       const { parseChangelog, compareVersions } = await import("../src/lib/changelog-parser.mjs");
       const entries = parseChangelog(markdown);
-      assert.equal(entries[0]?.version, "v1.3.18");
+      // Newest bundled release always tracks the package version (contract).
+      assert.equal(entries[0]?.version, `v${pkg.version}`, "newest changelog entry must track package.json");
       assert.equal(entries.at(-1)?.version, "v0.9.0");
       for (let index = 0; index < entries.length - 1; index++) {
         assert.ok(
@@ -57,8 +60,9 @@ describe("v1.1.0 in-app changelog", () => {
 
     it("is current with CHANGELOG.md and covers the full retrospective", () => {
       const versions = generated.releases.map((release: { version: string }) => release.version);
-      assert.equal(generated.latestVersion, "v1.3.18");
-      assert.equal(generated.releases.length, 49);
+      assert.equal(generated.latestVersion, `v${pkg.version}`, "latestVersion must track package.json");
+      // The generated artifact must mirror CHANGELOG.md exactly (no stale build).
+      assert.equal(generated.releases.length, parseChangelog(markdown).length, "generated releases must match CHANGELOG.md");
       for (const expected of ["v1.0.1", "v1.0.0", "v1.0.0-rc1", "v0.9.16", "v0.9.12", "v0.9.9", "v0.9.0"]) {
         assert.ok(versions.includes(expected), `missing ${expected}`);
       }
