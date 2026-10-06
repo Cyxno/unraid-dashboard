@@ -45,3 +45,14 @@ ghcr.io/cyxno/unraid-dashboard-helper:latest
 
 Existing installs: Settings → Updates, then Settings → Notifications →
 "Repair this device" on each push device.
+
+---
+
+## Note on the historic v1.3.5 release
+
+The GitHub release object "Beacon v1.3.5" is historic and stays untouched
+(tag, notes, assets). If your repository page still shows it as "Latest",
+create the v1.3.21 release object from tag `v1.3.21` (see
+`docs/RELEASE_NOTES_v1.3.21.md`) and mark it Latest — or optionally add a
+one-line notice to the v1.3.5 release: "Superseded by Beacon v1.3.21 — see
+the latest release."
