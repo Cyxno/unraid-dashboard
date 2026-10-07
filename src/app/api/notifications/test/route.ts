@@ -3,7 +3,7 @@ import { guardWrite } from "@/server/auth/guard";
 import { checkWriteRate } from "@/server/dashboards/rate-limit";
 import { sendTestNotification, startNotificationLoop } from "@/server/notifications";
 import { classifyTestPush } from "@/server/notifications/push";
-import { loadStateFromDisk } from "@/server/notifications/store";
+import { loadState } from "@/server/notifications/store";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
   // provider → history can be correlated. Delivery semantics (Fase 12):
   // "pushed" means the PROVIDER accepted the message — that is not proof the
   // iPhone rendered a notification; the device-side trace is the acceptance.
-  const state = await loadStateFromDisk();
+  const state = loadState();
   const traceId = `test-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const subscribedDevices = state.subscriptions.filter((entry) => entry.enabled).length;
   // Fase 13 (v1.3.22): a "Send Web Push Test" with zero devices is NOT a

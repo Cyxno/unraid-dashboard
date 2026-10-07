@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { guardRead } from "@/server/auth/guard";
 import { pushConfigured } from "@/server/notifications/push";
-import { loadStateFromDisk } from "@/server/notifications/store";
+import { loadState } from "@/server/notifications/store";
 import { startNotificationLoop } from "@/server/notifications";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
   if (!guard.ok) return guard.response;
 
   startNotificationLoop();
-  const state = await loadStateFromDisk();
+  const state = loadState();
   const push = pushConfigured();
 
   return NextResponse.json(

@@ -23,6 +23,17 @@ only non-empty groups are shown. No dates — versions are ordered by semver.
 - Unraid API polling made standby-friendly: temperature/SMART decoupled (15-minute TTL), realtime metrics 5s, array/storage 60s — unraid-api CPU ~14% → ~3.5% of one core
 - Release provenance hardened: exact OCI labels, version-scoped build caches, RAW label assertions on published artifacts, immutable GHCR semver tags
 
+## v1.3.27
+
+### Fixed
+
+- **Web Push registration survives restarts and engine cycles**: notification routes (POST/test/config/history/delete) mutated a freshly reloaded disk copy while the notification engine works on the shared in-memory state — the engine's next save wiped freshly registered subscriptions (iPhone registration "disappeared" after deploys/cycles). All notification routes now mutate the same shared working set as the engine
+- **Boot-order hardening**: the notification engine no longer runs on an empty in-memory state before the first disk load
+
+### Added
+
+- Persistence regression tests: registered subscriptions survive engine-cycle saves and full process-restart simulation; fingerprint stability across reloads
+
 ## v1.3.26
 
 ### Fixed
