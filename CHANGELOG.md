@@ -3,6 +3,26 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.4.0
+
+### Improved
+
+- **Web Push registration trace**: every Enable/Repair attempt produces an 18-step PASS/FAIL trace (permission, worker, subscribe, server POST, server reread, canonical ready) rendered in Settings — the first failing step is always identifiable
+- **Device push diagnostics**: worker active/waiting state, worker build version, subscription presence, server-knowledge and push telemetry in Settings → Notifications, with a Repair flow that recreates stale subscriptions
+
+### Fixed
+
+- **Web Push state model**: browser permission, push subscription, server registration and delivery are separate dimensions — permission granted alone never implies push enabled, and foreground in-app delivery is never presented as Web Push
+- **Enable/Repair/Disable lifecycle completed and verified on iPhone**: registration, provider acceptance, background/closed delivery, disable and re-enable all proven on-device
+- **Diagnostics failures are visible**: a failed diagnostics run shows an explicit error state with retry instead of silently hiding the block
+
+### Fixed
+
+- Helper inventory pipeline hardened (NDJSON parsing, short/full id join, chunked inspects, last-known-good semantics)
+- Canonical Docker update state; stopped containers are a state, never a problem
+- Unraid API polling made standby-friendly: temperature/SMART decoupled (15-minute TTL), realtime metrics 5s, array/storage 60s — unraid-api CPU ~14% → ~3.5% of one core
+- Release provenance hardened: exact OCI labels, version-scoped build caches, RAW label assertions on published artifacts, immutable GHCR semver tags
+
 ## v1.3.26
 
 ### Fixed

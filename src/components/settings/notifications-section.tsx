@@ -323,7 +323,17 @@ export function NotificationsSection() {
             const body = (await response.json().catch(() => null)) as { devicesBefore?: number; devices?: number } | null;
             trace.push({ step: trace.length + 1, label: "13 server accepted registration", status: "PASS", detail: `devices ${body?.devicesBefore ?? "?"} → ${body?.devices ?? "?"}` });
           },
-          listServerSubscriptions: async () => [],
+          // v1.3.27 (Fase 13-fix): the reread must use the REAL server state
+          // (with fingerprints) — an empty stub made step 13 always FAIL even
+          // when the POST persisted correctly.
+          listServerSubscriptions: async () => {
+            const response = await fetch("/api/notifications/config", { cache: "no-store" });
+            if (!response.ok) return [];
+            const body = (await response.json()) as {
+              subscriptions?: Array<{ endpointTail: string; fingerprint?: string; enabled: boolean }>;
+            };
+            return body.subscriptions ?? [];
+          },
         },
         { recreate: mode === "repair" },
         (entry) => trace.push(entry),
