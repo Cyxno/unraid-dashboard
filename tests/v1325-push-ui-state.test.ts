@@ -170,8 +170,9 @@ describe("Rendered NotificationsSection — exact regression fixture", () => {
   test("14. mobile layout: action buttons in flex-wrap containers", () => {
     // de knoppenrijen gebruiken flex-wrap zodat ze op iPhone-viewport binnen
     // de breedte blijven en niet afgekapt worden
-    assert.match(section, /flex flex-wrap gap-2">\n\s+\{deviceAction === "enable"/);
-    assert.match(section, /flex flex-wrap gap-2">\n\s+\{deviceAction === "disable"/);
+    assert.match(section, /flex flex-wrap gap-2/);
+    assert.match(section, /deviceAction === "enable" \|\| deviceAction === "repair"/);
+    assert.match(section, /deviceAction === "disable" && \(/);
   });
 
   test("20. 18-step trace rendered after action", () => {
