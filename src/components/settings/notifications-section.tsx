@@ -9,6 +9,8 @@ import { usePwa } from "@/components/layout/pwa-provider";
 import { cn, formatDateTimeIso } from "@/lib/utils";
 import { derivePermissionPresentation, evaluatePushSupport, isAppleMobile, isStandalone } from "@/lib/push-support";
 import {
+  derivePushDeviceState,
+  pushDeviceAction,
   diagnoseDevice,
   type PushTraceEntry,
   diagnosticsIndicateRepair,
@@ -105,12 +107,19 @@ export function NotificationsSection() {
   const [busy, setBusy] = useState<"subscribe" | "unsubscribe" | "test" | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [deviceDiag, setDeviceDiag] = useState<DevicePushDiagnostics | null>(null);
+  const [diagnosticsStatus, setDiagnosticsStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null);
   const [lastTrace, setLastTrace] = useState<PushTraceEntry[] | null>(null);
 
   // Fase 3/16 (v1.3.19): device-specific push diagnostics — which worker owns
   // push, is a subscription present, and does the server know it.
   const loadDiagnostics = useCallback(async () => {
-    if (!("serviceWorker" in navigator)) return;
+    if (!("serviceWorker" in navigator)) {
+      setDiagnosticsStatus("error");
+      setDiagnosticsError("service worker unsupported");
+      return;
+    }
+    setDiagnosticsStatus("loading");
     try {
       setDeviceDiag(await diagnoseDevice(
         { serviceWorker: async () => {
@@ -124,8 +133,17 @@ export function NotificationsSection() {
             return body.subscriptions ?? [];
           } },
       ));
-    } catch {
-      setDeviceDiag(null);
+      setDiagnosticsStatus("ready");
+      setDiagnosticsError(null);
+    } catch (error) {
+      // Fase 6 (v1.3.25): diagnostics failures must be VISIBLE — never a
+      // silently hidden block.
+      setDiagnosticsStatus("error");
+      setDiagnosticsError(
+        (error as { name?: string }).name
+          ? `${(error as Error).name}: ${(error as Error).message.slice(0, 80)}`
+          : "diagnostics failed",
+      );
     }
   }, []);
   const [history, setHistory] = useState<HistoryEvent[]>([]);
@@ -147,6 +165,36 @@ export function NotificationsSection() {
       // Offline.
     }
   }, []);
+
+  // Fase 2/3 (v1.3.25): canonical device state drives ALL push buttons —
+  // presentation.canEnable only shapes permission UX, never push actions.
+  const devicePushState = (() => {
+    if (!("serviceWorker" in navigator)) return "unsupported" as const;
+    if (!("PushManager" in window)) {
+      return isAppleMobile(navigator.userAgent, navigator.maxTouchPoints ?? 0) && !isStandalone()
+        ? ("requires-install" as const)
+        : ("unsupported" as const);
+    }
+    if (diagnosticsStatus === "error") return "error" as const;
+    if (!deviceDiag) return diagnosticsStatus === "loading" ? ("not-subscribed" as const) : ("not-subscribed" as const);
+    return derivePushDeviceState({
+      permission: permission === "unsupported" ? "unknown" : permission,
+      secureContext: typeof window !== "undefined" ? window.isSecureContext : false,
+      standalone: isStandalone(),
+      isAppleMobile: isAppleMobile(navigator.userAgent, navigator.maxTouchPoints ?? 0),
+      hasNotificationApi: typeof Notification !== "undefined",
+      hasPushManager: "PushManager" in window,
+      hasServiceWorker: "serviceWorker" in navigator,
+      registrationExists: deviceDiag.registrationExists,
+      swActive: deviceDiag.active,
+      subscriptionPresent: deviceDiag.subscriptionPresent,
+      subscriptionFingerprint: deviceDiag.subscriptionFingerprint,
+      serverKnowsSubscription: deviceDiag.serverKnowsSubscription,
+      serverDevices: deviceDiag.serverDevices,
+      diagnosticsError: false,
+    });
+  })();
+  const deviceAction = pushDeviceAction(devicePushState);
 
   const refreshSubscriptionState = useCallback(async () => {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
@@ -431,25 +479,31 @@ export function NotificationsSection() {
             and server registration are three separate dimensions. */}
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs uppercase tracking-wider text-muted-foreground">Web Push</span>
-          {deviceDiag && (
-            <Badge variant={deviceDiag.state === "PUSH_READY" ? "success" : "muted"}>
-              {deviceDiag.state === "PUSH_READY"
-                ? "READY"
-                : deviceDiag.state === "SUBSCRIPTION_MISMATCH"
-                  ? "MISMATCH — repair"
-                  : deviceDiag.state === "SUBSCRIBED_LOCAL_ONLY"
-                    ? "LOCAL ONLY — not registered"
-                    : deviceDiag.state === "SW_NOT_ACTIVE"
-                      ? "service worker not active"
-                      : deviceDiag.state === "PERMISSION_DENIED"
+          <Badge variant={deviceAction === "disable" ? "success" : "muted"}>
+            {devicePushState === "ready"
+              ? "READY"
+              : devicePushState === "mismatch"
+                ? "MISMATCH — repair"
+                : devicePushState === "local-only"
+                  ? "LOCAL ONLY — not registered"
+                  : devicePushState === "server-only"
+                    ? "SERVER ONLY — device unknown"
+                    : devicePushState === "not-subscribed"
+                      ? "NOT REGISTERED"
+                      : devicePushState === "permission-denied"
                         ? "permission blocked"
-                        : deviceDiag.state === "PERMISSION_REQUIRED"
+                        : devicePushState === "permission-required"
                           ? "permission not asked"
-                          : "not subscribed"}
-            </Badge>
-          )}
+                          : devicePushState === "requires-install"
+                            ? "install Beacon to Home Screen"
+                            : devicePushState === "unsupported"
+                              ? "not supported on this device"
+                              : devicePushState === "error"
+                                ? "diagnostics failed"
+                                : "unknown"}
+          </Badge>
         </div>
-        {permission === "granted" && deviceDiag && !deviceDiag.subscriptionPresent && (
+        {permission === "granted" && devicePushState !== "ready" && (
           <p className="text-xs text-muted-foreground">
             Notification permission is allowed on this device, but Beacon does not currently have an active push subscription.
           </p>
@@ -464,37 +518,50 @@ export function NotificationsSection() {
             </Badge>
           )}
         </div>
-        {deviceDiag && (
+        {/* Fase 5/6 (v1.3.25): the diagnostics block is ALWAYS visible on a
+            supported device — loading, ready AND error (with retry). A failed
+            diagnostics run may never silently hide the block. */}
+        {(deviceDiag || diagnosticsStatus === "error") && (
           <div className="rounded-md border bg-muted/30 p-3 text-xs" data-testid="push-device-diagnostics">
             <p className="mb-1.5 font-medium text-foreground">This device (push pipeline)</p>
-            <ul className="grid grid-cols-1 gap-x-6 gap-y-0.5 sm:grid-cols-2">
-              <li>Service worker: {deviceDiag.registrationExists ? (deviceDiag.active ? "active" : deviceDiag.installing ? "installing" : deviceDiag.waiting ? "waiting" : "registered") : "not registered"}</li>
-              <li>Controller: {deviceDiag.controller ? "present" : "none"}</li>
-              <li>Worker version: {deviceDiag.workerVersion ?? deviceDiag.activeScriptUrl?.split("/").pop() ?? "unknown"}</li>
-              {deviceDiag.telemetry && (
+            {diagnosticsStatus === "error" && (
+              <div className="mb-2">
+                <p className="text-destructive">Diagnostics unavailable — {diagnosticsError}</p>
+                <Button size="sm" variant="outline" className="mt-1" onClick={() => { void loadDiagnostics(); }}>
+                  Retry diagnostics
+                </Button>
+              </div>
+            )}
+            {deviceDiag && (
+              <ul className="grid grid-cols-1 gap-x-6 gap-y-0.5 sm:grid-cols-2">
+                <li>Service worker: {deviceDiag.registrationExists ? (deviceDiag.active ? "active" : deviceDiag.installing ? "installing" : deviceDiag.waiting ? "waiting" : "registered") : "not registered"}</li>
+                <li>Controller: {deviceDiag.controller ? "present" : "none"}</li>
+                <li>Worker version: {deviceDiag.workerVersion ?? deviceDiag.activeScriptUrl?.split("/").pop() ?? "unknown"}</li>
+                {deviceDiag.telemetry && (
+                  <li>
+                    Push events received: {deviceDiag.telemetry.pushReceived}
+                    {deviceDiag.telemetry.lastPushAt ? ` · last at ${deviceDiag.telemetry.lastPushAt}` : ""}
+                    {deviceDiag.telemetry.lastShowResult === "error" ? ` · show failed (${deviceDiag.telemetry.lastShowErrorName})` : ""}
+                  </li>
+                )}
+                <li>Push subscription: {deviceDiag.subscriptionPresent ? "present on device" : "absent"}</li>
                 <li>
-                  Push events received: {deviceDiag.telemetry.pushReceived}
-                  {deviceDiag.telemetry.lastPushAt ? ` · last at ${deviceDiag.telemetry.lastPushAt}` : ""}
-                  {deviceDiag.telemetry.lastShowResult === "error" ? ` · show failed (${deviceDiag.telemetry.lastShowErrorName})` : ""}
+                  Server knows subscription:{" "}
+                  {deviceDiag.serverKnowsSubscription === null
+                    ? "unknown"
+                    : deviceDiag.serverKnowsSubscription
+                      ? "yes (fingerprint match)"
+                      : "NO — mismatch"}
                 </li>
-              )}
-              <li>Push subscription: {deviceDiag.subscriptionPresent ? "present on device" : "absent"}</li>
-              <li>
-                Server knows subscription:{" "}
-                {deviceDiag.serverKnowsSubscription === null
-                  ? "unknown"
-                  : deviceDiag.serverKnowsSubscription
-                    ? "yes (endpoint tail matches)"
-                    : "NO — mismatch"}
-              </li>
-              <li>Server registered devices: {deviceDiag.serverHasNoDevices === null ? "unknown" : deviceDiag.serverHasNoDevices ? "none" : "≥1"}</li>
-              <li>Secure context: {deviceDiag.secureContext ? "yes" : "no"}</li>
-              <li>Standalone (installed PWA): {deviceDiag.standalone ? "yes" : "no"}</li>
-            </ul>
-            {(diagnosticsIndicateRepair(deviceDiag) || deviceDiag.waiting) && (
+                <li>Server registered devices: {deviceDiag.serverHasNoDevices === null ? "unknown" : deviceDiag.serverHasNoDevices ? "none" : "≥1"}</li>
+                <li>Secure context: {deviceDiag.secureContext ? "yes" : "no"}</li>
+                <li>Standalone (installed PWA): {deviceDiag.standalone ? "yes" : "no"}</li>
+              </ul>
+            )}
+            {deviceDiag && (diagnosticsIndicateRepair(deviceDiag) || deviceDiag.waiting) && (
               <p className="mt-1.5 text-warning">
                 {deviceDiag.waiting && "A newer service worker is waiting and will activate on the next reload. "}
-                {diagnosticsIndicateRepair(deviceDiag) && "Use “Repair this device” to re-register the subscription."}
+                {diagnosticsIndicateRepair(deviceDiag) && "Use Repair this device to re-register the subscription."}
               </p>
             )}
             {lastTrace && lastTrace.length > 0 && (
@@ -514,30 +581,39 @@ export function NotificationsSection() {
               <Button size="sm" variant="outline" disabled={!online || busy !== null} onClick={() => { void loadDiagnostics(); }}>
                 Refresh diagnostics
               </Button>
-              {presentation?.canEnable && (
+              {(deviceAction === "enable" || deviceAction === "repair") && (
                 <Button size="sm" variant="outline" disabled={!online || busy !== null} onClick={() => void enableNotifications("repair")}>
-                  {busy === "subscribe" ? "Repairing…" : "Repair this device"}
+                  {busy === "subscribe" ? "Repairing…" : "Repair Web Push"}
                 </Button>
               )}
             </div>
           </div>
         )}
+
         <div className="flex flex-wrap gap-2">
-          {presentation?.canEnable && deviceDiag?.state !== "PUSH_READY" && (
-            <Button size="sm" disabled={!online || busy !== null} onClick={() => void enableNotifications(deviceDiag?.subscriptionPresent ? "repair" : "enable")}>
+          {(deviceAction === "enable" || deviceAction === "repair") && (
+            <Button size="sm" disabled={!online || busy !== null} onClick={() => void enableNotifications(deviceAction === "repair" ? "repair" : "enable")}>
               {busy === "subscribe" ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : <Bell className="size-3.5" aria-hidden="true" />}
-              {deviceDiag?.subscriptionPresent ? "Repair Web Push" : "Enable Web Push"}
+              {deviceAction === "repair" ? "Repair Web Push" : "Enable Web Push"}
             </Button>
           )}
-          {(deviceDiag?.state === "PUSH_READY" || deviceDiag?.state === "SUBSCRIBED_LOCAL_ONLY" || deviceDiag?.state === "SUBSCRIPTION_MISMATCH") && (
+          {deviceAction === "disable" && (
             <Button size="sm" variant="outline" disabled={!online || busy !== null} onClick={() => void disableNotifications()}>
               {busy === "unsubscribe" ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : <BellOff className="size-3.5" aria-hidden="true" />}
               Disable Web Push
             </Button>
           )}
-          <Button size="sm" variant="outline" disabled={!online || busy !== null} onClick={() => void sendTest()}>
+          {/* Fase 11 (v1.3.25): Web Push test only on READY — in-app tests are a
+              different concept and must not read as push success. */}
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!online || busy !== null || deviceAction !== "disable"}
+            title={deviceAction !== "disable" ? "Register this device first" : "Send a Web Push test to every subscribed device"}
+            onClick={() => void sendTest()}
+          >
             {busy === "test" ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : <Send className="size-3.5" aria-hidden="true" />}
-            Send test notification
+            Send Web Push Test
           </Button>
         </div>
         {presentation?.message && (

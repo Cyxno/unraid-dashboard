@@ -607,3 +607,85 @@ export async function disablePush(
   }
   return { localRemoved, serverRemoved, permissionStillGranted: permission === "granted" };
 }
+
+/* ---- v1.3.25: device push state machine (pure, UI-agnostic) -------------- */
+
+export type DevicePushState =
+  | "unsupported"
+  | "requires-install"
+  | "permission-required"
+  | "permission-denied"
+  | "not-subscribed"
+  | "local-only"
+  | "server-only"
+  | "mismatch"
+  | "ready"
+  | "error";
+
+export type DevicePushAction = "enable" | "repair" | "disable" | "none";
+
+export interface DevicePushStateInput {
+  permission: NotificationPermission | "unknown";
+  secureContext: boolean;
+  standalone: boolean;
+  isAppleMobile: boolean;
+  hasNotificationApi: boolean;
+  hasPushManager: boolean;
+  hasServiceWorker: boolean;
+  /** Diagnostics outcome; null when diagnostics failed or were not run. */
+  registrationExists: boolean | null;
+  swActive: boolean;
+  subscriptionPresent: boolean | null;
+  subscriptionFingerprint: string | null;
+  serverKnowsSubscription: boolean | null;
+  serverDevices: number | null;
+  /** Diagnostics itself failed. */
+  diagnosticsError: boolean;
+}
+
+/**
+ * Fase 3 (v1.3.25): THE canonical device push state. Browser permission and
+ * Web Push registration are separate dimensions — a granted permission alone
+ * must never hide the Enable/Repair actions (the v1.3.24 UI dead-end).
+ */
+export function derivePushDeviceState(input: DevicePushStateInput): DevicePushState {
+  if (!input.secureContext) return "unsupported";
+  const supported =
+    input.hasNotificationApi && input.hasPushManager && input.hasServiceWorker;
+  if (!supported) {
+    if (input.isAppleMobile && !input.standalone) return "requires-install";
+    return "unsupported";
+  }
+  if (input.permission === "denied") return "permission-denied";
+  if (input.permission !== "granted") return "permission-required";
+  if (input.diagnosticsError) return "error";
+  if (!input.registrationExists || !input.swActive) return "not-subscribed";
+
+  const local = input.subscriptionPresent === true;
+  const serverKnown = input.serverKnowsSubscription === true;
+  const serverDevices = input.serverDevices ?? 0;
+
+  if (local && serverKnown) return "ready";
+  if (local && !serverKnown) return serverDevices > 0 ? "mismatch" : "local-only";
+  if (!local && serverDevices > 0) return "server-only";
+  return "not-subscribed";
+}
+
+/** Fase 4 (v1.3.25): explicit action mapping — what the UI must offer. */
+export function pushDeviceAction(state: DevicePushState): DevicePushAction {
+  switch (state) {
+    case "not-subscribed":
+    case "permission-required":
+      return "enable";
+    case "local-only":
+    case "server-only":
+    case "mismatch":
+      return "repair";
+    case "ready":
+      return "disable";
+    case "error":
+      return "repair";
+    default:
+      return "none";
+  }
+}
