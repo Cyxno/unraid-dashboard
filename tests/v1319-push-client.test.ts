@@ -1,6 +1,7 @@
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import vm from "node:vm";
 import process from "node:process";
@@ -78,23 +79,35 @@ function makeBrowser(overrides: {
   } as never;
 }
 
-function makeApi(overrides: { publicKey?: string | null; registerFails?: boolean; server?: Array<{ endpointTail: string; enabled: boolean }> } = {}): PushApi & { registered: unknown[] } {
+function makeApi(overrides: { publicKey?: string | null; registerFails?: boolean; server?: Array<{ endpointTail: string; fingerprint?: string; enabled: boolean }> } = {}): PushApi & { registered: unknown[] } {
   const registered: unknown[] = [];
+  const serverEntries: Array<{ endpointTail: string; fingerprint?: string; enabled: boolean }> = overrides.server
+    ? overrides.server.map((entry) => ({ ...entry }))
+    : [];
   return {
     registered,
     vapidPublicKey: async () => ("publicKey" in overrides ? (overrides.publicKey ?? null) : KEY),
     registerSubscription: async (subscription) => {
       if (overrides.registerFails) throw new Error("no");
       registered.push(subscription);
+      // v1.3.24: mirror the server's fingerprint bookkeeping so the
+      // enable-pipeline's server reread confirms the registration.
+      serverEntries.push({
+        endpointTail: subscription.endpoint.slice(-12),
+        fingerprint: createHash("sha256").update(subscription.endpoint).digest("hex").slice(0, 16),
+        enabled: true,
+      });
+      return { status: 200, devices: serverEntries.length };
     },
-    listServerSubscriptions: async () => overrides.server ?? [],
+    listServerSubscriptions: async () => (overrides.server ? overrides.server.map((entry) => ({ ...entry })) : serverEntries.map((entry) => ({ ...entry }))),
   };
 }
 
 describe("Enable pipeline (push-client)", () => {
   test("server-unconfigured", async () => {
     const outcome = await enablePush(makeBrowser(), makeApi({ publicKey: null }));
-    assert.deepEqual(outcome, { ok: false, kind: "server-unconfigured" });
+    assert.equal(outcome.ok, false);
+    assert.equal((outcome as { kind?: string }).kind, "server-unconfigured");
   });
 
   test("permission denied without prompting twice", async () => {
@@ -107,7 +120,9 @@ describe("Enable pipeline (push-client)", () => {
     const browser = makeBrowser();
     const api = makeApi();
     const outcome = await enablePush(browser, api);
-    assert.deepEqual(outcome, { ok: true, endpoint: "https://push.example/abc" });
+    if (!outcome.ok) console.log("HAPPY-FAIL trace:", JSON.stringify(outcome.trace));
+    assert.equal(outcome.ok, true);
+    assert.equal((outcome as { endpoint?: string }).endpoint, "https://push.example/abc");
     assert.equal(api.registered.length, 1);
   });
 

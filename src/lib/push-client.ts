@@ -50,7 +50,7 @@ export interface PushApi {
   registerSubscription(subscription: {
     endpoint: string;
     keys: { p256dh: string; auth: string };
-  }): Promise<void>;
+  }): Promise<{ status: number; devices?: number } | void>;
   /** Server-side subscriptions for reconciliation (fingerprint preferred). */
   listServerSubscriptions(): Promise<Array<{ endpointTail: string; fingerprint?: string; enabled: boolean }>>;
   /** v1.3.22: remove server registrations by endpoint fingerprint. */
@@ -69,6 +69,36 @@ export type PushFailureKind =
   | "unknown";
 
 export type PushOutcome = { ok: true; endpoint: string } | ({ ok: false } & { kind: PushFailureKind });
+
+/** Fase 1 (v1.3.24): registration trace — every step PASS/FAIL/NOT_REACHED
+ *  with a safe category. Never endpoints, keys or key material. */
+export interface PushTraceEntry {
+  step: number;
+  label: string;
+  status: "PASS" | "FAIL" | "NOT_REACHED";
+  detail?: string;
+}
+export type PushTrace = PushTraceEntry[];
+export interface EnableTraceResult {
+  outcome: PushOutcome;
+  trace: PushTrace;
+}
+
+/** Safe error taxonomy (Fase 2): never swallow a registration failure into a
+ *  generic message. */
+export function safeErrorCategory(err: unknown): { name: string; category: string } {
+  const name = (err as { name?: string } | null)?.name ?? (err instanceof Error ? err.constructor.name : "UnknownError");
+  const map: Record<string, string> = {
+    NotAllowedError: "permission-denied",
+    AbortError: "aborted",
+    InvalidStateError: "invalid-state",
+    InvalidAccessError: "invalid-access",
+    InvalidCharacterError: "invalid-key",
+    NotSupportedError: "unsupported",
+    TypeError: "type-error",
+  };
+  return { name, category: map[name] ?? "unknown" };
+}
 
 export class PushKeyError extends Error {
   constructor(message: string) {
@@ -160,69 +190,158 @@ export async function enablePush(
   browser: PushBrowser,
   api: PushApi,
   options: EnableOptions = {},
-): Promise<PushOutcome> {
+  onTrace?: (entry: PushTraceEntry) => void,
+): Promise<PushOutcome & { trace: PushTrace }> {
+  const trace: PushTrace = [];
+  const step = (label: string, status: PushTraceEntry["status"], detail?: string) => {
+    const entry: PushTraceEntry = { step: trace.length + 1, label, status, ...(detail ? { detail } : {}) };
+    trace.push(entry);
+    onTrace?.(entry);
+    return entry;
+  };
   let publicKey: string | null = null;
+  // Fase 1 (v1.3.24): every step traced PASS/FAIL — nothing swallowed.
+  step("1 user-gesture entered", "PASS");
   try {
     publicKey = await api.vapidPublicKey();
-  } catch {
-    return { ok: false, kind: "registration-failed" };
+  } catch (err) {
+    step("2 vapid key fetch", "FAIL", safeErrorCategory(err).name);
+    const outcome = { ok: false as const, kind: "registration-failed" as const, trace };
+    return outcome;
   }
-  if (!publicKey) return { ok: false, kind: "server-unconfigured" };
+  if (!publicKey) {
+    step("2 vapid key fetch", "FAIL", "server-unconfigured");
+    return { ok: false, kind: "server-unconfigured", trace };
+  }
+  step("2 vapid key fetch", "PASS");
 
-  // Permission first: iOS requires the request inside the user gesture.
-  if (browser.permission() !== "granted") {
+  // Permission FIRST: iOS requires the request inside the user gesture.
+  const permissionBefore = browser.permission();
+  step("3 permission before", "PASS", permissionBefore);
+  if (permissionBefore !== "granted") {
     let requested: NotificationPermission;
     try {
       requested = await browser.requestPermission();
-    } catch {
-      return { ok: false, kind: "permission-denied" };
+    } catch (err) {
+      step("3 permission request", "FAIL", safeErrorCategory(err).name);
+      return { ok: false, kind: "permission-denied", trace };
     }
-    if (requested !== "granted") return { ok: false, kind: "permission-denied" };
+    step("3 permission after", "PASS", requested);
+    if (requested !== "granted") {
+      return { ok: false, kind: "permission-denied", trace };
+    }
+  } else {
+    step("3 permission request", "NOT_REACHED", "already granted");
   }
 
   let key: Uint8Array<ArrayBuffer>;
   try {
     key = toApplicationServerKey(publicKey);
-  } catch {
-    return { ok: false, kind: "invalid-key" };
+    step("4 vapid decode", "PASS", `${key.length} bytes, 0x04=${key[0] === 0x04}`);
+  } catch (err) {
+    const cat = safeErrorCategory(err);
+    step("4 vapid decode", "FAIL", cat.name);
+    return { ok: false, kind: "invalid-key", trace };
   }
 
   let registration: PushRegistrationLike;
   try {
     registration = await browser.serviceWorker();
-  } catch {
-    return { ok: false, kind: "sw-unavailable" };
-  }
-
-  let subscription: PushSubscriptionLike | null = null;
-  try {
-    const existing = await registration.pushManager.getSubscription();
-    if (existing && options.recreate) {
-      // Stale iOS subscription (old worker silently dropped pushes): a fresh
-      // subscription re-arms the platform delivery path.
-      await (existing as { unsubscribe?: () => Promise<boolean> }).unsubscribe?.();
-      subscription = null;
-    }
-    subscription =
-      existing && !options.recreate
-        ? existing
-        : await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    step("5 SW registration resolved", "PASS");
   } catch (err) {
-    return { ok: false, kind: categorizePushError(err) === "invalid-key" ? "subscribe-failed" : categorizePushError(err) };
+    step("5 SW registration resolved", "FAIL", safeErrorCategory(err).name);
+    return { ok: false, kind: "sw-unavailable", trace };
   }
 
-  const json = subscription.toJSON();
-  if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
-    return { ok: false, kind: "incomplete-subscription" };
-  }
-
+  let existing: PushSubscriptionLike | null = null;
   try {
-    await api.registerSubscription({ endpoint: json.endpoint, keys: { p256dh: json.keys.p256dh, auth: json.keys.auth } });
-  } catch {
-    return { ok: false, kind: "registration-failed" };
+    existing = await registration.pushManager.getSubscription();
+    step("6 existing subscription checked", "PASS", existing ? "present" : "absent");
+  } catch (err) {
+    step("6 existing subscription checked", "FAIL", safeErrorCategory(err).name);
+    return { ok: false, kind: "sw-unavailable", trace };
   }
-  return { ok: true, endpoint: json.endpoint };
+
+  if (existing && options.recreate) {
+    // Fase A6/A21: unsubscribe is best-effort — the browser may keep the
+    // record briefly visible, but the next subscribe() creates a FRESH
+    // subscription which re-arms the platform delivery path. Treating
+    // "still present" as a hard failure blocked the recreate flow entirely.
+    try {
+      await (existing as { unsubscribe?: () => Promise<boolean> }).unsubscribe?.();
+      step("7 stale subscription unsubscribed", "PASS");
+    } catch (err) {
+      step("7 stale subscription unsubscribed", "FAIL", safeErrorCategory(err).name);
+    }
+    existing = null;
+  } else if (!options.recreate) {
+    step("7 stale subscription unsubscribe", "NOT_REACHED", options.recreate === undefined ? "recreate not requested" : "reuse mode");
+  }
+
+  if (existing) {
+    step("8 subscribe()", "NOT_REACHED", "reusing existing subscription");
+    step("9 subscribe() resolved", "NOT_REACHED");
+  } else {
+    step("8 subscribe() started", "PASS", "userVisibleOnly=true, applicationServerKey=Uint8Array");
+    try {
+      existing = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+      step("9 subscribe() resolved", "PASS");
+    } catch (err) {
+      const cat = safeErrorCategory(err);
+      step("9 subscribe() resolved", "FAIL", cat.name + " / " + cat.category);
+      const kind = cat.category === "permission-denied" ? "permission-denied" : cat.category === "unsupported" ? "unsupported" : "subscribe-failed";
+      return { ok: false, kind, trace };
+    }
+  }
+
+  const json = existing.toJSON();
+  const shapeOk = Boolean(json.endpoint && json.endpoint.startsWith("https://") && json.keys?.p256dh && json.keys?.auth);
+  step("10 subscription serialized", shapeOk ? "PASS" : "FAIL", shapeOk ? "endpoint https + keys present" : "incomplete subscription");
+  const endpointSafe = shapeOk ? (json.endpoint as string) : null;
+  const keysSafe = shapeOk ? { p256dh: json.keys!.p256dh as string, auth: json.keys!.auth as string } : null;
+  if (!shapeOk || !endpointSafe || !keysSafe) {
+    return { ok: false, kind: "incomplete-subscription", trace };
+  }
+
+  let httpStatus: number | null = null;
+  let serverDevices: number | null = null;
+  try {
+    step("11 server POST started", "PASS");
+    // APIs may legitimately return void — never assume a response object.
+    const result = (await api.registerSubscription({ endpoint: endpointSafe, keys: keysSafe })) as
+      | { status?: number; devices?: number }
+      | undefined;
+    httpStatus = result?.status ?? 200;
+    serverDevices = result?.devices ?? null;
+    step("12 server POST status", httpStatus >= 200 && httpStatus < 300 ? "PASS" : "FAIL", String(httpStatus));
+  } catch (err) {
+    step("12 server POST status", "FAIL", safeErrorCategory(err).name);
+    return { ok: false, kind: "registration-failed", trace };
+  }
+
+  // Fase 15: success REQUIRES a server reread confirming THIS fingerprint.
+  let serverList: Array<{ endpointTail: string; fingerprint?: string }> = [];
+  try {
+    serverList = await api.listServerSubscriptions();
+    step("17 server reread", "PASS");
+  } catch (err) {
+    serverList = [];
+    step("17 server reread", "FAIL", safeErrorCategory(err).name);
+  }
+  const fingerprint = await endpointFingerprint(endpointSafe);
+  const serverKnows = serverList.some(
+    (entry) => (entry.fingerprint && entry.fingerprint === fingerprint) || entry.endpointTail === endpointSafe.slice(-12),
+  );
+  step("13 server accepted registration", serverKnows ? "PASS" : "FAIL", serverKnows ? "fingerprint match" : "fingerprint NOT found on server");
+  void 0;
+
+  if (!serverKnows) {
+    return { ok: false, kind: "registration-failed", trace };
+  }
+  step("18 canonical pushReady", "PASS");
+  return { ok: true, endpoint: endpointSafe, trace };
 }
+
 
 /* ---- Fase 3/16: device diagnostics -------------------------------------- */
 

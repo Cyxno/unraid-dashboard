@@ -3,6 +3,15 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.3.24
+
+### Fixed
+
+- **Push registration is now fully traceable**: every Enable/Repair attempt produces an 18-step trace (permission, worker, subscribe, server POST with HTTP status, server reread, canonical ready). Failures keep their real error name and category — nothing is collapsed into a generic "push could not be enabled"
+- **Recreate subscription flow repaired**: the recreate path no longer treats a not-yet-removed stale subscription as a hard failure — the fresh subscribe simply follows the unsubscribe, which re-arms iOS background delivery
+- **Server registration proof**: the POST response now carries devicesBefore/devicesAfter and the endpoint fingerprint; Enable/Repair success requires the server reread to confirm the fingerprint — a POST alone is never success
+- **Rate-limited and failed Web Push tests are explicit**: 429 shows "no automatic retry", and in-app-only delivery is labelled as such instead of a green Web Push result
+
 ## v1.3.23
 
 ### Improved

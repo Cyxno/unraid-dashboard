@@ -49,6 +49,7 @@ export async function POST(request: NextRequest) {
 
   const state = await loadStateFromDisk();
   startNotificationLoop();
+  const devicesBefore = state.subscriptions.length;
   const existing = state.subscriptions.find((entry) => entry.endpoint === endpoint);
   if (existing) {
     existing.keys = { p256dh, auth };
@@ -67,8 +68,15 @@ export async function POST(request: NextRequest) {
   }
   scheduleSave(0);
   const fingerprint = endpointFingerprint(endpoint);
+  // Fase 11 (v1.3.24): same-request before/after proof of the mutation.
   return NextResponse.json(
-    { ok: true, registered: true, devices: state.subscriptions.length, endpointFingerprint: fingerprint },
+    {
+      ok: true,
+      registered: true,
+      devicesBefore,
+      devices: state.subscriptions.length,
+      endpointFingerprint: fingerprint,
+    },
     { headers: { "cache-control": "no-store" } },
   );
 }

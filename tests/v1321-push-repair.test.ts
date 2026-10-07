@@ -1,4 +1,5 @@
 import test, { describe } from "node:test";
+import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -58,11 +59,22 @@ function browserWith(opts: {
 
 function api() {
   const registered: Array<{ endpoint: string }> = [];
+  // v1.3.24: mirror the server's fingerprint bookkeeping so the enable
+  // pipeline's server reread confirms the registration.
+  const serverEntries: Array<{ endpointTail: string; fingerprint: string; enabled: boolean }> = [];
   return {
     registered,
     vapidPublicKey: async () => KEY,
-    registerSubscription: async (s: { endpoint: string }) => { registered.push(s); },
-    listServerSubscriptions: async () => [] as Array<{ endpointTail: string; enabled: boolean }>,
+    registerSubscription: async (s: { endpoint: string }) => {
+      registered.push(s);
+      serverEntries.push({
+        endpointTail: s.endpoint.slice(-12),
+        fingerprint: createHash("sha256").update(s.endpoint).digest("hex").slice(0, 16),
+        enabled: true,
+      });
+      return { status: 200, devices: serverEntries.length };
+    },
+    listServerSubscriptions: async () => serverEntries.map((entry) => ({ ...entry })),
   } as PushApi & { registered: Array<{ endpoint: string }> };
 }
 
@@ -73,6 +85,7 @@ describe("v1.3.21 repair flow — recreate replaces stale subscriptions", () => 
     const reg = (browser as unknown as { __registration: { pushManager: { subscribe: (o: unknown) => Promise<unknown> } } }).__registration;
     reg.pushManager.subscribe = async () => { subscribeCalls += 1; return sub("https://push.example/new"); };
     const outcome = await enablePush(browser, api() as never);
+    console.log("DBG1:", outcome.ok ? "ok" : outcome.kind, JSON.stringify((outcome as { trace?: Array<{ label: string; status: string; detail?: string }> }).trace?.map((t) => t.label + ":" + t.status + (t.detail ? " (" + t.detail.slice(0, 60) + ")" : ""))));
     assert.equal(outcome.ok, true);
     assert.equal(subscribeCalls, 0, "must not resubscribe when reusing");
     const unsub = (browser as unknown as { __unsubscribed: string[] }).__unsubscribed;
@@ -90,6 +103,7 @@ describe("v1.3.21 repair flow — recreate replaces stale subscriptions", () => 
     });
     const apiClient = api();
     const outcome = await enablePush(browser, apiClient as never, { recreate: true });
+    console.log("DBG2:", outcome.ok ? "ok" : outcome.kind, JSON.stringify((outcome as { trace?: Array<{ label: string; status: string; detail?: string }> }).trace?.map((t) => t.label + ":" + t.status + (t.detail ? " (" + t.detail.slice(0, 60) + ")" : ""))));
     assert.equal(outcome.ok, true);
     assert.equal(unsubCalls, 1, "stale subscription must be unsubscribed");
     assert.equal((apiClient.registered[0] as { endpoint: string }).endpoint, "https://push.example/fresh");

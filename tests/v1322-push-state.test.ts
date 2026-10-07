@@ -16,7 +16,6 @@ import {
 } from "../src/lib/push-client";
 import { classifyTestPush } from "../src/server/notifications/push";
 import { createHash } from "node:crypto";
-const ROOT = path.dirname(path.dirname(new URL(import.meta.url).pathname));
 
 
 const fp = (endpoint: string) => createHash("sha256").update(endpoint).digest("hex").slice(0, 16);
@@ -178,6 +177,7 @@ describe("v1.3.22 disable contract", () => {
 });
 
 const KEY_STATE = "BDaFwwQk2cVT3jajMfCkGirCFQeEtdU9aqVEG-gDhIsM6s4By_5_oeudZOv4QQKQOa-g2ftU2eDWghQgn8Xfcdw";
+const ROOT = path.dirname(path.dirname(new URL(import.meta.url).pathname));
 
 /* ---- Fase 13: test-push semantics ---------------------------------------- */
 

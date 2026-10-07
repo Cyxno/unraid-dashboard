@@ -10,6 +10,7 @@ import { cn, formatDateTimeIso } from "@/lib/utils";
 import { derivePermissionPresentation, evaluatePushSupport, isAppleMobile, isStandalone } from "@/lib/push-support";
 import {
   diagnoseDevice,
+  type PushTraceEntry,
   diagnosticsIndicateRepair,
   enablePush,
   ensureActiveWorker,
@@ -104,6 +105,7 @@ export function NotificationsSection() {
   const [busy, setBusy] = useState<"subscribe" | "unsubscribe" | "test" | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [deviceDiag, setDeviceDiag] = useState<DevicePushDiagnostics | null>(null);
+  const [lastTrace, setLastTrace] = useState<PushTraceEntry[] | null>(null);
 
   // Fase 3/16 (v1.3.19): device-specific push diagnostics — which worker owns
   // push, is a subscription present, and does the server know it.
@@ -250,6 +252,7 @@ export function NotificationsSection() {
       // a subscription bound to an old waiting worker never sees background push.
       const registration = await navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
       await ensureActiveWorker(registration as unknown as Parameters<typeof ensureActiveWorker>[0]);
+      const trace: PushTraceEntry[] = [];
       const outcome = await enablePush(
         {
           permission: () => Notification.permission,
@@ -264,14 +267,23 @@ export function NotificationsSection() {
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ endpoint: subscription.endpoint, keys: subscription.keys }),
             });
-            if (!response.ok) throw new Error(`Subscription failed (HTTP ${response.status})`);
+            // Fase 8 (v1.3.24): HTTP failures keep their real status — never
+            // collapsed into a generic browser error.
+            if (!response.ok) {
+              throw Object.assign(new Error(`Subscription failed (HTTP ${response.status})`), { httpStatus: response.status });
+            }
+            const body = (await response.json().catch(() => null)) as { devicesBefore?: number; devices?: number } | null;
+            trace.push({ step: trace.length + 1, label: "13 server accepted registration", status: "PASS", detail: `devices ${body?.devicesBefore ?? "?"} → ${body?.devices ?? "?"}` });
           },
           listServerSubscriptions: async () => [],
         },
         { recreate: mode === "repair" },
+        (entry) => trace.push(entry),
       );
+      setLastTrace(trace);
       if (!outcome.ok) {
-        setNotice({ tone: "error", text: `Push could not be enabled (${outcome.kind}).` });
+        const failed = trace.filter((t) => t.status === "FAIL").map((t) => `${t.label}: ${t.detail ?? "FAIL"}`).join("; ");
+        setNotice({ tone: "error", text: `Push could not be enabled (${outcome.kind}).${failed ? ` — ${failed}` : ""}` });
         return;
       }
       await refreshSubscriptionState();
@@ -338,6 +350,11 @@ export function NotificationsSection() {
     setNotice(null);
     try {
       const response = await fetch("/api/notifications/test", { method: "POST", headers: { "content-type": "application/json" } });
+      // Fase 10 (v1.3.24): a rate-limited test is shown explicitly, never retried silently.
+      if (response.status === 429) {
+        setNotice({ tone: "error", text: "Web Push test rate limited — wait a moment and try again (no automatic retry)." });
+        return;
+      }
       const body = (await response.json().catch(() => null)) as {
         ok?: boolean; delivery?: string; reason?: string; detail?: string | null; error?: string;
         traceId?: string; subscribedDevices?: number; providerAccepted?: boolean;
@@ -479,6 +496,19 @@ export function NotificationsSection() {
                 {deviceDiag.waiting && "A newer service worker is waiting and will activate on the next reload. "}
                 {diagnosticsIndicateRepair(deviceDiag) && "Use “Repair this device” to re-register the subscription."}
               </p>
+            )}
+            {lastTrace && lastTrace.length > 0 && (
+              <div className="mt-2 rounded border border-dashed p-2">
+                <p className="mb-1 font-medium">Registration trace (last attempt)</p>
+                <ol className="space-y-0.5">
+                  {lastTrace.map((entry) => (
+                    <li key={entry.step} className={entry.status === "PASS" ? "text-muted-foreground" : "text-destructive"}>
+                      {entry.step}. {entry.label} — {entry.status}
+                      {entry.detail ? ` (${entry.detail})` : ""}
+                    </li>
+                  ))}
+                </ol>
+              </div>
             )}
             <div className="mt-2 flex gap-2">
               <Button size="sm" variant="outline" disabled={!online || busy !== null} onClick={() => { void loadDiagnostics(); }}>
