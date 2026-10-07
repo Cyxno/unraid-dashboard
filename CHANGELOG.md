@@ -3,6 +3,17 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.4.1
+
+### Fixed
+
+- **Web Push registration survives restarts and engine cycles**: notification routes (POST/test/config/history/delete) mutated a freshly reloaded disk copy while the notification engine works on the shared in-memory state — the engine's next save wiped freshly registered subscriptions (iPhone registration "disappeared" after deploys/cycles). All notification routes now mutate the same shared working set as the engine
+- **Boot-order hardening**: the notification engine no longer runs on an empty in-memory state before the first disk load
+
+### Improved
+
+- Persistence regression tests: registered subscriptions survive engine-cycle saves and full process-restart simulation; fingerprint stability across reloads
+
 ## v1.4.0
 
 ### Improved

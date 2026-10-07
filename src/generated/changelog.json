@@ -1,7 +1,27 @@
 {
   "generatedFrom": "CHANGELOG.md",
-  "latestVersion": "v1.4.0",
+  "latestVersion": "v1.4.1",
   "releases": [
+    {
+      "version": "v1.4.1",
+      "anchor": "v1-4-1",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "**Web Push registration survives restarts and engine cycles**: notification routes (POST/test/config/history/delete) mutated a freshly reloaded disk copy while the notification engine works on the shared in-memory state — the engine's next save wiped freshly registered subscriptions (iPhone registration \"disappeared\" after deploys/cycles). All notification routes now mutate the same shared working set as the engine",
+            "**Boot-order hardening**: the notification engine no longer runs on an empty in-memory state before the first disk load"
+          ]
+        },
+        {
+          "name": "Improved",
+          "items": [
+            "Persistence regression tests: registered subscriptions survive engine-cycle saves and full process-restart simulation; fingerprint stability across reloads"
+          ]
+        }
+      ]
+    },
     {
       "version": "v1.4.0",
       "anchor": "v1-4-0",
