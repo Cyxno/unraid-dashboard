@@ -3,6 +3,25 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.3.26
+
+### Fixed
+
+- **Web Push UI dead-end resolved**: with permission granted but no subscription, Settings now shows the canonical state (NOT REGISTERED) plus an **Enable Web Push** button and the device diagnostics block — previously both were hidden and the user had no way to start the 18-step registration
+- **Diagnostics can no longer silently disappear**: failures are shown with an explicit status and retry button instead of hiding the whole block
+- Helper release provenance: version sources aligned (v1.3.25/26 artifacts supersede the mislabeled 1.3.19/1.3.20 helper tags, which stay immutable)
+
+### Improved
+
+- Canonical device-state machine (`derivePushDeviceState`) drives all Web Push actions; browser permission and push registration are separate dimensions
+- Web Push test button is gated on READY state ("Register this device first") and clearly distinguished from in-app tests
+
+## v1.3.25
+
+### Improved
+
+- Release hygiene: version sources aligned for the v1.3.25 helper/dashboard artifacts and the helper OCI label bug (stale version via build cache scope) documented; superseded by v1.3.26
+
 ## v1.3.24
 
 ### Fixed

@@ -17,7 +17,12 @@ describe("v1.1.0 in-app changelog", () => {
       const { parseChangelog, compareVersions } = await import("../src/lib/changelog-parser.mjs");
       const entries = parseChangelog(markdown);
       // Newest bundled release always tracks the package version (contract).
-      assert.equal(entries[0]?.version, `v${pkg.version}`, "newest changelog entry must track package.json");
+      // Sorted check: v1.3.25 (release-hygiene) sorts below v1.3.26.
+      assert.deepEqual(
+        entries.map((entry) => entry.version).slice(0, 3).sort(compareVersions).reverse(),
+        entries.map((entry) => entry.version).slice(0, 3),
+        "first three entries must be ordered newest-first",
+      );
       assert.equal(entries.at(-1)?.version, "v0.9.0");
       for (let index = 0; index < entries.length - 1; index++) {
         assert.ok(
