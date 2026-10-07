@@ -1,3 +1,17 @@
+# v1.3.x release status
+
+> **Update (v1.3.24):** the Web Push registration pipeline is now fully
+> traceable. Every Enable/Repair attempt produces an 18-step PASS/FAIL/NOT_REACHED
+> trace (permission → worker → subscribe → server POST → server reread →
+> canonical ready), rendered in Settings → Notifications. The recreate flow no
+> longer treats a briefly-visible stale subscription as a hard failure. Both
+> production containers run authentic semver release artifacts (1.3.24).
+> The physical iPhone acceptance (5/5 native notifications incl. background and
+> closed-PWA) remains the final operator step — after "Enable Web Push" /
+> "Repair Web Push" succeeds on-device (server reread + fingerprint match are
+> hard-gated), send Web Push tests via Settings and confirm the native
+> notifications.
+
 # v1.3.19 release status (open items)
 
 Release `v1.3.19` is published (tag, gated CI + publish runs, dashboard
