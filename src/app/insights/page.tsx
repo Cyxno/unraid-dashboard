@@ -177,18 +177,20 @@ export default function InsightsPage() {
               ) : (
                 data.sections.trends.map((insight) => <InsightCard key={insight.id} insight={insight} />)
               )}
-              {data.memoryCreep.length > 0 ? (
+              {data.memoryCreep.filter((creep) => !data.sections.trends.some((insight) => insight.entity === creep.entity)).length > 0 ? (
                 <div className="rounded-lg border border-border/60 bg-card/40 p-3" data-testid="memory-creep">
-                  {data.memoryCreep.map((creep) => (
-                    <div key={creep.entity}>
-                      <span className="text-sm font-medium">Memory creep: {creep.entity}</span>
-                      <p className="mt-0.5 text-sm text-muted-foreground">{creep.summary}</p>
-                      <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                        <span>window {creep.window}</span>
-                        <ConfidenceLabel confidence={creep.confidence} />
+                  {data.memoryCreep
+                    .filter((creep) => !data.sections.trends.some((insight) => insight.entity === creep.entity))
+                    .map((creep) => (
+                      <div key={creep.entity}>
+                        <span className="text-sm font-medium">Memory creep: {creep.entity}</span>
+                        <p className="mt-0.5 text-sm text-muted-foreground">{creep.summary}</p>
+                        <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                          <span>window {creep.window}</span>
+                          <ConfidenceLabel confidence={creep.confidence} />
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))}
                 </div>
               ) : null}
             </CardContent>

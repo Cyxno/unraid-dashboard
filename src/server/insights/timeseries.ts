@@ -57,10 +57,16 @@ export function aggregate(
 ): TrendSample[] {
   const bucketMs = RANGE_BUCKET_MS[range];
   const start = now - RANGE_MS[range];
+  // ABSOLUTE grid alignment: buckets are anchored to epoch multiples, not
+  // to the fetch moment — two separately cached fetches (size + avail)
+  // must produce IDENTICAL bucket timestamps for the join (v1.6.0 bug
+  // found live: relative anchors made every paired lookup null).
+  const firstBucket = Math.ceil(start / bucketMs) * bucketMs;
+  const lastBucket = Math.floor(now / bucketMs) * bucketMs;
   const buckets = new Map<number, { sum: number; n: number }>();
   for (const point of points) {
     if (point.t < start - bucketMs || point.value == null || !Number.isFinite(point.value)) continue;
-    const bucket = Math.floor((point.t - start) / bucketMs) * bucketMs + start;
+    const bucket = Math.floor(point.t / bucketMs) * bucketMs;
     const entry = buckets.get(bucket) ?? { sum: 0, n: 0 };
     entry.sum += point.value;
     entry.n += 1;
@@ -69,7 +75,7 @@ export function aggregate(
   const expectedPerBucket = Math.max(1, Math.round(bucketMs / estimateRawStep(points)));
   const staleBefore = options.staleBefore ?? 0;
   const samples: TrendSample[] = [];
-  for (let bucket = start; bucket <= now; bucket += bucketMs) {
+  for (let bucket = firstBucket; bucket <= lastBucket; bucket += bucketMs) {
     const entry = buckets.get(bucket);
     if (!entry) {
       samples.push({ t: new Date(bucket).toISOString(), value: null, quality: "missing" });
@@ -175,13 +181,17 @@ export function linearTrend(samples: TrendSample[], range: TrendRange): TrendRes
   const slopePerDay = slopePerMs * 86_400_000;
   const fit = syy === 0 ? 1 : Math.max(0, Math.min(1, (sxy * sxy) / (sxx * syy)));
 
-  // Direction requires the fit to explain a real share of the variance
-  // AND the total move over the window to exceed a small band.
+  // Direction requires the fit to explain a real share of the variance,
+  // the total move over the window to exceed a small band RELATIVE to
+  // the span, and an absolute floor relative to the level (a perfectly
+  // fitted jitter line on a near-constant series must stay "flat").
   const totalMove = slopePerDay * (RANGE_MS[range] / 86_400_000);
   const span = Math.max(...points.map((p) => p.y)) - Math.min(...points.map((p) => p.y));
   const moveRatio = span > 0 ? Math.abs(totalMove) / span : 0;
+  const meanAbs = Math.abs(meanY);
+  const absoluteMoveFloor = Math.max(meanAbs * 0.005, 1e-9);
   let direction: TrendResult["direction"] = "flat";
-  if (fit >= 0.5 && moveRatio >= 0.3 && Math.abs(slopePerDay) > 1e-9) {
+  if (fit >= 0.5 && moveRatio >= 0.3 && Math.abs(totalMove) >= absoluteMoveFloor && Math.abs(slopePerDay) > 1e-9) {
     direction = slopePerDay > 0 ? "rising" : "falling";
   }
 

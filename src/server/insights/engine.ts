@@ -209,7 +209,10 @@ async function buildMemoryCreep(): Promise<{ creep: MemoryCreepInsight[]; insigh
   const creep: MemoryCreepInsight[] = [];
   const insights: Insight[] = [];
   const names = await topNames('topk(6, avg_over_time(container_memory_working_set_bytes{name!=""}[24h]))', 6);
-  for (const name of names) {
+  // Label-drift can surface the same container twice — one creep record
+  // per entity (Fase 15).
+  const uniqueNames = [...new Set(names)];
+  for (const name of uniqueNames) {
     const selector = `container_memory_working_set_bytes{name="${escapePromQL(name)}"}`;
     const series = await fetchAggregated(selector, "24h");
     const live = series.points.at(-1)?.value ?? null;

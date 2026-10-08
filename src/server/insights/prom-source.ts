@@ -62,12 +62,17 @@ export async function fetchRange(
     try {
       const client = getPromClient();
       const seriesList = await client.range(query, startSeconds, endSeconds, step);
-      const points = seriesList.flatMap((series) =>
-        (series.points ?? []).map((point) => ({
-          t: point.t * 1000,
-          value: point.v != null && Number.isFinite(point.v) ? point.v : null,
-        })),
-      );
+      const points = seriesList
+        .flatMap((series) =>
+          (series.points ?? []).map((point) => ({
+            t: point.t * 1000,
+            value: point.v != null && Number.isFinite(point.v) ? point.v : null,
+          })),
+        )
+        // Label-drift (e.g. imported backfill series vs live scrape series)
+        // yields multiple series per query — the aggregator is label-blind
+        // and requires chronological order.
+        .sort((a, b) => a.t - b.t);
       noteSourceAttempt("prometheus", { ok: true, at: Date.now(), latencyMs: Date.now() - startedAt });
       cacheMap().set(cacheKey, { at: Date.now(), points });
       return points;
