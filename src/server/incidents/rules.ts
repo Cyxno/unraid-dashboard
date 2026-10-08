@@ -98,6 +98,55 @@ const UNRAID_IMPACT = [
   "Unraid notifications unavailable",
 ];
 
+/** True when Prometheus itself is currently out — scrape targets behind
+ *  it (cAdvisor, node-exporter) are then UNOBSERVABLE, not independently
+ *  broken: their findings collapse into the Prometheus root incident
+ *  (one incident, not a cascade — real-outage shape found post-deploy). */
+function isPrometheusOutage(observation: IncidentObservation): boolean {
+  const prometheus = observation.sources.find((entry) => entry.source === "prometheus");
+  return observation.prometheus.configured && prometheus?.status === "unavailable";
+}
+
+/** Builds the scrape-target incident for a non-healthy cAdvisor /
+ *  node-exporter source with recorded attempts. */
+function scrapeSourceIncident(
+  observation: IncidentObservation,
+  source: IncidentObservation["sources"][number],
+): RuleCandidate {
+  const isCadvisor = source.source === "cadvisor";
+  const unavailable = source.status === "unavailable";
+  return {
+    id: `source:${source.source}:${unavailable ? "unavailable" : "degraded"}`,
+    entity: source.source,
+    kind: unavailable ? "source-unavailable" : "source-degraded",
+    title: isCadvisor ? "cAdvisor unavailable" : "node-exporter unavailable",
+    source: source.source,
+    evidence: [
+      buildEvidence({
+        entity: source.source,
+        signal: "source.scrape",
+        source: source.source,
+        observedAt: source.lastAttemptAt ?? iso(observation.now),
+        expectedIntervalMs: source.expectedIntervalMs,
+        value: `status=${source.status}${source.safeError ? ` — ${source.safeError}` : ""}`,
+        evidenceType: "direct",
+        now: observation.now,
+      }),
+    ],
+    impact: isCadvisor
+      ? ["per-container CPU/memory metrics unknown", "top-consumer correlation unavailable"]
+      : ["host CPU/memory/load metrics unknown", "host thermal metrics unknown", "disk I/O metrics unknown"],
+    actionable: false,
+    safeCheck: isCadvisor
+      ? "Check the cAdvisor container and its Prometheus scrape target."
+      : "Check the node-exporter container and its Prometheus scrape target.",
+    debounceMs: 0,
+    requiresUsable: [],
+    impactWhenSuppressed: [],
+    severityOverride: "warning",
+  };
+}
+
 function sourceRules(observation: IncidentObservation): RuleOutput {
   const candidates: RuleCandidate[] = [];
   const undecidable: RuleOutput["undecidable"] = [];
@@ -179,66 +228,31 @@ function sourceRules(observation: IncidentObservation): RuleOutput {
     );
   }
 
-  /* cAdvisor — container runtime metrics via Prometheus. */
+  /* cAdvisor — container runtime metrics via Prometheus. Only a recorded
+     attempt carries evidence ("never observed" is not — e.g. when the
+     docker section never loaded because Unraid was down). Suppressed
+     under a Prometheus outage: those queries cannot answer either, so
+     the metrics fall under the Prometheus ROOT incident (one incident,
+     not a cascade). */
   const cadvisor = sources.find((entry) => entry.source === "cadvisor");
-  if (cadvisor && cadvisor.status === "unavailable") {
-    candidates.push({
-      id: "source:cadvisor:unavailable",
-      entity: "cadvisor",
-      kind: "source-unavailable",
-      title: "cAdvisor unavailable",
-      source: "cadvisor",
-      evidence: [
-        buildEvidence({
-          entity: "cadvisor",
-          signal: "source.scrape",
-          source: "cadvisor",
-          observedAt: cadvisor.lastAttemptAt ?? iso(observation.now),
-          expectedIntervalMs: cadvisor.expectedIntervalMs,
-          value: `status=unavailable${cadvisor.safeError ? ` — ${cadvisor.safeError}` : ""}`,
-          evidenceType: "direct",
-          now: observation.now,
-        }),
-      ],
-      impact: ["per-container CPU/memory metrics unknown", "top-consumer correlation unavailable"],
-      actionable: false,
-      safeCheck: "Check the cAdvisor container and its Prometheus scrape target.",
-      debounceMs: 0,
-      requiresUsable: [],
-      impactWhenSuppressed: [],
-      severityOverride: "warning",
-    });
+  if (
+    cadvisor &&
+    cadvisor.lastAttemptAt != null &&
+    cadvisor.status !== "healthy" &&
+    !isPrometheusOutage(observation)
+  ) {
+    candidates.push(scrapeSourceIncident(observation, cadvisor));
   }
 
-  /* node-exporter — host metrics via Prometheus. */
+  /* node-exporter — host metrics via Prometheus (same suppression). */
   const nodeExporter = sources.find((entry) => entry.source === "node-exporter");
-  if (nodeExporter && nodeExporter.status === "unavailable") {
-    candidates.push({
-      id: "source:node-exporter:unavailable",
-      entity: "node-exporter",
-      kind: "source-unavailable",
-      title: "node-exporter unavailable",
-      source: "node-exporter",
-      evidence: [
-        buildEvidence({
-          entity: "node-exporter",
-          signal: "source.scrape",
-          source: "node-exporter",
-          observedAt: nodeExporter.lastAttemptAt ?? iso(observation.now),
-          expectedIntervalMs: nodeExporter.expectedIntervalMs,
-          value: `status=unavailable${nodeExporter.safeError ? ` — ${nodeExporter.safeError}` : ""}`,
-          evidenceType: "direct",
-          now: observation.now,
-        }),
-      ],
-      impact: ["host CPU/memory/load metrics unknown", "host thermal metrics unknown", "disk I/O metrics unknown"],
-      actionable: false,
-      safeCheck: "Check the node-exporter container and its Prometheus scrape target.",
-      debounceMs: 0,
-      requiresUsable: [],
-      impactWhenSuppressed: [],
-      severityOverride: "warning",
-    });
+  if (
+    nodeExporter &&
+    nodeExporter.lastAttemptAt != null &&
+    nodeExporter.status !== "healthy" &&
+    !isPrometheusOutage(observation)
+  ) {
+    candidates.push(scrapeSourceIncident(observation, nodeExporter));
   }
 
   /* Helper — only an OPERATOR-CONFIGURED helper going down is an incident
@@ -274,12 +288,14 @@ function sourceRules(observation: IncidentObservation): RuleOutput {
     undecidable.push({ fingerprintPrefix: "docker:container:", source: "helper", impactHint: "restart-count evidence stale (helper down)" });
   }
 
-  /* Persistence — durability of incidents/notifications/history. */
-  const persistence = sources.find((entry) => entry.source === "persistence");
+  /* Persistence — durability of incidents/notifications/history. Only
+     PROVEN failure counts: a save error or an unwritable probe. "Never
+     observed" (fresh boot, no save yet) is not evidence — opening an
+     incident on it was a boot-time false positive (v1.5.0 post-deploy
+     finding, fixed on main). */
   const persistenceFailing =
     observation.persistence.lastSaveError != null ||
-    (observation.persistence.dataWritable === false) ||
-    (persistence != null && persistence.status === "unavailable");
+    observation.persistence.dataWritable === false;
   if (persistenceFailing) {
     candidates.push({
       id: "beacon:persistence",
@@ -293,7 +309,7 @@ function sourceRules(observation: IncidentObservation): RuleOutput {
           signal: "persistence.save",
           source: "persistence",
           observedAt: iso(observation.now),
-          expectedIntervalMs: persistence?.expectedIntervalMs ?? null,
+          expectedIntervalMs: 300_000,
           value: observation.persistence.lastSaveError
             ? `last save error: ${observation.persistence.lastSaveError}`
             : "data volume not writable",
@@ -655,12 +671,12 @@ function resourceRules(observation: IncidentObservation): RuleOutput {
   const candidates: RuleCandidate[] = [];
   const undecidable: RuleOutput["undecidable"] = [];
   const at = iso(observation.now);
-  /* Host memory % is Unraid-sourced (authoritative); sustained CPU and
-     thermal come from Prometheus. Each rule requires its own source. */
-  const unraidOk = usable(observation, "unraid-api");
-  const promOk = observation.prometheus.configured && usable(observation, "prometheus");
+  /* Host memory % is Unraid-sourced (authoritative); sustained CPU comes
+     from Prometheus. Source usability is NOT pre-checked here — the
+     candidates always emit and the engine withholds them when the source
+     is down, attributing their impact to the ROOT source incident. */
 
-  if (observation.memoryPercent != null && unraidOk) {
+  if (observation.memoryPercent != null) {
     if (observation.memoryPercent >= HOST_MEM_WARNING_PERCENT) {
       const critical = observation.memoryPercent >= HOST_MEM_CRITICAL_PERCENT;
       candidates.push({
@@ -693,7 +709,7 @@ function resourceRules(observation: IncidentObservation): RuleOutput {
     }
   }
 
-  if (observation.sustainedCpuPercent != null && observation.sustainedCpuPercent >= HOST_CPU_SUSTAINED_HIGH_PERCENT && promOk) {
+  if (observation.sustainedCpuPercent != null && observation.sustainedCpuPercent >= HOST_CPU_SUSTAINED_HIGH_PERCENT) {
     candidates.push({
       id: "host:cpu:sustained",
       entity: "host",
@@ -735,10 +751,9 @@ function thermalRules(observation: IncidentObservation): RuleOutput {
   const candidates: RuleCandidate[] = [];
   const undecidable: RuleOutput["undecidable"] = [];
   const at = iso(observation.now);
-  const promOk = observation.prometheus.configured && usable(observation, "prometheus");
 
   const package5m = observation.thermal?.package5mAvgC ?? null;
-  if (promOk && package5m != null && package5m >= CPU_TEMP_WARNING_C) {
+  if (package5m != null && package5m >= CPU_TEMP_WARNING_C) {
     const atCriticalBand = package5m >= CPU_TEMP_CRITICAL_C;
     const evidence: Evidence[] = [
       buildEvidence({
@@ -795,7 +810,7 @@ function thermalRules(observation: IncidentObservation): RuleOutput {
 
   /* Unraid-side sensor counts (owner-configured critical thresholds). */
   const sensors = observation.temperatureSensors;
-  if (sensors && sensors.criticalCount > 0 && usable(observation, "unraid-api")) {
+  if (sensors && sensors.criticalCount > 0) {
     candidates.push({
       id: "host:thermal:unraid-sensors",
       entity: "host",

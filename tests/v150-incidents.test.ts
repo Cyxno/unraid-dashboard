@@ -41,6 +41,7 @@ import {
   persistenceFailure,
   prometheusDown,
   recovered,
+  sourceHealth,
   stoppedContainers,
   unraidApiDown,
 } from "./incident-fixtures";
@@ -203,11 +204,16 @@ describe("v1.5.0 incidents: lifecycle and rules (Fase 5/13/14/17)", () => {
     assert.equal(output.active[0]?.id, "source:prometheus:unavailable");
   });
 
-  test("8. cAdvisor stale is visible and degrades confidence without false alarms", () => {
+  test("8. cAdvisor stale is visible: degraded incident + confidence, no false alarms", () => {
     const state = freshState();
     const output = cycle(cadvisorStale(), state);
     assert.ok(output.confidence.reasons.some((reason) => reason.includes("Metrics confidence")));
-    assert.equal(output.active.filter((incident) => incident.id.includes("cadvisor")).length, 0);
+    // Stale (not healthy!) data earns an honest degraded incident — never
+    // a silently green dashboard.
+    const stale = output.active.find((incident) => incident.id === "source:cadvisor:degraded");
+    assert.ok(stale);
+    assert.equal(stale.severity, "warning");
+    assert.equal(output.active.filter((incident) => incident.kind === "source-unavailable").length, 0);
   });
 
   test("9. helper degraded is one warning incident with inventory impact", () => {
@@ -574,6 +580,59 @@ describe("v1.5.0 incidents: lifecycle and rules (Fase 5/13/14/17)", () => {
     assert.ok(incident.impact.some((line) => line.includes("durability")));
     assert.equal(output.health.level, "critical");
     assert.ok(output.confidence.reasons.some((reason) => reason.includes("durability")));
+  });
+
+  test("persistence 'never observed' (fresh boot) is NOT a failing persistence (false-positive class)", () => {
+    const state = freshState();
+    const observation = allHealthy({
+      sources: allHealthy().sources.map((entry) =>
+        entry.source === "persistence"
+          ? sourceHealth("persistence", { status: "unavailable", lastSuccessAt: null, lastAttemptAt: null, ageMs: null, freshness: "unknown" })
+          : entry,
+      ),
+      persistence: { dataWritable: null, lastSaveError: null, lastPersistAt: null },
+    });
+    const output = cycle(observation, state);
+    assert.equal(output.active.filter((incident) => incident.kind === "persistence-failure").length, 0);
+  });
+
+  test("a real Prometheus outage does NOT cascade into cAdvisor/node-exporter incidents", () => {
+    const state = freshState();
+    // Real-outage shape: the scrape queries behind Prometheus fail too,
+    // so those sources carry failed attempts (unavailable). A dependent
+    // rule (memory) would also fire — it must be WITHHELD and attributed.
+    const observation = prometheusDown();
+    observation.sustainedCpuPercent = 88; // dependent rule → withheld + attributed
+    observation.sources = observation.sources.map((entry) => {
+      if (entry.source === "cadvisor" || entry.source === "node-exporter") {
+        return { ...entry, status: "unavailable", lastAttemptAt: new Date(NOW).toISOString(), safeError: "unavailable: cannot reach prometheus" };
+      }
+      return entry;
+    });
+    const output = cycle(observation, state);
+    const sourceIncidents = output.active.filter((incident) => incident.kind === "source-unavailable" || incident.kind === "source-degraded");
+    assert.equal(sourceIncidents.length, 1);
+    assert.equal(sourceIncidents[0]?.id, "source:prometheus:unavailable");
+    assert.equal(output.active.filter((incident) => incident.id.startsWith("host:cpu")).length, 0);
+    // Dependent capabilities are attributed to the ROOT incident.
+    assert.ok(sourceIncidents[0]?.impact.some((line) => line.includes("container runtime metrics unknown")));
+    assert.ok(sourceIncidents[0]?.impact.some((line) => line.includes("CPU classification unknown (Prometheus down)")));
+  });
+
+  test("cAdvisor down WITH Prometheus healthy is its own warning incident", () => {
+    const state = freshState();
+    const observation = allHealthy({
+      sources: allHealthy().sources.map((entry) =>
+        entry.source === "cadvisor"
+          ? sourceHealth("cadvisor", { status: "unavailable", lastAttemptAt: new Date(NOW).toISOString(), safeError: "no fresh container metric series", lastSuccessAt: null, ageMs: null, freshness: "unknown" })
+          : entry,
+      ),
+    });
+    const output = cycle(observation, state);
+    const incident = output.active.find((entry) => entry.id === "source:cadvisor:unavailable");
+    assert.ok(incident);
+    assert.equal(incident.severity, "warning");
+    assert.equal(output.active.filter((entry) => entry.kind === "source-unavailable").length, 1);
   });
 
   test("24. diagnostics source health covers the canonical model", () => {
