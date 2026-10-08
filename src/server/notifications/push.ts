@@ -59,6 +59,16 @@ export function setPushTransportForTests(transport: PushTransport | null): void 
   transportOverride = transport;
 }
 
+/** Delivery timeout: a push service that accepts the TCP connection but
+ *  never answers must not stall the notification engine. */
+const PUSH_SEND_TIMEOUT_MS = 10_000;
+let sendTimeoutOverrideMs: number | null = null;
+
+/** Test seam: shrinks the delivery timeout (never used in production). */
+export function setPushSendTimeoutForTests(ms: number | null): void {
+  sendTimeoutOverrideMs = ms;
+}
+
 export async function sendToSubscription(
   subscription: PushSubscriptionRecord,
   payload: {
@@ -103,12 +113,25 @@ export async function sendToSubscription(
       return { status };
     }
   };
+  // A hung push service must not wedge delivery: web-push has no default
+  // request timeout, so without this race a stuck socket blocks the engine
+  // cycle (and every future one) indefinitely while health stays green.
+  const sendTimeoutMs = sendTimeoutOverrideMs ?? PUSH_SEND_TIMEOUT_MS;
+  const attemptBounded = <T>(work: Promise<T>): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<T>((resolve) => {
+      timer = setTimeout(() => resolve({ status: 0 } as T), sendTimeoutMs);
+    });
+    return Promise.race([work, timeout]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+  };
 
-  let result = await attempt();
+  let result = await attemptBounded(attempt());
   if (!result || (result.status >= 500 && result.status < 600)) {
     // Single retry after a short backoff — no loops.
     await new Promise((resolve) => setTimeout(resolve, 1500));
-    result = await attempt();
+    result = await attemptBounded(attempt());
   }
   const status = result?.status ?? 0;
   if (status >= 200 && status < 300) {

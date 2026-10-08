@@ -53,6 +53,7 @@ const MAX_DIGEST_ENTRIES = 200;
 
 const globalStore = globalThis as unknown as {
   __automationState?: AutomationState | null;
+  __automationStateLoading?: Promise<AutomationState> | null;
   __automationQueue?: QueuedJob[] | null;
   __automationDigests?: Record<string, { digest: string; firstSeenAt: string; lastSeenAt: string }> | null;
 };
@@ -106,15 +107,23 @@ export function emptyState(): AutomationState {
 
 export async function loadState(): Promise<AutomationState> {
   if (globalStore.__automationState) return globalStore.__automationState;
-  const persisted = await readJson<AutomationState>(STATE_FILE);
-  const state = persisted && persisted.config && persisted.targets
-    ? {
-        ...persisted,
-        config: { ...structuredClone(DEFAULT_CONFIG), ...persisted.config, maintenance: { ...DEFAULT_CONFIG.maintenance, ...persisted.config.maintenance } },
-        targets: persisted.targets ?? {},
-      }
-    : emptyState();
-  globalStore.__automationState = state;
+  // Memoized first load: two concurrent first callers (scheduler tick +
+  // status route) used to read the disk independently and each got their
+  // own copy — the losing saveState silently dropped the winner's changes.
+  globalStore.__automationStateLoading ??= (async () => {
+    const persisted = await readJson<AutomationState>(STATE_FILE);
+    const state = persisted && persisted.config && persisted.targets
+      ? {
+          ...persisted,
+          config: { ...structuredClone(DEFAULT_CONFIG), ...persisted.config, maintenance: { ...DEFAULT_CONFIG.maintenance, ...persisted.config.maintenance } },
+          targets: persisted.targets ?? {},
+        }
+      : emptyState();
+    globalStore.__automationState = state;
+    return state;
+  })();
+  const state = await globalStore.__automationStateLoading;
+  globalStore.__automationStateLoading = null;
   return state;
 }
 
@@ -283,7 +292,6 @@ export async function recordEvent(kind: AutomationEventKind, target: string | nu
   const lines = previous.split("\n").filter((line) => line.trim().length > 0);
   lines.push(JSON.stringify(event));
   const bounded = lines.slice(-MAX_EVENTS);
-  await writeJsonAtomic(EVENTS_FILE + ".tmp", null).catch(() => {});
   await writeFile(`${filePath(EVENTS_FILE)}.tmp`, bounded.join("\n") + "\n", { mode: 0o600 });
   await rename(`${filePath(EVENTS_FILE)}.tmp`, filePath(EVENTS_FILE)).catch(() => {});
   return event;
@@ -308,6 +316,7 @@ export async function readEvents(limit = 30): Promise<AutomationEvent[]> {
 /** Test hook. */
 export function resetAutomationStores(): void {
   globalStore.__automationState = null;
+  globalStore.__automationStateLoading = null;
   globalStore.__automationQueue = null;
   globalStore.__automationDigests = null;
 }

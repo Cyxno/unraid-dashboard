@@ -23,12 +23,20 @@ export class SectionProvider<T> {
   private pending: Promise<T> | null = null;
   private cached: { data: T; at: number } | null = null;
   private everSucceeded = false;
+  private lastFailureAt: number | null = null;
+  private readonly failureBackoffMs: number;
 
   constructor(
     private readonly name: string,
     private readonly fetcher: () => Promise<T>,
     private readonly ttlMs: number,
-  ) {}
+    options: { failureBackoffMs?: number } = {},
+  ) {
+    // After a failed refresh the cache is gone; without a negative window
+    // every poll would fire a live upstream request (no backoff during an
+    // outage). 5s keeps recovery fast while bounding the retry storm.
+    this.failureBackoffMs = options.failureBackoffMs ?? 5_000;
+  }
 
   /** True if this section has ever fetched successfully this process. */
   get hasLive(): boolean {
@@ -50,6 +58,31 @@ export class SectionProvider<T> {
     }
 
     if (!this.pending) {
+      // Negative cache: within the failure backoff window the degraded
+      // answer is served WITHOUT waking upstream again (polls during an
+      // outage must not translate into a request per poll). A successful
+      // fetch clears the window, so normal TTL refetches stay immediate.
+      const backoffActive =
+        this.lastFailureAt !== null &&
+        now - this.lastFailureAt < this.failureBackoffMs;
+      if (backoffActive) {
+        if (this.lastGood) {
+          return this.wrap(
+            this.lastGood.data,
+            this.lastGood.at,
+            "stale",
+            now - this.lastGood.at,
+            this.lastError?.message,
+          );
+        }
+        return {
+          status: "unavailable",
+          data: null,
+          fetchedAt: new Date(this.lastError?.at ?? now).toISOString(),
+          ageMs: 0,
+          reason: this.lastError?.message ?? "upstream unavailable",
+        };
+      }
       this.pending = this.fetcher()
         .then((data) => {
           const at = Date.now();
@@ -57,6 +90,7 @@ export class SectionProvider<T> {
           this.cached = { data, at };
           this.lastSuccessAt = at;
           this.lastError = null;
+          this.lastFailureAt = null;
           this.everSucceeded = true;
           return data;
         })
@@ -65,6 +99,7 @@ export class SectionProvider<T> {
             message: error instanceof Error ? error.message : String(error),
             at: Date.now(),
           };
+          this.lastFailureAt = Date.now();
           // Do not serve an expired cache as fresh after a failed refresh.
           this.cached = null;
           // Re-throw a normalized error to the section wrapper below.

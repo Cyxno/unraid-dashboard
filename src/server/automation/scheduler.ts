@@ -229,11 +229,13 @@ async function settleJob(job: QueuedJob, helperJob: ContainerJob | null, started
   }
 }
 
-/** One scheduler tick. Returns a human summary (for status/run-once). */
-export async function automationTick(): Promise<{ ranAt: string; summary: string; started?: string | null }> {
-  const now = new Date();
+/** One scheduler tick. Returns a human summary (for status/run-once).
+ *  `now` is injectable: the maintenance window and digest age are wall-clock
+ *  decisions, and a real clock made the integration tests flaky (a run that
+ *  straddles an hour boundary or lands outside a test window fails purely on
+ *  the time of day). Production never passes it. */
+export async function automationTick(now: Date = new Date()): Promise<{ ranAt: string; summary: string; started?: string | null }> {
   let state: StoredAutomationState = await loadState();
-  state = await ensureWindowCounter(now, state.config);
 
   const overview = await enrichedOverview().catch(() => null);
   if (!overview?.available) {
@@ -247,9 +249,12 @@ export async function automationTick(): Promise<{ ranAt: string; summary: string
   // /app/data unwritable → block EVERYTHING persistence-dependent (#33):
   // no observations, no queue changes, no mutations. State writes are also
   // bounded (5s) so a pathological filesystem can never hang the tick.
+  // The writability probe MUST precede the window-roll write: a failing
+  // volume used to make ensureWindowCounter's save reject the whole tick.
   if (!(await dataDirWritable())) {
     return { ranAt: now.toISOString(), summary: "/app/data not writable — tick skipped (auto updates blocked)" };
   }
+  state = await ensureWindowCounter(now, state.config).catch(() => state);
 
   // 1. Observe remote digests for the age-delay store.
   for (const observation of digestObservations(overview)) {

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { guardRead } from "@/server/auth/guard";
 import { pushConfigured } from "@/server/notifications/push";
-import { loadState } from "@/server/notifications/store";
+import { ensureNotificationState, lastSaveError } from "@/server/notifications/store";
 import { startNotificationLoop } from "@/server/notifications";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
   if (!guard.ok) return guard.response;
 
   startNotificationLoop();
-  const state = loadState();
+  const state = await ensureNotificationState();
   const push = pushConfigured();
 
   return NextResponse.json(
@@ -29,6 +29,7 @@ export async function GET(request: NextRequest) {
         lastFailureAt: entry.lastFailureAt,
         enabled: entry.enabled,
       })),
+      persistence: { lastSaveError: lastSaveError() },
     },
     { headers: { "cache-control": "no-store" } },
   );

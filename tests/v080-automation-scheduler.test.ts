@@ -180,6 +180,8 @@ async function historyPath(): Promise<string> {
   return path.join(dataDir, "update-history.jsonl");
 }
 
+const TICK_NOW = new Date("2026-09-28T12:00:00Z");
+
 describe("v0.8.0 scheduler/executor full path (disposable scenario)", () => {
   it("1-2-3: eligible + inside window + old digest → queued → dispatched → completed with audit trail", async () => {
     await seedTrackRecord();
@@ -191,7 +193,7 @@ describe("v0.8.0 scheduler/executor full path (disposable scenario)", () => {
     await warmChecks();
 
     const { automationTick } = await import("../src/server/automation/scheduler");
-    const first = await automationTick();
+    const first = await automationTick(TICK_NOW);
     assert.match(first.summary, /auto-update started for pilot-test-target/);
 
     // Job runs: helper reports a finished success on the next tick.
@@ -204,7 +206,7 @@ describe("v0.8.0 scheduler/executor full path (disposable scenario)", () => {
         lastResult: { result: "success", image: IMAGE, durationMs: 5_000, health: "healthy" },
       },
     });
-    const second = await automationTick();
+    const second = await automationTick(TICK_NOW);
     assert.match(second.summary, /settled auto job for pilot-test-target: success/);
 
     // History entry recorded with the automation actor + metadata.
@@ -234,7 +236,7 @@ describe("v0.8.0 scheduler/executor full path (disposable scenario)", () => {
     await warmChecks();
 
     const { automationTick } = await import("../src/server/automation/scheduler");
-    const result = await automationTick();
+    const result = await automationTick(TICK_NOW);
     assert.match(result.summary, /evaluated \[pilot-test-target:delayed_by_age\]/);
     const { loadQueue } = await import("../src/server/automation/store");
     assert.equal((await loadQueue()).length, 0);
@@ -247,10 +249,10 @@ describe("v0.8.0 scheduler/executor full path (disposable scenario)", () => {
     helperStatusRoute();
     registryRoute(DIGEST_V2);
     await configure({ enabled: true, startHour: 4, endHour: 5 });
-    await warmChecks(); // now is 12:00 UTC
+    await warmChecks(); // TICK_NOW is 12:00 UTC — outside [4,5)
 
     const { automationTick } = await import("../src/server/automation/scheduler");
-    const result = await automationTick();
+    const result = await automationTick(TICK_NOW);
     assert.match(result.summary, /pilot-test-target:outside_window/);
     const { loadQueue } = await import("../src/server/automation/store");
     assert.equal((await loadQueue()).length, 0);
@@ -265,7 +267,7 @@ describe("v0.8.0 scheduler/executor full path (disposable scenario)", () => {
     await warmChecks();
 
     const { automationTick } = await import("../src/server/automation/scheduler");
-    const result = await automationTick();
+    const result = await automationTick(TICK_NOW);
     assert.match(result.summary, /pilot-test-target:blocked/);
     assert.ok(!fetchCalls.some((call) => call.includes("/container-update")));
   });
@@ -280,7 +282,7 @@ describe("v0.8.0 scheduler/executor full path (disposable scenario)", () => {
     await warmChecks();
 
     const { automationTick } = await import("../src/server/automation/scheduler");
-    await automationTick(); // dispatch
+    await automationTick(TICK_NOW); // dispatch
     helperRoute("/container-job", {
       job: {
         name: TARGET,
@@ -290,13 +292,13 @@ describe("v0.8.0 scheduler/executor full path (disposable scenario)", () => {
         lastResult: { result: "rolled-back", error: "health verification failed", durationMs: 9_000 },
       },
     });
-    const settled = await automationTick();
+    const settled = await automationTick(TICK_NOW);
     assert.match(settled.summary, /settled auto job.*rolled-back/);
 
     // No retry: subsequent ticks stay blocked (rollback on record) with the
     // cooldown recorded — exactly one dispatch ever.
     for (let index = 0; index < 2; index++) {
-      const result = await automationTick();
+      const result = await automationTick(TICK_NOW);
       assert.match(result.summary, /pilot-test-target:blocked/);
     }
     assert.equal(fetchCalls.filter((call) => call.includes("/container-update")).length, 1, "exactly one dispatch ever");
@@ -312,7 +314,7 @@ describe("v0.8.0 scheduler/executor full path (disposable scenario)", () => {
     // Operator ack clears the cooldown → eligible again.
     const { updateTarget } = await import("../src/server/automation/store");
     await updateTarget(TARGET, { cooldownUntil: null, cooldownReason: null });
-    const after = await automationTick();
+    const after = await automationTick(TICK_NOW);
     // Track record now has a rollback → blocked (zero unresolved rollback rule), not a retry.
     assert.match(after.summary, /pilot-test-target:blocked/);
   });
@@ -327,7 +329,7 @@ describe("v0.8.0 scheduler/executor full path (disposable scenario)", () => {
     await warmChecks();
 
     const { automationTick } = await import("../src/server/automation/scheduler");
-    await automationTick(); // dispatch
+    await automationTick(TICK_NOW); // dispatch
     helperRoute("/container-job", {
       job: {
         name: TARGET,
@@ -337,7 +339,7 @@ describe("v0.8.0 scheduler/executor full path (disposable scenario)", () => {
         lastResult: { result: "rollback-failed", error: "manual recovery required", durationMs: 9_000 },
       },
     });
-    await automationTick(); // settle
+    await automationTick(TICK_NOW); // settle
     const { loadState } = await import("../src/server/automation/store");
     const state = await loadState();
     assert.equal(state.targets[TARGET]?.interventionRequired, true);
@@ -345,7 +347,7 @@ describe("v0.8.0 scheduler/executor full path (disposable scenario)", () => {
     assert.ok((await readEvents()).some((event) => event.kind === "intervention_required"));
 
     // Even a fresh eligible-looking evaluation stays intervention_required.
-    const after = await automationTick();
+    const after = await automationTick(TICK_NOW);
     assert.match(after.summary, /pilot-test-target:intervention_required/);
     assert.equal(fetchCalls.filter((call) => call.includes("/container-update")).length, 1, "no NEW mutation after intervention");
   });
@@ -359,7 +361,7 @@ describe("v0.8.0 scheduler/executor full path (disposable scenario)", () => {
     await configure({ enabled: true, minAgeHours: 0 });
     await warmChecks();
     const { automationTick } = await import("../src/server/automation/scheduler");
-    const dispatched = await automationTick(); // dispatch → queued becomes updating
+    const dispatched = await automationTick(TICK_NOW); // dispatch → queued becomes updating
     assert.ok(dispatched.started, "dispatch happened: " + dispatched.summary);
     const store = await import("../src/server/automation/store");
     let queue = await store.loadQueue();
@@ -370,7 +372,7 @@ describe("v0.8.0 scheduler/executor full path (disposable scenario)", () => {
     // it settles normally; no NEW job may start afterwards.
     const { setConfig } = await import("../src/server/automation/status");
     await setConfig({ enabled: false });
-    const afterDisable = await automationTick();
+    const afterDisable = await automationTick(TICK_NOW);
     assert.match(afterDisable.summary, /pilot-test-target:blocked|still running/);
     queue = await store.loadQueue();
     assert.equal(queue.filter((job) => job.state === "queued").length, 0, "no queued jobs after policy change");
@@ -391,7 +393,7 @@ describe("v0.8.0 scheduler/executor full path (disposable scenario)", () => {
     routes = routes.filter((route) => !(route.match(new URL("http://127.0.0.1:8790/status"))));
     helperRoute("/status", { version: "0.8.0" }, 503);
     const { automationTick } = await import("../src/server/automation/scheduler");
-    const result = await automationTick();
+    const result = await automationTick(TICK_NOW);
     assert.match(result.summary, /pilot-test-target:blocked/);
     assert.ok(!fetchCalls.some((call) => call.includes("/container-update")));
   });
@@ -416,7 +418,7 @@ describe("v0.8.0 scheduler/executor full path (disposable scenario)", () => {
     });
 
     const { automationTick } = await import("../src/server/automation/scheduler");
-    const result = await automationTick();
+    const result = await automationTick(TICK_NOW);
     // The queued job's digest doesn't match the live remote digest →
     // cancelled; the fresh evaluation re-queues against DIGEST_V2.
     assert.ok(/digest changed|auto-update started/.test(result.summary));
@@ -435,7 +437,7 @@ describe("v0.8.0 scheduler/executor full path (disposable scenario)", () => {
     await warmChecks();
 
     const { automationTick } = await import("../src/server/automation/scheduler");
-    const dispatchTick = await automationTick(); // dispatch → updating job persisted
+    const dispatchTick = await automationTick(TICK_NOW); // dispatch → updating job persisted
     assert.ok(dispatchTick.started, "dispatch happened: " + dispatchTick.summary);
 
     // Simulate an app restart: wipe module-level caches, keep files.
@@ -455,7 +457,7 @@ describe("v0.8.0 scheduler/executor full path (disposable scenario)", () => {
         lastResult: { result: "success", image: IMAGE, durationMs: 4_000 },
       },
     });
-    const result = await automationTick();
+    const result = await automationTick(TICK_NOW);
     assert.match(result.summary, /settled auto job for pilot-test-target: success/);
   });
 
@@ -473,7 +475,7 @@ describe("v0.8.0 scheduler/executor full path (disposable scenario)", () => {
     const { resetAutomationStores } = await import("../src/server/automation/store");
     resetAutomationStores();
     const { automationTick } = await import("../src/server/automation/scheduler");
-    const result = await automationTick();
+    const result = await automationTick(TICK_NOW);
     assert.match(result.summary, /not writable/);
     assert.ok(!fetchCalls.some((call) => call.includes("/container-update")));
   });

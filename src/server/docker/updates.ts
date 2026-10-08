@@ -22,15 +22,23 @@ import {
  */
 
 const CHECK_TTL_MS = 4 * 60 * 60 * 1000;
+/** Transient registry failures must not freeze update evidence for the
+ *  full 4h TTL — the next sweep retries after 60s instead. */
+const FAILED_CHECK_TTL_MS = 60 * 1000;
+/** Helper-inventory last-known-good ceiling: beyond this age the helper is
+ *  presumed unreachable-and-staying and the overview reports unavailable
+ *  instead of presenting arbitrarily old container facts as fresh. */
+export const INVENTORY_LKG_MAX_AGE_MS = 15 * 60 * 1000;
+
 const REFRESH_CONCURRENCY = 6;
 
 const globalStore = globalThis as unknown as {
-  __dockerUpdateCache?: Map<string, { at: number; outcome: RawCheck }>;
+  __dockerUpdateCache?: Map<string, { at: number; outcome: RawCheck; ttlMs: number }>;
   __dockerInventoryCache?: { at: number; containers: ContainerFacts[]; storage: { mode: string; source: string | null } };
   __dockerRefreshInFlight?: Promise<void> | null;
 };
 
-function checkCache(): Map<string, { at: number; outcome: RawCheck }> {
+function checkCache(): Map<string, { at: number; outcome: RawCheck; ttlMs: number }> {
   if (!globalStore.__dockerUpdateCache) globalStore.__dockerUpdateCache = new Map();
   return globalStore.__dockerUpdateCache;
 }
@@ -55,10 +63,15 @@ function extraHighRisk(): string[] {
     .slice(0, 50);
 }
 
-/** Read-only inventory from the helper (the only Docker-socket component). */
+/** Read-only inventory from the helper (the only Docker-socket component).
+ *  Returns the helper age (`at`) and a `degraded` marker when the cached
+ *  last-known-good had to be served because the helper was unreachable —
+ *  callers must never present that combination as fresh. */
 export async function fetchInventory(): Promise<{
   containers: ContainerFacts[];
   storage: { mode: string; source: string | null };
+  at: number;
+  degraded: boolean;
 } | null> {
   const env = getEnvSafe();
   if (!env.UPDATE_HELPER_URL) return null;
@@ -79,9 +92,8 @@ export async function fetchInventory(): Promise<{
       console.error(
         `[docker-updates] helper inventory contract violation: ${describeInventoryIssues(parsed.error)}`,
       );
-      return globalStore.__dockerInventoryCache
-        ? { containers: globalStore.__dockerInventoryCache.containers, storage: globalStore.__dockerInventoryCache.storage }
-        : null;
+      const cache = globalStore.__dockerInventoryCache;
+      return cache ? { containers: cache.containers, storage: cache.storage, at: cache.at, degraded: true } : null;
     }
     const validated = parsed.data;
     globalStore.__dockerInventoryCache = {
@@ -92,12 +104,22 @@ export async function fetchInventory(): Promise<{
     return {
       containers: validated.containers as unknown as ContainerFacts[],
       storage: validated.storage,
+      at: Date.now(),
+      degraded: false,
     };
   } catch {
-    return globalStore.__dockerInventoryCache
-      ? { containers: globalStore.__dockerInventoryCache.containers, storage: globalStore.__dockerInventoryCache.storage }
-      : null;
+    const cache = globalStore.__dockerInventoryCache;
+    return cache ? { containers: cache.containers, storage: cache.storage, at: cache.at, degraded: true } : null;
   }
+}
+
+/** Pure TTL decision for a cached registry check (exported for tests). */
+export function cacheTtlForOutcome(outcome: RawCheck): number {
+  return outcome.kind === "failed" ? FAILED_CHECK_TTL_MS : CHECK_TTL_MS;
+}
+
+function entryFresh(entry: { at: number; ttlMs: number } | undefined): boolean {
+  return Boolean(entry && Date.now() - entry.at < entry.ttlMs);
 }
 
 /** Cached raw registry result per image (comparison happens per container). */
@@ -106,10 +128,10 @@ type RawCheck = RegistryCheckResult;
 async function checkImageWithCache(image: string, force: boolean): Promise<void> {
   const cache = checkCache();
   const cached = cache.get(image);
-  if (!force && cached && Date.now() - cached.at < CHECK_TTL_MS) return;
+  if (!force && entryFresh(cached)) return;
   const env = getEnvSafe();
   const result = await checkRemoteDigest(image, env.GHCR_TOKEN);
-  cache.set(image, { at: Date.now(), outcome: result });
+  cache.set(image, { at: Date.now(), outcome: result, ttlMs: cacheTtlForOutcome(result) });
 }
 
 function rawCheckFor(image: string): RawCheck | null {
@@ -134,8 +156,7 @@ async function ensureChecks(images: Array<{ image: string }>, force: boolean): P
   const uniqueRefs = Array.from(new Set(images.map((entry) => entry.image)));
   const targets = uniqueRefs.filter((image) => {
     if (force) return true;
-    const cached = cache.get(image);
-    return !cached || Date.now() - cached.at >= CHECK_TTL_MS;
+    return !entryFresh(cache.get(image));
   });
   if (targets.length === 0) return { pending: 0 };
 
@@ -171,20 +192,34 @@ export async function updatesOverview(options: { refresh?: boolean; wait?: boole
   checkedAt: string;
   checking: boolean;
   pending: number;
+  inventoryAt: string | null;
+  inventoryDegraded: boolean;
 }> {
-  const checkedAt = new Date().toISOString();
   const inventory = await fetchInventory();
-  if (!inventory) {
+  const inventoryUsable =
+    inventory !== null &&
+    (!inventory.degraded || Date.now() - inventory.at < INVENTORY_LKG_MAX_AGE_MS);
+  if (!inventoryUsable) {
     return {
       available: false,
-      reason: "Container inventory unavailable (update helper not configured or unreachable).",
+      reason: inventory
+        ? "Container inventory is stale (update helper unreachable for too long) — refusing to present old facts as fresh."
+        : "Container inventory unavailable (update helper not configured or unreachable).",
       containers: [],
       storage: { mode: "unknown", source: null },
-      checkedAt,
+      checkedAt: new Date().toISOString(),
       checking: false,
       pending: 0,
+      inventoryAt: inventory ? new Date(inventory.at).toISOString() : null,
+      inventoryDegraded: true,
     };
   }
+
+  // checkedAt is the evidence timestamp: with a degraded (last-known-good)
+  // inventory the facts are as old as the cache, never "now".
+  const checkedAt = inventory.degraded
+    ? new Date(inventory.at).toISOString()
+    : new Date().toISOString();
 
   // Koude cache: start de sweep en antwoord direct (checking-state in de
   // UI); handmatige refresh wacht wel tot alle HEADs klaar zijn.
@@ -235,6 +270,8 @@ export async function updatesOverview(options: { refresh?: boolean; wait?: boole
     checkedAt,
     checking,
     pending: sweep.pending,
+    inventoryAt: new Date(inventory.at).toISOString(),
+    inventoryDegraded: inventory.degraded,
   };
 }
 
@@ -247,6 +284,8 @@ export interface EnrichedOverview {
   checkedAt: string;
   checking: boolean;
   pending: number;
+  inventoryAt: string | null;
+  inventoryDegraded: boolean;
 }
 
 /**
@@ -358,7 +397,12 @@ export function updatesSummaryFromCache(): {
   }
   const referenceAt = newestCheckAt ?? inventory.at;
   const ageSeconds = Math.max(0, Math.round((Date.now() - referenceAt) / 1000));
-  const stale = checkCache().size === 0 || ageSeconds * 1000 >= CHECK_TTL_MS;
+  const stale =
+    checkCache().size === 0 ||
+    ageSeconds * 1000 >= CHECK_TTL_MS ||
+    // Old inventory facts (helper down) make the whole summary stale even
+    // when registry checks are recent — container facts drive the verdicts.
+    Date.now() - inventory.at >= INVENTORY_LKG_MAX_AGE_MS;
 
   let knownUpdatesCount = 0;
   let containersChecked = 0;

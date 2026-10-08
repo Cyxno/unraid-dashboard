@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { guardWrite } from "@/server/auth/guard";
 import { checkWriteRate } from "@/server/dashboards/rate-limit";
-import { loadStateFromDisk, scheduleSave } from "@/server/notifications/store";
+import { ensureNotificationState, scheduleSave } from "@/server/notifications/store";
 import { DEFAULT_PREFERENCES, type NotificationPreferences } from "@/server/notifications/types";
 import { startNotificationLoop } from "@/server/notifications";
 
@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => null)) as Partial<NotificationPreferences> | null;
   if (!body) return NextResponse.json({ error: "invalid body" }, { status: 400 });
 
-  const state = await loadStateFromDisk();
+  const state = await ensureNotificationState();
   startNotificationLoop();
   const current = state.preferences ?? DEFAULT_PREFERENCES;
   const next: NotificationPreferences = {

@@ -254,6 +254,9 @@ export function NotificationsSection() {
       }
     });
     return () => window.cancelAnimationFrame(frame);
+    // Mount-only by design: one capability snapshot for development logs,
+    // not a reactive telemetry stream (config is captured as-known-at-mount).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

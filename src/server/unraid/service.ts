@@ -203,12 +203,12 @@ const systemProvider = new SectionProvider<SystemInfo>(
   "system",
   async () => {
     const client = getUnraidClient();
+    // Exactly one SYSTEM_QUERY + one ride-along per section per refresh —
+    // duplicated array entries used to fire the same query twice.
     const [infoPayload, metricsSection, tempSection] = await Promise.all([
       client.request(SYSTEM_QUERY),
       getMetricsSection(),
       getTemperatureSection(),
-      client.request(SYSTEM_QUERY),
-      getMetricsSection(),
     ]);
     const info = mapSystemInfo(infoPayload);
     const detail = mapMemoryDetail(infoPayload);
@@ -547,14 +547,18 @@ export async function getStorage(): Promise<Section<StorageUsage>> {
   return withDemo(await storageProvider.get(), demo.storage);
 }
 
+/* Module-level provider: a per-call SectionProvider would TTL-cache nothing
+   (a fresh instance per request always refetches — an Unraid request per
+   network poll). */
+const networkInterfacesProvider = new SectionProvider<any>(
+  "network-interfaces",
+  async () => await getUnraidClient().request(NETWORK_INTERFACES_QUERY),
+  10_000,
+);
+
 export async function getNetwork(): Promise<Section<NetworkInterfaceInfo[]>> {
   const [interfaces, metrics] = await Promise.all([
-    new SectionProvider<any>(
-      "network-interfaces",
-      async () =>
-        await getUnraidClient().request(NETWORK_INTERFACES_QUERY),
-      10_000,
-    ).get(),
+    networkInterfacesProvider.get(),
     getMetricsSection(),
   ]);
   if (!interfaces.data) {

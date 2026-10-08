@@ -63,11 +63,13 @@ describe("v0.9.9 live docker actions + update awareness", () => {
     assert.doesNotMatch(fn, /await fetch|fetchInventory\(|ensureChecks\(|checkRemoteDigest/);
   });
 
-  it("stale semantics: no cache or age beyond the 4h TTL marks the count stale", () => {
+  it("stale semantics: no cache, age beyond the 4h TTL or stale inventory marks the count stale", () => {
     const updates = read("src/server/docker/updates.ts");
     const fn = updates.slice(updates.indexOf("export function updatesSummaryFromCache"));
     assert.match(fn, /CHECK_TTL_MS/);
-    assert.match(fn, /stale = checkCache\(\)\.size === 0 \|\| ageSeconds \* 1000 >= CHECK_TTL_MS/);
+    assert.match(fn, /checkCache\(\)\.size === 0 \|\|/);
+    assert.match(fn, /ageSeconds \* 1000 >= CHECK_TTL_MS/);
+    assert.match(fn, /Date\.now\(\) - inventory\.at >= INVENTORY_LKG_MAX_AGE_MS/);
   });
 
   it("health reasons are ranked critical-first and thermal rules are documented", () => {

@@ -313,7 +313,11 @@ export async function enablePush(
       | undefined;
     httpStatus = result?.status ?? 200;
     serverDevices = result?.devices ?? null;
-    step("12 server POST status", httpStatus >= 200 && httpStatus < 300 ? "PASS" : "FAIL", String(httpStatus));
+    step(
+      "12 server POST status",
+      httpStatus >= 200 && httpStatus < 300 ? "PASS" : "FAIL",
+      serverDevices === null ? String(httpStatus) : `${httpStatus} · serverDevices=${serverDevices}`,
+    );
   } catch (err) {
     step("12 server POST status", "FAIL", safeErrorCategory(err).name);
     return { ok: false, kind: "registration-failed", trace };

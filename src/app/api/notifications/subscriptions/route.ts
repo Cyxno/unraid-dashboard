@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { guardDelete, guardWrite } from "@/server/auth/guard";
 import { checkWriteRate } from "@/server/dashboards/rate-limit";
-import { loadState, scheduleSave } from "@/server/notifications/store";
+import { ensureNotificationState, scheduleSave } from "@/server/notifications/store";
 import { createHash } from "node:crypto";
 
 /** v1.3.22: privacy-safe endpoint fingerprint (SHA-256, 16 hex). Mirrors
@@ -50,7 +50,9 @@ export async function POST(request: NextRequest) {
   // v1.3.27: mutate the SHARED in-memory working set (the engine's state) —
   // mutating a disk-reloaded copy created a split-brain where the engine's
   // next save wiped freshly registered subscriptions.
-  const state = loadState();
+  // Hydration first: the first state touch after boot must read the disk
+  // file before mutating, or the engine's baseline save overwrites it.
+  const state = await ensureNotificationState();
   startNotificationLoop();
   const devicesBefore = state.subscriptions.length;
   const existing = state.subscriptions.find((entry) => entry.endpoint === endpoint);
@@ -96,7 +98,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "invalid request" }, { status: 400 });
   }
 
-  const state = loadState();
+  const state = await ensureNotificationState();
   const before = state.subscriptions.length;
   // v1.3.22: removal by endpoint OR by fingerprint (for the server-only
   // disable edge where the browser subscription no longer exists).

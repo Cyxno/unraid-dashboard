@@ -18,6 +18,7 @@ const MAX_HISTORY = 250;
 
 const globalStore = globalThis as unknown as {
   __notificationState?: NotificationState | null;
+  __notificationSaveError?: { message: string; at: string } | null;
 };
 
 export function stateFilePath(): string {
@@ -40,6 +41,22 @@ export function loadState(): NotificationState {
   if (globalStore.__notificationState) return globalStore.__notificationState;
   globalStore.__notificationState = emptyState();
   return globalStore.__notificationState;
+}
+
+let hydrationPromise: Promise<NotificationState> | null = null;
+
+/**
+ * Boot-safe hydration: the FIRST state touch (route request or engine cycle)
+ * must read the disk file before any mutation happens. The sync loadState()
+ * above would initialize an empty global when a request lands before the
+ * engine's first cycle (t+15s after boot) — loadStateFromDisk() then returns
+ * that empty global and the baseline save OVERWRITES the persisted file.
+ * Every state consumer awaits this instead; hydration runs at most once.
+ */
+export function ensureNotificationState(): Promise<NotificationState> {
+  if (globalStore.__notificationState) return Promise.resolve(globalStore.__notificationState);
+  hydrationPromise ??= loadStateFromDisk();
+  return hydrationPromise;
 }
 
 export async function loadStateFromDisk(): Promise<NotificationState> {
@@ -70,6 +87,11 @@ export async function loadStateFromDisk(): Promise<NotificationState> {
 
 let writeTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** Last persistence failure, for observability (API/diagnostics). */
+export function lastSaveError(): { message: string; at: string } | null {
+  return globalStore.__notificationSaveError ?? null;
+}
+
 /** Persist soon (debounced) — the engine calls this after mutations. */
 export function scheduleSave(delayMs = 500): void {
   if (writeTimer) return;
@@ -83,15 +105,33 @@ export async function saveNow(): Promise<void> {
   const state = loadState();
   state.history = state.history.slice(-MAX_HISTORY);
   const path = stateFilePath();
-  await mkdir(dirname(path), { recursive: true });
-  const temp = `${path}.tmp`;
-  await writeFile(temp, JSON.stringify(state), { mode: 0o600 });
-  await rename(temp, path);
+  try {
+    await mkdir(dirname(path), { recursive: true });
+    const temp = `${path}.tmp`;
+    await writeFile(temp, JSON.stringify(state), { mode: 0o600 });
+    await rename(temp, path);
+    globalStore.__notificationSaveError = null;
+  } catch (error) {
+    // Persistence failure must never be silent: the in-memory state keeps
+    // serving, but a container recreate would lose everything since the
+    // last successful save — that has to be visible in logs and diagnostics.
+    globalStore.__notificationSaveError = {
+      message: error instanceof Error ? error.message : String(error),
+      at: new Date().toISOString(),
+    };
+    console.error(
+      "[notifications] state save failed:",
+      globalStore.__notificationSaveError.message,
+    );
+    throw error;
+  }
 }
 
 /** Test hook. */
 export function resetStateCache(): void {
   globalStore.__notificationState = null;
+  globalStore.__notificationSaveError = null;
+  hydrationPromise = null;
   if (writeTimer) {
     clearTimeout(writeTimer);
     writeTimer = null;

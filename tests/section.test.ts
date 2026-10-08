@@ -74,12 +74,23 @@ describe("SectionProvider.hasLive (demo gate input)", () => {
     const provider = new SectionProvider("gate", async () => {
       if (shouldFail) throw new Error("API down");
       return { ok: 1 };
-    }, 60_000);
+    }, 60_000, { failureBackoffMs: 0 });
     const failed = await provider.get();
     assert.equal(failed.status, "unavailable");
     assert.equal(provider.hasLive, false, "never-succeeded provider must keep the demo gate eligible");
     shouldFail = false;
     await provider.get();
     assert.equal(provider.hasLive, true, "first success must close the demo gate");
+  });
+
+  it("serves the degraded answer within the failure backoff window without refetching", async () => {
+    let calls = 0;
+    const provider = new SectionProvider("gate-backoff", async () => {
+      calls += 1;
+      throw new Error("API down");
+    }, 60_000, { failureBackoffMs: 60_000 });
+    await provider.get();
+    await provider.get();
+    assert.equal(calls, 1, "the failure backoff must bound retry pressure during an outage");
   });
 });

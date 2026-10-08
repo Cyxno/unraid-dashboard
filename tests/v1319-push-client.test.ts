@@ -228,53 +228,7 @@ describe("Device diagnostics", () => {
 
 /* ---- Fase 13/15/23: real service worker behavior in a VM sandbox -------- */
 
-interface Sandbox {
-  listeners: Record<string, ((event: unknown) => void) | undefined>;
-  waited: Promise<unknown>[];
-  notifications: Array<{ title: string; options: Record<string, unknown> }>;
-  opened: string[];
-  focused: string[];
-  navigate: string[];
-}
-
-function loadSandbox(): Sandbox {
-  const sandbox: Sandbox = { listeners: {}, notifications: [], opened: [], focused: [], navigate: [], waited: [] };
-  const self = {
-    location: { origin: "https://beacon.example" },
-    registration: {
-      showNotification: (title: string, options: Record<string, unknown>) => {
-        sandbox.notifications.push({ title, options });
-        return Promise.resolve();
-      },
-    },
-    clients: {
-      matchAll: async () => [
-        { url: "https://beacon.example/settings", focus: async () => sandbox.focused.push("settings"), navigate: async (u: string) => sandbox.navigate.push(u) },
-      ],
-      openWindow: async (u: string) => sandbox.opened.push(u),
-      claim: async () => {},
-    },
-    caches: { keys: async () => [], open: async () => ({ add: async () => {}, match: async () => null, put: async () => {}, delete: async () => {} }), delete: async () => {} },
-    skipWaiting: async () => {},
-    navigationPreload: { disable: async () => {} },
-    addEventListener: (type: string, handler: (event: unknown) => void) => {
-      sandbox.listeners[type] = handler;
-    },
-  };
-  const context = vm.createContext({ self, ...self, navigator: {}, URL });
-  const source = fs.readFileSync(path.join(ROOT, "public", "sw.js"), "utf8").replace(/__GIT_SHA__/g, "abc1234");
-  vm.runInContext(source, context);
-  return sandbox;
-}
-
 const ROOT = path.dirname(path.dirname(new URL(import.meta.url).pathname));
-
-function pushEvent(payload: unknown) {
-  return {
-    data: payload === undefined ? undefined : { json: () => (typeof payload === "string" ? JSON.parse(payload) : payload), text: () => String(payload) },
-    waitUntil: (p: Promise<unknown>) => void p,
-  };
-}
 
 describe("Service worker push handler (real sw.js in a VM sandbox)", () => {
   interface Sandbox {

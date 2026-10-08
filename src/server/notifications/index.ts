@@ -1,6 +1,6 @@
 import { publishEvent } from "@/server/events/sampler";
 import { evaluateEvents } from "./engine";
-import { loadState, loadStateFromDisk, saveNow, scheduleSave } from "./store";
+import { ensureNotificationState, loadState, saveNow, scheduleSave } from "./store";
 import { sendToSubscription, pushConfigured } from "./push";
 import { collectEvents as collectEventsFromSources } from "./sources";
 import type { DeliveryStatus, NotificationRecord, RawEvent } from "./types";
@@ -116,7 +116,7 @@ async function runCycle(): Promise<void> {
   if (globalStore.__notificationBusy) return;
   globalStore.__notificationBusy = true;
   try {
-    const state = await loadStateFromDisk();
+    const state = await ensureNotificationState();
 
     // First-run / upgrade protection (anti-spam): before the baseline is
     // taken, current conditions are ingested into the active set SILENTLY.
@@ -179,8 +179,14 @@ async function runCycle(): Promise<void> {
     }
 
     await saveNow().catch(() => scheduleSave(1000));
-  } catch {
-    // The notification system must never take the app down.
+  } catch (error) {
+    // The notification system must never take the app down, but a cycle
+    // that keeps failing must be VISIBLE — silence here reads as a
+    // false-healthy notification system.
+    console.error(
+      "[notifications] evaluation cycle failed:",
+      error instanceof Error ? error.message : error,
+    );
   } finally {
     globalStore.__notificationBusy = false;
   }
@@ -195,7 +201,7 @@ export function startNotificationLoop(): void {
 
 /** Manual "Send test notification": pushes a user-triggered test event. */
 export async function sendTestNotification(): Promise<{ delivered: DeliveryStatus; detail: string | null }> {
-  const state = await loadStateFromDisk();
+  const state = await ensureNotificationState();
   const record = pushRecord(state, {
     fingerprint: `test:${Date.now()}`,
     category: "services",

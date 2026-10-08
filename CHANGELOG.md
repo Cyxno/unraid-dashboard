@@ -3,6 +3,27 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.4.2
+
+### Fixed
+
+- **Notification state hydration race (boot)**: the first notification API request after a container start could initialize an empty in-memory state before the engine's first cycle — the engine's baseline save then overwrote the persisted file, silently wiping subscriptions/history/preferences/incidents. All state consumers now await a memoized hydration (`ensureNotificationState`) that reads the disk file exactly once before any mutation
+- **Silent persistence failures made observable**: a failing notification-state save (full/rot/dead volume) was swallowed; it is now logged and surfaced as `persistence.lastSaveError` in `/api/notifications/config` (and cleared on the next successful save)
+- **A permanently failing notification cycle is no longer invisible**: the engine's empty `catch` now logs one line per failed cycle
+- **Web Push delivery is bounded in time**: a push service that accepts the connection but never answers stalled the engine indefinitely while health stayed green; delivery now times out (10s) and reads as a failed outcome
+- **Unraid outage retry storm**: `SectionProvider` destroyed its cache on a failed refresh, so every UI poll fired a live request during an outage; a 5s failure backoff (per provider, injectable) now bounds retry pressure while serving stale/unavailable honestly
+- **Update evidence no longer frozen by transient registry errors**: failed registry checks expire from the cache after 60s instead of the full 4h TTL
+- **Stale helper inventory never reads as fresh**: dashboard-side last-known-good inventory is capped at 15 minutes — beyond it the overview reports unavailable; a served LKG is marked `degraded` and `checkedAt` reflects the evidence age, and the update summary counts aged inventory as stale
+- **Automation tick survives a failing state write**: the maintenance-window rollover write ran before the writability probe and could reject (or stall 5s on pathological filesystems like procfs) the whole tick; the probe now precedes it and a window-roll write failure is non-fatal
+- **Maintenance-window tests were wall-clock flaky**: `automationTick` accepts an injectable `now`; the scheduler integration tests run on a fixed clock instead of failing every 23:00–24:00 UTC (and 04:00–05:00 UTC for the narrow-window case)
+
+### Improved
+
+- The system section no longer fires `SYSTEM_QUERY` twice per refresh; `getNetwork()` uses a module-level provider so its TTL cache actually engages (one Unraid request per 10s window instead of one per call)
+- Automation store: concurrent first loads share one working set (two independent disk reads could drop the winner's `saveState`); `recordEvent` no longer performs a dead temp-file write
+- Web Push registration trace step 12 now includes the server's device count
+- Lint warnings reduced to zero (0 errors, 0 warnings); regression suite for every fix above in `tests/v142-reliability-audit.test.ts`
+
 ## v1.4.1
 
 ### Fixed
