@@ -66,7 +66,14 @@ export async function loadStateFromDisk(): Promise<NotificationState> {
     const raw = JSON.parse(await readFile(stateFilePath(), "utf8")) as Partial<NotificationState>;
     globalStore.__notificationState = {
       version: 1,
-      preferences: { ...fallback.preferences, ...(raw.preferences ?? {}) },
+      // Category-level merge (v1.6.0): older state files lack newer
+      // categories (e.g. "insights") — the default (OFF) must survive.
+      preferences: {
+        ...fallback.preferences,
+        ...(raw.preferences ?? {}),
+        severities: { ...fallback.preferences.severities, ...(raw.preferences?.severities ?? {}) },
+        categories: { ...fallback.preferences.categories, ...(raw.preferences?.categories ?? {}) },
+      },
       active: raw.active && typeof raw.active === "object" ? raw.active : {},
       subscriptions: Array.isArray(raw.subscriptions)
         ? raw.subscriptions.filter((entry): entry is PushSubscriptionRecord => Boolean(entry?.endpoint && entry?.keys))

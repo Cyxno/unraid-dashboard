@@ -31,7 +31,16 @@ interface SourceRecord {
   detail: string | null;
   /** Expected interval override when a source deviates from the table. */
   expectedIntervalMs: number | null;
+  /**
+   * v1.6.0: bounded latency ring for p50/p95 performance trends
+   * (source performance, Fase 11). In-memory only, capped at 500
+   * entries — operational intelligence never grows state unbounded.
+   */
+  latencyRing: Array<{ at: number; latencyMs: number; ok: boolean }>;
 }
+
+/** Latency ring cap (bounded, in-memory). */
+const LATENCY_RING_MAX = 500;
 
 const globalStore = globalThis as unknown as {
   __incidentSourceHealth?: Map<SourceId, SourceRecord>;
@@ -53,16 +62,24 @@ function recordFor(source: SourceId): SourceRecord {
       lastAttempt: null,
       detail: null,
       expectedIntervalMs: expectedIntervalFor(source),
+      latencyRing: [],
     };
     map.set(source, record);
   }
   return record;
 }
 
-/** Records an observation attempt. `safeError` must be pre-sanitized. */
+/** Records an observation attempt. `safeError` must be pre-sanitized.
+ *  Latencies land in the bounded ring for p50/p95 trends. */
 export function noteSourceAttempt(source: SourceId, attempt: SourceAttempt): void {
   const record = recordFor(source);
   const latencyMs = attempt.latencyMs ?? null;
+  if (latencyMs != null && latencyMs >= 0) {
+    record.latencyRing.push({ at: attempt.at, latencyMs, ok: attempt.ok });
+    if (record.latencyRing.length > LATENCY_RING_MAX) {
+      record.latencyRing.splice(0, record.latencyRing.length - LATENCY_RING_MAX);
+    }
+  }
   if (attempt.ok) {
     record.lastSuccess = { at: attempt.at, latencyMs };
     record.lastAttempt = { at: attempt.at, ok: true, safeError: null, latencyMs };
@@ -164,6 +181,40 @@ export function getAllSourceHealth(now: number = Date.now()): SourceHealth[] {
 export function isSourceUsable(source: SourceId, now: number = Date.now()): boolean {
   const health = getSourceHealth({ source, now });
   return health.status === "healthy" || health.status === "degraded";
+}
+
+export interface SourceLatencyStats {
+  source: SourceId;
+  sampleCount: number;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  /** Age of the oldest ring entry (ms) — coverage context. */
+  ringSpanMs: number | null;
+}
+
+/** p50/p95 latency statistics from the bounded ring (v1.6.0 Fase 11). */
+export function getSourceLatencyStats(source: SourceId, windowMs = 24 * 60 * 60_000): SourceLatencyStats {
+  const record = records().get(source);
+  const now = Date.now();
+  const ring = (record?.latencyRing ?? []).filter((entry) => now - entry.at <= windowMs);
+  if (ring.length === 0) {
+    return { source, sampleCount: 0, p50Ms: null, p95Ms: null, ringSpanMs: null };
+  }
+  const sorted = ring.map((entry) => entry.latencyMs).sort((a, b) => a - b);
+  const pick = (p: number) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1))]!;
+  return {
+    source,
+    sampleCount: ring.length,
+    p50Ms: pick(50),
+    p95Ms: pick(95),
+    ringSpanMs: now - ring[0]!.at,
+  };
+}
+
+/** Which sources have enough latency samples for honest percentiles. */
+export function allSourceLatencyStats(windowMs = 24 * 60 * 60_000): SourceLatencyStats[] {
+  const sources: SourceId[] = ["unraid-api", "prometheus", "helper", "web-push", "beacon-update"];
+  return sources.map((source) => getSourceLatencyStats(source, windowMs));
 }
 
 /** Test hook: clears the registry. */

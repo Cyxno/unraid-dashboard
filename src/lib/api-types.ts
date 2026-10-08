@@ -964,3 +964,164 @@ export interface SupportBundlePayload {
   recentSafeErrors: string[];
   counts: { sources: number; activeIncidents: number };
 }
+
+/* ==========================================================================
+ * v1.6.0: Operational Intelligence & Capacity Forecasting
+ *
+ * Insights are NOT incidents: they are evidence-based observations about
+ * slow degradation, capacity, recurrence and performance, each carrying a
+ * confidence label and time window. Deterministic statistics only — no
+ * ML/AI, no cloud, no destructive remediation. Forecasts are ranges with
+ * explicit confidence, never exact alarmist dates.
+ * ========================================================================== */
+
+export type InsightType =
+  | "capacity"
+  | "trend"
+  | "recurrence"
+  | "degradation"
+  | "performance"
+  | "efficiency";
+
+export type InsightSeverity = "info" | "watch" | "warning";
+
+export type Confidence = "high" | "medium" | "low" | "insufficient";
+
+export type TrendRange = "24h" | "7d" | "30d";
+
+export type DataQuality = "good" | "partial" | "stale" | "missing";
+
+/** A bounded aggregate point in the internal trend layer (Fase 1). */
+export interface TrendSample {
+  /** Bucket start (ISO). */
+  t: string;
+  value: number | null;
+  quality: DataQuality;
+}
+
+/** Deterministic linear-trend result over a series (Fase 2/3). */
+export interface TrendResult {
+  /** Sign-consistent direction: rising | falling | flat | unknown. */
+  direction: "rising" | "falling" | "flat" | "unknown";
+  /** Per-day change in the metric's own unit (negative = falling). */
+  slopePerDay: number | null;
+  /** 0..1 coefficient of determination of the fit. */
+  fit: number | null;
+  sampleCount: number;
+  coverage: number;
+  quality: DataQuality;
+  confidence: Confidence;
+}
+
+export interface CapacityForecast {
+  entity: string;
+  /** Human label, e.g. "Cache pool". */
+  label: string;
+  metric: "storage-usage-percent";
+  current: number | null;
+  /** Per-day growth in percentage points. */
+  growthPerDay: number | null;
+  growthPerWeek: number | null;
+  window: TrendRange;
+  /** Percentage threshold the trend is projected against. */
+  projectedThreshold: number;
+  /** Conservative RANGE (not an exact date), ISO timestamps; null when
+   *  the trend is flat/noisy/insufficient — never an alarmist estimate. */
+  projectedThresholdFrom: string | null;
+  projectedThresholdTo: string | null;
+  /** Human summary, e.g. "90% in ~2–4 weeks" or "trend unavailable". */
+  summary: string;
+  confidence: Confidence;
+  sampleCount: number;
+  dataQuality: DataQuality;
+  recommendation: string | null;
+}
+
+export interface InsightEvidence {
+  signal: string;
+  value: string;
+  source: string;
+  window: TrendRange;
+  quality: DataQuality;
+}
+
+export interface Insight {
+  /** Stable fingerprint — one logical observation, never per-refresh. */
+  id: string;
+  entity: string;
+  type: InsightType;
+  severity: InsightSeverity;
+  title: string;
+  summary: string;
+  evidence: InsightEvidence[];
+  window: TrendRange;
+  confidence: Confidence;
+  firstObserved: string;
+  lastObserved: string;
+  actionable: boolean;
+  deepLink: string;
+  /** Safe, non-destructive suggestion (Fase 24), when applicable. */
+  recommendation: string | null;
+}
+
+export interface SourcePerformanceEntry {
+  source: string;
+  sampleCount: number;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  window: TrendRange;
+  confidence: Confidence;
+}
+
+export interface RecurrenceSummary {
+  entity: string;
+  kind: string;
+  occurrences24h: number;
+  occurrences7d: number;
+  totalActiveDurationMs: number;
+  meanDurationMs: number | null;
+  longestDurationMs: number | null;
+  lastOccurrence: string | null;
+  recurring: boolean;
+}
+
+export interface MemoryCreepInsight {
+  entity: string;
+  startBytes: number | null;
+  currentBytes: number | null;
+  deltaBytes: number | null;
+  slopeBytesPerHour: number | null;
+  window: TrendRange;
+  confidence: Confidence;
+  summary: string;
+}
+
+export interface InsightsPayload {
+  generatedAt: string;
+  /** WATCH SOON + TRENDS + CAPACITY + RECURRING + PERFORMANCE sections. */
+  sections: {
+    watchSoon: Insight[];
+    trends: Insight[];
+    capacity: Insight[];
+    recurring: Insight[];
+    performance: Insight[];
+  };
+  forecasts: CapacityForecast[];
+  memoryCreep: MemoryCreepInsight[];
+  sourcePerformance: SourcePerformanceEntry[];
+  recurrence: RecurrenceSummary[];
+  /** Capability honesty: which ranges have enough history at all. */
+  ranges: Array<{ range: TrendRange; available: boolean; reason: string | null }>;
+}
+
+export interface EntityHistoryPayload {
+  entity: string;
+  window: TrendRange;
+  cpuTrend: TrendSample[];
+  memoryTrend: TrendSample[];
+  restarts: Array<{ at: string; correlated: string | null }>;
+  incidents: Array<{ id: string; title: string; firstSeenAt: string; resolvedAt: string | null }>;
+  insights: Insight[];
+  forecast: CapacityForecast | null;
+  growth: { perDayPercent: number | null; perWeekPercent: number | null } | null;
+}

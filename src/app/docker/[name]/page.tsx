@@ -29,6 +29,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/actions/confirm-dialog";
 import { useDockerAction } from "@/components/actions/use-docker-action";
+import { EntityInsights } from "@/components/docker/entity-insights";
 import { cn, formatBytes, formatDateTimeIso, formatPercent, formatRate } from "@/lib/utils";
 import type {
   ContainerDetailPayload,
@@ -374,6 +375,7 @@ export default function ContainerDetailPage() {
           </Card>
 
           <RecentEvents name={name} />
+          <EntityInsights name={name} />
         </div>
       </div>
 

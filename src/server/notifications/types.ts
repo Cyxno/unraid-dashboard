@@ -16,7 +16,8 @@ export type EventCategory =
   | "storage"
   | "beacon-updates"
   | "services"
-  | "resolved";
+  | "resolved"
+  | "insights";
 
 export interface RawEvent {
   /** Stable fingerprint, e.g. "docker:container:plex:unhealthy". Same
@@ -89,6 +90,10 @@ export interface NotificationPreferences {
     "beacon-updates": boolean;
     services: boolean;
     resolved: boolean;
+    /** v1.6.0 (Fase 25): insights are NEVER pushed by default. Only a
+     *  small opt-in class (capacity critical soon, extreme persistent
+     *  degradation) is eligible, and only when this category is on. */
+    insights: boolean;
   };
 }
 
@@ -103,6 +108,7 @@ export const DEFAULT_PREFERENCES: NotificationPreferences = {
     "beacon-updates": false,
     services: true,
     resolved: false,
+    insights: false,
   },
 };
 

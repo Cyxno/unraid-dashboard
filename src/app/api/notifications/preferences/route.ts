@@ -42,6 +42,7 @@ export async function POST(request: NextRequest) {
       "beacon-updates": coerceBool(body.categories?.["beacon-updates"], current.categories["beacon-updates"]),
       services: coerceBool(body.categories?.services, current.categories.services),
       resolved: coerceBool(body.categories?.resolved, current.categories.resolved),
+      insights: coerceBool(body.categories?.insights, current.categories.insights),
     },
   };
   state.preferences = next;

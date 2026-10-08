@@ -3,10 +3,11 @@ import { enrichedOverview } from "@/server/docker/updates";
 import { getOverview } from "@/server/unraid/service";
 import { currentIncidentSnapshot, runIncidentCycle } from "@/server/incidents/cycle";
 import { incidentToRawEvent } from "@/server/incidents/engine";
+import { currentInsights } from "@/server/insights/engine";
 import type { RawEvent } from "./types";
 
 /**
- * Event sources (v1.5.0): health-class conditions come EXCLUSIVELY from
+ * Event sources (v1.6.0): health-class conditions come EXCLUSIVELY from
  * the incident engine — one canonical vocabulary for the Overview,
  * Incident Center, notifications and agent API. This module triggers a
  * cycle (cheap: overview sections are TTL-cached) and maps ACTIVE
@@ -15,6 +16,12 @@ import type { RawEvent } from "./types";
  *
  * Update availability stays deliberately OUT of the incident model
  * (update state is separate from health — v1.4.x semantics preserved).
+ *
+ * v1.6.0: insights are NEVER notification sources by default (Fase 25).
+ * Only a narrow opt-in class passes — the "insights" notification
+ * category (default OFF) gates the two eligible classes:
+ *   - capacity insight at WARNING severity (critical threshold soon)
+ *   - extreme persistent degradation (cpu-drift at WARNING severity)
  */
 
 async function incidentEvents(): Promise<RawEvent[]> {
@@ -36,6 +43,29 @@ async function incidentEvents(): Promise<RawEvent[]> {
     // existing incidents open during source outages (no false recovery).
     return [];
   }
+}
+
+/** Opt-in insight pushes — never fires unless the user enabled the
+ *  "insights" category. Fingerprint is the insight id (stable dedupe). */
+function insightEvents(): RawEvent[] {
+  const snapshot = currentInsights();
+  const eligible = [...snapshot.sections.watchSoon, ...snapshot.sections.trends];
+  const events: RawEvent[] = [];
+  for (const insight of eligible) {
+    if (insight.severity !== "warning") continue;
+    if (insight.type !== "capacity" && insight.type !== "degradation") continue;
+    events.push({
+      fingerprint: insight.id,
+      category: "insights",
+      severity: "warning",
+      title: insight.title,
+      body: insight.summary,
+      source: "insights",
+      url: insight.deepLink,
+      occurredAt: Date.now(),
+    });
+  }
+  return events;
 }
 
 async function dockerUpdateEvents(): Promise<RawEvent[]> {
@@ -94,8 +124,10 @@ async function beaconUpdateEvent(): Promise<RawEvent[]> {
 export async function collectEvents(): Promise<RawEvent[]> {
   const batches = await Promise.all([
     incidentEvents(),
+    insightEvents(),
     dockerUpdateEvents(),
     beaconUpdateEvent(),
   ]);
   return batches.flat();
 }
+

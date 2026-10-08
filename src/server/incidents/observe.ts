@@ -82,7 +82,17 @@ const UPDATE_FAILURE_CACHE_MS = 60_000;
 async function cachedHelperStatus() {
   const cached = globalCache.__incidentHelperStatus;
   if (cached && Date.now() - cached.at < HELPER_STATUS_CACHE_MS) return cached.value;
+  const startedAt = Date.now();
   const value = await getHelperStatus();
+  // Re-note with measured latency for the source-performance ring (v1.6.0);
+  // the earlier note in the cycle carries no latency.
+  noteSourceAttempt("helper", {
+    ok: !value.configured || value.reachable !== false,
+    at: Date.now(),
+    latencyMs: Date.now() - startedAt,
+    detail: value.configured ? (value.reachable === false ? "unreachable" : "reachable") : "not configured",
+    safeError: value.reachable === false ? (value.reason ?? "helper unreachable") : null,
+  });
   globalCache.__incidentHelperStatus = { at: Date.now(), value };
   return value;
 }

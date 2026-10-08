@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
+import { usePoll } from "@/hooks/use-poll";
 import { useOverview } from "@/components/layout/overview-provider";
 import { MetricCard, MetricCardSkeleton } from "@/components/dashboard/metric-card";
 import { HeroStrip, HeroStripSkeleton } from "@/components/dashboard/hero-strip";
@@ -33,7 +34,7 @@ import {
   formatUptime,
   humanState,
 } from "@/lib/utils";
-import type { HealthSummary } from "@/lib/api-types";
+import type { HealthSummary, InsightsPayload } from "@/lib/api-types";
 
 function HealthBanner({ health }: { health: HealthSummary }) {
   if (!health.level || health.level === "healthy") return null;
@@ -84,8 +85,35 @@ function HealthBanner({ health }: { health: HealthSummary }) {
   );
 }
 
-export default function OverviewPage() {
-  const overview = useOverview();
+/** Overview insights strip (v1.6.0 Fase 17): max 2-3 insights, never
+ *  duplicating active incidents — a calm pointer into /insights. */
+const INSIGHTS_STRIP_POLL_MS = 120_000;
+
+function OverviewInsightsStrip() {
+  const { data } = usePoll<InsightsPayload>("/api/insights", INSIGHTS_STRIP_POLL_MS);
+  const picks = (data?.sections.watchSoon ?? []).slice(0, 3);
+  if (picks.length === 0) return null;
+  return (
+    <section aria-label="Operational insights" className="space-y-1.5" data-testid="overview-insights">
+      {picks.map((insight) => (
+        <Link
+          key={insight.id}
+          href={insight.deepLink}
+          className="flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border border-border/50 bg-card/30 px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent/30"
+        >
+          <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-600 dark:text-sky-400">
+            insight
+          </span>
+          <span className="font-medium text-foreground/80">{insight.title}</span>
+          <span className="truncate">{insight.summary}</span>
+          <span className="ml-auto text-xs">confidence: {insight.confidence}</span>
+        </Link>
+      ))}
+    </section>
+  );
+}
+
+export default function OverviewPage() {  const overview = useOverview();
   const { prefs, setPref } = usePrefs();
   const payload = overview.data;
   const loading = overview.loading && !payload;
@@ -110,6 +138,7 @@ export default function OverviewPage() {
         </p>
       )}
       {payload?.health && <HealthBanner health={payload.health} />}
+      <OverviewInsightsStrip />
 
       {loading || !payload ? (
         <HeroStripSkeleton />

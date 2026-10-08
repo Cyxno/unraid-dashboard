@@ -124,10 +124,15 @@ export const SOURCE_EXPECTED_INTERVAL_MS: Record<string, number> = {
 
 /* Incident lifecycle (Fase 5/12/13) ----------------------------------------- */
 
-/** Recovered incidents kept in history (bounded state-file growth). */
-export const INCIDENT_RECOVERED_HISTORY_MAX = 50;
+/**
+ * Recovered incidents kept in history (bounded state-file growth).
+ * v1.6.0: raised from 24h/50 to 30d/500 so 7-day RECURRENCE analysis
+ * (operational intelligence) has real history to work with. Still
+ * strictly bounded — pruning runs on every save.
+ */
+export const INCIDENT_RECOVERED_HISTORY_MAX = 500;
 /** Recovered incidents older than this are pruned even below the cap. */
-export const INCIDENT_RECOVERY_RETENTION_MS = 24 * 60 * 60 * 1000;
+export const INCIDENT_RECOVERY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 /** Timeline events kept per incident (bounded). */
 export const INCIDENT_TIMELINE_MAX = 50;
 /** Evidence entries kept per incident (bounded). */
