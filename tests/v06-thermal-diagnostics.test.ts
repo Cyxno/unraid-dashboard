@@ -12,8 +12,9 @@ import {
   type TempSeriesPoint,
 } from "../src/server/prometheus/thermal-diagnostics";
 import { TEMP_BUCKET_BOUNDS } from "../src/server/thresholds";
-import { deriveHealth, type HealthInputs } from "../src/server/health";
 import { classifySensor } from "../src/server/prometheus/thermal";
+import { applyIncidentCycle } from "../src/server/incidents/engine";
+import { allHealthy, freshState } from "./incident-fixtures";
 
 /** Builds a 60s-step series from per-minute values (epoch t0 = 0-based). */
 function minuteSeries(values: number[], t0 = 1_700_000_000): TempSeriesPoint[] {
@@ -176,65 +177,41 @@ describe("v06 hourly timeline", () => {
   });
 });
 
-describe("v06 health thermal hysteresis", () => {
-  const base = {
-    storage: { status: "live", data: { state: "STARTED", totalBytes: 1, usedBytes: 0, freeBytes: 1, parityStatus: "COMPLETED", parityProgressPercent: null, disks: [] }, fetchedAt: "", ageMs: 0 },
-    docker: { status: "live", data: { running: 0, total: 0, containers: [] }, fetchedAt: "", ageMs: 0 },
-    notifications: { status: "live", data: { unreadCounts: { info: 0, warning: 0, alert: 0 }, recent: [] }, fetchedAt: "", ageMs: 0 },
-    memoryPercent: 40,
-    temperatureCriticalCount: 0,
-    sustainedCpuPercent: null,
-    loadLevel: null,
-    prometheusStatus: null,
-  } satisfies Pick<HealthInputs, "memoryPercent" | "temperatureCriticalCount" | "sustainedCpuPercent" | "loadLevel" | "prometheusStatus"> & Record<string, unknown>;
+describe("v06 thermal hysteresis (ported to the v1.5.0 incident engine)", () => {
+  // v1.5.0: thermal classification lives in the incident engine's thermal
+  // rules. Same hysteresis contract, incident vocabulary:
+  //   - a single hot sample is NEVER an incident (sustained average only)
+  //   - sustained average past warning -> one WARNING thermal incident
 
-  it("does NOT mark critical from a single transient critical sample", () => {
-    const health = deriveHealth({
-      ...base,
-      storage: base.storage as HealthInputs["storage"],
-      docker: base.docker as HealthInputs["docker"],
-      notifications: base.notifications as HealthInputs["notifications"],
-      cpuPackageC: 95,
-      cpuPackage5mAvgC: 78,
-    } as HealthInputs);
-    assert.equal(health.level, "attention");
-    assert.ok(health.reasons.join(" ").includes("sustained average"));
+  function run(thermal: { packageC: number | null; package5mAvgC: number | null; peak1hC: number | null; hottestName: string | null }) {
+    const state = freshState();
+    const output = applyIncidentCycle({
+      observation: allHealthy({ thermal }),
+      state,
+    });
+    return output.active.find((incident) => incident.id === "host:thermal:package") ?? null;
+  }
+
+  it("does NOT open an incident from a single transient critical sample", () => {
+    assert.equal(run({ packageC: 95, package5mAvgC: 78, peak1hC: 95, hottestName: "cpu" }), null);
   });
 
-  it("marks critical when the 5m average is critical", () => {
-    const health = deriveHealth({
-      ...base,
-      storage: base.storage as HealthInputs["storage"],
-      docker: base.docker as HealthInputs["docker"],
-      notifications: base.notifications as HealthInputs["notifications"],
-      cpuPackageC: 91,
-      cpuPackage5mAvgC: 90.5,
-    } as HealthInputs);
-    assert.equal(health.level, "critical");
+  it("opens one warning incident when the 5m average is critical", () => {
+    const incident = run({ packageC: 91, package5mAvgC: 90.5, peak1hC: 91, hottestName: "cpu" });
+    assert.ok(incident);
+    assert.equal(incident.severity, "warning");
+    assert.match(incident.title, /critical band/);
   });
 
-  it("stays healthy below thresholds", () => {
-    const health = deriveHealth({
-      ...base,
-      storage: base.storage as HealthInputs["storage"],
-      docker: base.docker as HealthInputs["docker"],
-      notifications: base.notifications as HealthInputs["notifications"],
-      cpuPackageC: 75,
-      cpuPackage5mAvgC: 72,
-    } as HealthInputs);
-    assert.equal(health.level, "healthy");
+  it("stays incident-free below thresholds", () => {
+    assert.equal(run({ packageC: 75, package5mAvgC: 72, peak1hC: 75, hottestName: "cpu" }), null);
   });
 
-  it("flags sustained warning-level average as attention", () => {
-    const health = deriveHealth({
-      ...base,
-      storage: base.storage as HealthInputs["storage"],
-      docker: base.docker as HealthInputs["docker"],
-      notifications: base.notifications as HealthInputs["notifications"],
-      cpuPackageC: 81,
-      cpuPackage5mAvgC: 81,
-    } as HealthInputs);
-    assert.equal(health.level, "attention");
+  it("flags sustained warning-level average as a warning incident", () => {
+    const incident = run({ packageC: 81, package5mAvgC: 81, peak1hC: 81, hottestName: "cpu" });
+    assert.ok(incident);
+    assert.equal(incident.severity, "warning");
+    assert.doesNotMatch(incident.title, /critical band/);
   });
 });
 

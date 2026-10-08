@@ -73,10 +73,13 @@ describe("v0.9.9 live docker actions + update awareness", () => {
   });
 
   it("health reasons are ranked critical-first and thermal rules are documented", () => {
-    const health = read("src/server/health.ts");
-    assert.match(health, /\.sort\(\(a, b\) => b\.rank - a\.rank\)/);
-    assert.match(health, /throttling\s+NEVER claimed/);
-    assert.match(health, /critical\s+package 5m average ≥ 90 °C/);
+    // v1.5.0: deriveHealth was replaced by the incident engine; ranking now
+    // lives in engine.ts, thermal policy in severity.ts.
+    const engine = read("src/server/incidents/engine.ts");
+    assert.match(engine, /\.sort\(\(a, b\) => b\.rank - a\.rank\)/);
+    const severity = read("src/server/incidents/severity.ts");
+    assert.match(severity, /Sustained thermal/);
+    assert.match(severity, /WARNING/);
   });
 
   it("header health badge explains itself (popover, ranked reasons)", () => {

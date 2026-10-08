@@ -1,5 +1,6 @@
 import {
   Activity,
+  AlertTriangle,
   Bot,
   Boxes,
   BellRing,
@@ -39,6 +40,7 @@ export const NAV_GROUP_LABELS: Record<NavGroup, string> = {
 
 export const NAV_ITEMS: NavItem[] = [
   { title: "Overview", href: "/", icon: LayoutDashboard, group: "overview" },
+  { title: "Incidents", href: "/incidents", icon: AlertTriangle, group: "overview" },
   { title: "Docker", href: "/docker", icon: Boxes, group: "infrastructure" },
   { title: "Storage", href: "/storage", icon: HardDrive, group: "infrastructure" },
   { title: "VMs", href: "/vms", icon: Monitor, group: "infrastructure", capability: "power state" },

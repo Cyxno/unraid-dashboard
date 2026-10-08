@@ -3,6 +3,7 @@ import { evaluateEvents } from "./engine";
 import { ensureNotificationState, loadState, saveNow, scheduleSave } from "./store";
 import { sendToSubscription, pushConfigured } from "./push";
 import { collectEvents as collectEventsFromSources } from "./sources";
+import { noteSourceAttempt } from "@/server/incidents/source-health";
 import type { DeliveryStatus, NotificationRecord, RawEvent } from "./types";
 
 /**
@@ -107,6 +108,14 @@ async function dispatchPush(
         }
       }
     }
+    /* v1.5.0: delivery observability for the source-health registry —
+       a configured push path that stops accepting deliveries is a
+       degraded source (visible in Diagnostics + Incident Center). */
+    noteSourceAttempt("web-push", {
+      ok: anySuccess,
+      at: Date.now(),
+      safeError: anySuccess ? null : (outcomes.find((outcome) => !outcome.ok)?.detail ?? "delivery failed"),
+    });
     notification.record.delivery = anySuccess ? "pushed" : "failed";
     notification.record.detail = anySuccess ? null : (outcomes.find((outcome) => !outcome.ok)?.detail ?? "delivery failed");
   }
@@ -176,6 +185,32 @@ async function runCycle(): Promise<void> {
     for (const notification of notifications) {
       const record = state.history.find((entry) => entry.id === notification.record.id) ?? notification.record;
       broadcastToClients(record);
+    }
+
+    /* v1.5.0 (Fase 26/27): reflect delivery on the incident — only
+       technically proven facts ("provider accepted"/"delivered in-app"),
+       never "device displayed". */
+    try {
+      const { loadIncidentsState, scheduleIncidentsSave } = await import("@/server/incidents/store");
+      const { markIncidentNotified } = await import("@/server/incidents/engine");
+      const incidentsState = loadIncidentsState();
+      for (const notification of notifications) {
+        const delivery = notification.record.delivery;
+        markIncidentNotified(incidentsState, notification.fingerprint, {
+          push:
+            delivery === "pushed"
+              ? "provider-accepted"
+              : delivery === "failed"
+                ? "failed"
+                : delivery === "skipped-preference" || delivery === "skipped-unconfigured"
+                  ? "skipped"
+                  : null,
+          inApp: "delivered",
+        });
+      }
+      scheduleIncidentsSave();
+    } catch {
+      // Incident bookkeeping must never break dispatch.
     }
 
     await saveNow().catch(() => scheduleSave(1000));

@@ -48,8 +48,11 @@ describe("v1.3.20: temperature/SMART is decoupled from realtime metrics polling"
 
   test("temperature consumers read the dedicated provider, not RawMetrics", () => {
     assert.doesNotMatch(service, /temperature: mapTemperature\(payload\)/);
-    assert.match(service, /temperatureSection\.data\?\.criticalCount/);
+    // v1.5.0: the temperature provider's criticalCount is consumed by the
+    // incident engine (via the overview payload), no longer by deriveHealth.
     assert.match(service, /temperature: tempSection\.data \?\? null/);
+    const observe = fs.readFileSync(path.join(ROOT, "src/server/incidents/observe.ts"), "utf8");
+    assert.match(observe, /payload\.temperature\.data/);
   });
 });
 

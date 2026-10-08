@@ -38,15 +38,26 @@ import type { HealthSummary } from "@/lib/api-types";
 function HealthBanner({ health }: { health: HealthSummary }) {
   if (!health.level || health.level === "healthy") return null;
   const critical = health.level === "critical";
+  const counts = health.counts;
+  const summaryParts: string[] = [];
+  if (counts) {
+    if (counts.critical > 0) summaryParts.push(`${counts.critical} critical`);
+    if (counts.warning > 0) summaryParts.push(`${counts.warning} warning`);
+    if (counts.info > 0) summaryParts.push(`${counts.info} info`);
+  }
+  /* Fase 20 hierarchy: ONE summary line + the top incident + a link into
+     the Incident Center. The full list lives there — the Overview never
+     repeats every incident title in three places. */
   return (
     <section
       role={critical ? "alert" : "status"}
       aria-label={`System health: ${health.level}`}
       className={
         critical
-          ? "rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3"
-          : "rounded-lg border border-warning/40 bg-warning/10 px-4 py-3"
+          ? "flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3"
+          : "flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3"
       }
+      data-testid="health-banner"
     >
       <p className="flex items-center gap-2 text-sm font-medium">
         <span
@@ -57,13 +68,18 @@ function HealthBanner({ health }: { health: HealthSummary }) {
               : "size-2 animate-pulse rounded-full bg-warning"
           }
         />
-        {critical ? "Needs attention" : "Warning"}
+        {summaryParts.length > 0 ? `${summaryParts.join(" · ")} incident(s)` : "Needs attention"}
       </p>
-      <ul className="mt-1 list-inside list-disc text-sm text-muted-foreground">
-        {health.reasons.map((reason) => (
-          <li key={reason}>{reason}</li>
-        ))}
-      </ul>
+      {health.reasons[0] ? (
+        <p className="truncate text-sm text-muted-foreground">{health.reasons[0]}</p>
+      ) : null}
+      <Link
+        href="/incidents"
+        className="ml-auto inline-flex items-center gap-1 text-sm font-medium underline-offset-2 hover:underline"
+        data-testid="incidents-link"
+      >
+        Open Incident Center
+      </Link>
     </section>
   );
 }
@@ -103,7 +119,6 @@ export default function OverviewPage() {
           osVersion={payload.identity.data?.osVersion ?? null}
           uptimeSeconds={payload.identity.data?.uptimeSeconds ?? null}
           healthLevel={payload.health.level}
-          healthReasons={payload.health.reasons}
           containersRunning={payload.docker.data?.running ?? null}
           containersTotal={payload.docker.data?.total ?? null}
         />

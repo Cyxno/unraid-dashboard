@@ -31,6 +31,19 @@ export const helperContainerFactSchema = z.object({
   unsupported: z.array(z.string()).optional(),
   externallyManaged: z.boolean().optional(),
   snapshotPresent: z.boolean().optional(),
+  /** v1.5.0 additive: bounded healthcheck explainability (Fase 9). */
+  restartCount: z.number().int().nonnegative().nullable().optional(),
+  healthDetail: z
+    .object({
+      status: z.string().nullable().optional(),
+      failingStreak: z.number().int().nonnegative().nullable().optional(),
+      lastExitCode: z.number().int().nullable().optional(),
+      lastOutput: z.string().max(400).nullable().optional(),
+      lastCheckedAt: z.string().nullable().optional(),
+      lastSuccessAt: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export const helperInventorySchema = z.object({

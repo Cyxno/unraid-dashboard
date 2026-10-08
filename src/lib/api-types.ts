@@ -514,6 +514,14 @@ export interface DataSourceStatus {
 export interface DiagnosticsPayload {
   version: BuildInfoDto;
   sources: DataSourceStatus;
+  /** v1.5.0: canonical per-source health + self-observability confidence. */
+  sourceHealth?: SourceHealth[];
+  confidence?: ObservabilityConfidence;
+  persistence?: {
+    dataDirWritable: boolean | null;
+    lastSuccessfulPersistAt: string | null;
+    incidentsStateBytes: number | null;
+  };
   /** ISO timestamps of last successful fetch per server-side domain. */
   sections: Record<string, string | null>;
   /** v0.6 self-monitoring + persistence health (server-side). */
@@ -757,4 +765,202 @@ export interface ContainerDetailPayload {
   networks: Array<{ name: string; ip: string | null; gateway: string | null; mac: string | null }>;
   /** Full label set (labels are not env secrets). */
   labels: Record<string, string>;
+}
+
+/* ==========================================================================
+ * v1.5.0: Incident Intelligence & Self-Diagnostics
+ *
+ * One canonical model for source health, freshness, evidence and
+ * incidents. Every warning/critical the UI or notifications express must
+ * be traceable to an incident carrying evidence (what proved it), a
+ * source (who observed it), freshness (how old the data is) and impact
+ * (what is degraded as a consequence). A source outage produces ONE root
+ * incident with impact entries — never a cascade of per-entity problems.
+ * ========================================================================== */
+
+/** Canonical signal-source identifiers (Fase 1 matrix). */
+export type SourceId =
+  | "unraid-api"
+  | "prometheus"
+  | "cadvisor"
+  | "node-exporter"
+  | "helper"
+  | "docker-inventory"
+  | "web-push"
+  | "persistence"
+  | "beacon-update";
+
+/** Canonical freshness classification (Fase 3) — the ONLY staleness
+ *  vocabulary in the codebase; ad-hoc Date.now() comparisons are
+ *  forbidden outside freshness.ts. */
+export type Freshness = "fresh" | "aging" | "stale" | "unknown";
+
+/** Source health contract (Fase 2). */
+export type SourceHealthStatus = "healthy" | "degraded" | "stale" | "unavailable";
+
+export interface SourceHealth {
+  source: SourceId;
+  status: SourceHealthStatus;
+  /** ISO timestamp of the last successful observation. */
+  lastSuccessAt: string | null;
+  /** ISO timestamp of the last attempt (success or failure). */
+  lastAttemptAt: string | null;
+  /** Age of the last successful data in ms (null = never succeeded). */
+  ageMs: number | null;
+  /** Expected observation interval for freshness classification. */
+  expectedIntervalMs: number | null;
+  /** Last observed request latency in ms. */
+  latencyMs: number | null;
+  /** Sanitized error of the last failed attempt (no credentials/URLs). */
+  safeError: string | null;
+  freshness: Freshness;
+  /** Short human detail, e.g. affected domains. */
+  detail: string | null;
+}
+
+/** Evidence model (Fase 4). `evidenceType` guards causality language:
+ *  only `direct` may state cause; `correlated` reads "correlated with". */
+export type EvidenceType = "direct" | "derived" | "correlated" | "unknown";
+
+export interface Evidence {
+  /** What the evidence is about: container name, "array", disk, "host". */
+  entity: string;
+  /** Signal name, e.g. "docker.health", "disk.temperatureC". */
+  signal: string;
+  source: SourceId;
+  /** ISO timestamp when the value was observed. */
+  observedAt: string;
+  freshness: Freshness;
+  /** Human-readable bounded value, e.g. "health=unhealthy". */
+  value: string;
+  /** Rule/threshold id that classified this evidence, when derived. */
+  rule?: string | null;
+  evidenceType: EvidenceType;
+}
+
+export type IncidentSeverity = "critical" | "warning" | "info";
+export type IncidentStatus = "active" | "recovered";
+
+export type IncidentKind =
+  | "source-unavailable"
+  | "source-degraded"
+  | "docker-unhealthy"
+  | "crash-loop"
+  | "flapping"
+  | "array-state"
+  | "disk-state"
+  | "disk-thermal"
+  | "thermal"
+  | "memory-pressure"
+  | "cpu-sustained"
+  | "notification-backlog"
+  | "update-failed"
+  | "persistence-failure";
+
+export interface TimelineEvent {
+  at: string;
+  /** Compact factual event line, e.g. "became unhealthy". */
+  event: string;
+  detail?: string | null;
+}
+
+/** Delivery observability (Fase 27): only technically proven facts.
+ *  Push = provider accepted; in-app = delivered to open SSE clients.
+ *  Never claims "device displayed". */
+export interface IncidentDelivery {
+  /** "provider-accepted" | "failed" | "not-configured" | "no-devices" | null */
+  push: string | null;
+  /** "delivered" | "no-subscribers" | null */
+  inApp: string | null;
+  at: string | null;
+}
+
+export interface Incident {
+  /** Stable fingerprint — dedupe identity across polls and restarts. */
+  id: string;
+  entity: string;
+  kind: IncidentKind;
+  title: string;
+  severity: IncidentSeverity;
+  status: IncidentStatus;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  /** lastSeenAt − firstSeenAt while active; final duration when recovered. */
+  durationMs: number;
+  /** Primary source that proves this incident. */
+  source: SourceId;
+  evidence: Evidence[];
+  /** Root incident this one is a consequence of (cascade grouping). */
+  rootCauseId: string | null;
+  /** Capabilities degraded by (or suppressed under) this incident. */
+  impact: string[];
+  notifiedAt: string | null;
+  resolvedAt: string | null;
+  /** Health-toggle pattern detected (one incident, no push storm). */
+  flapping: boolean;
+  /** Problems = actionable: false for neutral states and backlog info. */
+  actionable: boolean;
+  timeline: TimelineEvent[];
+  /** Safe, non-destructive next check suggestion. */
+  safeCheck: string | null;
+  delivery: IncidentDelivery | null;
+}
+
+/** Derived overall health (replaces the old heuristic `deriveHealth`):
+ *  the verdict is a pure function of active incidents. */
+export interface HealthSummary {
+  level: "healthy" | "attention" | "critical" | null;
+  reasons: string[];
+  /** v1.5.0: active incident counts by severity (Overview hierarchy). */
+  counts?: { critical: number; warning: number; info: number };
+}
+
+export interface IncidentsPayload {
+  active: Incident[];
+  /** Bounded recently-recovered history (newest first). */
+  recovered: Incident[];
+  counts: { critical: number; warning: number; info: number; active: number };
+  /** Overall verdict derived from the active incidents. */
+  health: HealthSummary;
+  /** Per-source health snapshot backing these incidents (Fase 2). */
+  sources: SourceHealth[];
+  /** Health of health (Fase 24): is Beacon's own observability trusted? */
+  confidence: ObservabilityConfidence;
+  evaluatedAt: string;
+}
+
+export interface ObservabilityConfidence {
+  /** Overall: "full" | "degraded" | "blind". */
+  level: "full" | "degraded" | "blind";
+  reasons: string[];
+}
+
+/** Docker healthcheck explainability (Fase 9), served by the helper
+ *  inventory (bounded, sanitized — never env/secrets). */
+export interface ContainerHealthDetail {
+  status: string | null;
+  failingStreak: number | null;
+  lastExitCode: number | null;
+  /** Last healthcheck output, sanitized + hard-capped. */
+  lastOutput: string | null;
+  lastCheckedAt: string | null;
+  lastSuccessAt: string | null;
+}
+
+export interface SupportBundlePayload {
+  generatedAt: string;
+  version: BuildInfoDto;
+  sourceHealth: SourceHealth[];
+  confidence: ObservabilityConfidence;
+  incidents: { active: number; critical: number; warning: number; info: number };
+  activeIncidents: Array<Pick<Incident, "id" | "entity" | "kind" | "severity" | "firstSeenAt" | "lastSeenAt" | "title">>;
+  persistence: {
+    dataDirWritable: boolean | null;
+    lastSuccessfulPersistAt: string | null;
+    incidentsFileBytes: number | null;
+    notificationsFileBytes: number | null;
+  };
+  inventoryDiagnostics: Record<string, unknown> | null;
+  recentSafeErrors: string[];
+  counts: { sources: number; activeIncidents: number };
 }

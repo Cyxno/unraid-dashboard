@@ -1,80 +1,41 @@
-import { getHelperStatus } from "@/server/update/helper-client";
 import { checkForUpdate } from "@/server/actions/update-check";
-import { getOverview } from "@/server/unraid/service";
 import { enrichedOverview } from "@/server/docker/updates";
+import { getOverview } from "@/server/unraid/service";
+import { currentIncidentSnapshot, runIncidentCycle } from "@/server/incidents/cycle";
+import { incidentToRawEvent } from "@/server/incidents/engine";
 import type { RawEvent } from "./types";
 
 /**
- * Event sources: derive raw notification events from Beacon's EXISTING
- * state surfaces (overview health semantics, the Unraid-reported
- * `updateAvailable` flag, the cached registry check, helper status).
- * Every event carries a STABLE fingerprint so the engine dedupes by
- * identity, not by poll cycle. Sources never trigger registry sweeps.
+ * Event sources (v1.5.0): health-class conditions come EXCLUSIVELY from
+ * the incident engine — one canonical vocabulary for the Overview,
+ * Incident Center, notifications and agent API. This module triggers a
+ * cycle (cheap: overview sections are TTL-cached) and maps ACTIVE
+ * actionable incidents to RawEvents with stable fingerprints, so the
+ * notification engine's dedupe/recovery logic works unchanged.
+ *
+ * Update availability stays deliberately OUT of the incident model
+ * (update state is separate from health — v1.4.x semantics preserved).
  */
 
-
-async function healthEvents(): Promise<RawEvent[]> {
-  const events: RawEvent[] = [];
+async function incidentEvents(): Promise<RawEvent[]> {
   try {
-    const overview = await getOverview();
-    if (overview.docker?.status === "live" && overview.docker.data) {
-      for (const container of overview.docker.data.containers) {
-        if (container.health === "unhealthy") {
-          events.push({
-            fingerprint: `docker:container:${container.name}:unhealthy`,
-            category: "docker-health",
-            severity: "critical",
-            title: `Container unhealthy: ${container.name}`,
-            body: container.status || "The container's health check reports unhealthy.",
-            source: "docker",
-            url: `/docker/${encodeURIComponent(container.name)}`,
-            occurredAt: Date.now(),
-          });
-        }
-      }
+    // Ensure freshness even when no dashboard client is polling: the
+    // cycle runs on cached sections, so this is at most one TTL-serving
+    // overview evaluation per notification cycle (60s).
+    const snapshot = currentIncidentSnapshot();
+    const stale = snapshot.evaluatedAt == null || Date.now() - Date.parse(snapshot.evaluatedAt) > 30_000;
+    if (stale) {
+      await runIncidentCycle(await getOverview());
     }
-    if (overview.storage?.status === "live" && overview.storage.data) {
-      const storage = overview.storage.data;
-      if (storage.state && storage.state !== "STARTED") {
-        events.push({
-          fingerprint: `storage:array:${storage.state}`,
-          category: "storage",
-          severity: "critical",
-          title: `Array ${storage.state.replaceAll("_", " ").toLowerCase()}`,
-          body: "The Unraid array is not in its nominal started state.",
-          source: "storage",
-          url: "/storage",
-          occurredAt: Date.now(),
-        });
-      }
-      for (const disk of storage.disks ?? []) {
-        const critical =
-          disk.fsColor === "RED" || disk.fsColor === "RED_BALL" ||
-          (disk.state && !["DISK_OK", "DISK_NP", "DISK_DSBL_NP"].includes(disk.state));
-        const warning = !critical && disk.temperatureC != null && disk.temperatureC >= 45;
-        if (critical || warning) {
-          events.push({
-            fingerprint: `storage:disk:${disk.name}:${critical ? "critical" : "warning"}`,
-            category: "storage",
-            severity: critical ? "critical" : "warning",
-            title: `Disk ${disk.name} ${critical ? "critical" : "warning"}`,
-            body: critical
-              ? `State ${disk.state ?? "unknown"}${disk.fsColor ? ` (${disk.fsColor})` : ""}.`
-              : `Temperature ${disk.temperatureC}°C.`,
-            source: "storage",
-            url: "/storage",
-            occurredAt: Date.now(),
-          });
-        }
-      }
-    }
-    // Note: autostart+stopped containers are deliberately NOT events —
-    // a stopped container is a state, not an incident (v1.1.5 semantics).
+    return currentIncidentSnapshot()
+      .active.filter((incident) => incident.actionable)
+      .map((incident) => incidentToRawEvent(incident, Date.now()));
   } catch {
     // Overview unavailable (e.g. before first Unraid answer): no events —
-    // transient loading states never notify.
+    // transient loading states never notify. The engine itself holds
+    // existing incidents open during source outages (no false recovery).
+    return [];
   }
-  return events;
 }
 
 async function dockerUpdateEvents(): Promise<RawEvent[]> {
@@ -130,37 +91,11 @@ async function beaconUpdateEvent(): Promise<RawEvent[]> {
   return [];
 }
 
-async function serviceEvents(): Promise<RawEvent[]> {
-  try {
-    const helper = await getHelperStatus();
-    // Only an OPERATOR-CONFIGURED helper that drops offline is a service
-    // warning; "not configured" is a valid steady state.
-    if (helper.configured && helper.reachable === false) {
-      return [
-        {
-          fingerprint: "services:helper:unreachable",
-          category: "services",
-          severity: "warning",
-          title: "Update helper unreachable",
-          body: helper.reason ?? "The configured update helper is not responding.",
-          source: "services",
-          url: "/settings",
-          occurredAt: Date.now(),
-        },
-      ];
-    }
-  } catch {
-    // helper status failing is itself the condition above; never throw.
-  }
-  return [];
-}
-
 export async function collectEvents(): Promise<RawEvent[]> {
   const batches = await Promise.all([
-    healthEvents(),
+    incidentEvents(),
     dockerUpdateEvents(),
     beaconUpdateEvent(),
-    serviceEvents(),
   ]);
   return batches.flat();
 }
