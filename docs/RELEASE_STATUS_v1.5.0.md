@@ -42,12 +42,28 @@ Bewezen gedrag in productie:
 
 Alle fixes: 967/967 tests groen, lint 0/0, typecheck clean. De v1.5.0-tag is NIET herschreven (immutable-semver policy); de fixes liggen klaar op main voor een 1.5.1-patch-release.
 
-## 2-uurs stabiliteit (Fase 41)
+## 2-uurs stabiliteit (Fase 41) — UITSLAG
 
-Wordt uitgevoerd op de productie-tag 1.5.0 (24 samples × 5 min):
-incidents-counts/ids, diagnostics-bronfouten, persistence, notificatiegroei,
-container CPU/RAM (dashboard/helper/prometheus) en containerlog-errors.
-Resultaat wordt na afloop in dit document aangevuld.
+Observatievenster 18:10 → 20:12 UTC op productie-tag 1.5.0; 24 samples × 5 min
+(`/api/incidents`, `/api/diagnostics`, notificatiehistorie, container-CPU/RAM,
+containerlogs). Volledige ruwe log buiten de repo bewaard.
+
+| Metric | Resultaat |
+|---|---|
+| Nieuwe / fout-positieve incidents in het venster | **0** — uitsluitend de bekende echte condities (cache-disk warm; backlog-info; thermisch incident dat na 18:27 bleef weg) |
+| Observability confidence | `full` in 24/24 samples |
+| Persistence | `dataDirWritable=true` 24/24, laatste succesvolle persist 20:09 UTC |
+| Notificatie-storm | geen — 0 pushes na 18:27; history-groei alleen skipped-preference records van de thermische drempelfladder (op main opgelost met hysterese) |
+| Source-errors | alleen `beacon-update: unavailable` (demand-driven check nog niet getriggerd — geen incident, terecht) |
+| Performance | dashboard-CPU gemiddeld <3% (piek 17.8% eenmalig), helper ~0%, prometheus ~0.3%; geen request-rate-explosie (geen nieuwe pollers — getest + CPU-profiel) |
+| Containerlog-errors | 0 in alle 24 samples |
+
+**Vondst gedurende het venster**: 1× eenmalige `persistence: degraded (ENOENT
+unlink probe)` in diagnostics — een race tussen twee gelijktijdige
+probe-schrijfacties op één probe-bestandspad. Géén incident, géén invloed op
+health; gefixt op main (13a0cc3, uniek probe-pad + lost-race-tolerantie).
+
+**Doelstelling "0 bekende false positives" in het observatievenster: gehaald.**
 
 ## Bekende risico's (bij oplevering)
 
