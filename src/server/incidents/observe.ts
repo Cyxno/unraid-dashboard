@@ -180,11 +180,15 @@ export async function buildObservation(payload: OverviewPayload): Promise<Incide
     ageMs: section.ageMs,
     reason: section.reason ?? null,
   }));
-  const usable = entries.filter((entry) => entry.status === "live" || entry.status === "stale");
+  const usable = entries.filter((entry) => entry.status === "live" || entry.status === "stale" || entry.status === "demo");
+  const demoActive = entries.every((entry) => entry.status === "demo");
   noteSourceAttempt("unraid-api", {
     ok: usable.length > 0,
     at: now,
-    detail: `${usable.length}/${entries.length} sections usable`,
+    // Demo mode is a deliberate showcase (synthetic payloads), never an
+    // outage of the source itself — recording it as "unavailable" made
+    // demo installs show a false critical source incident.
+    detail: demoActive ? "demo mode (synthetic data)" : `${usable.length}/${entries.length} sections usable`,
     safeError: usable.length === 0 ? (entries[0]?.reason ?? "unraid api unavailable") : null,
   });
 
