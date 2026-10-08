@@ -398,6 +398,27 @@ describe("v1.5.0 incidents: lifecycle and rules (Fase 5/13/14/17)", () => {
     assert.doesNotMatch(serialized, /caused by/i);
   });
 
+  test("thermal hysteresis: hovering on the threshold is a HOLD, not a flap", () => {
+    const state = freshState();
+    cycle(highTemp(), state); // 84°C 5m → opens
+    // Value dips just below the warning threshold — the incident must be
+    // HELD (same id, still active) instead of clearing and flapping.
+    const dipping = highTemp();
+    dipping.thermal = { packageC: 79, package5mAvgC: 79.2, peak1hC: 91, hottestName: "cpu" };
+    cycle(dipping, state);
+    const thermal = activeOf(state).find((incident) => incident.id === "host:thermal:package");
+    assert.ok(thermal, "thermal incident must stay open inside the hold band");
+    assert.equal(thermal.flapping, false);
+    assert.equal(thermal.kind, "thermal");
+    assert.match(thermal.title, /cooling/);
+    // Fully below the hold band (warning − 5°C): it clears normally.
+    const cooled = highTemp();
+    cooled.thermal = { packageC: 70, package5mAvgC: 71, peak1hC: 91, hottestName: "cpu" };
+    const done = cycle(cooled, state);
+    assert.equal(done.active.find((incident) => incident.id === "host:thermal:package"), undefined);
+    assert.equal(state.incidents["host:thermal:package"]?.status, "recovered");
+  });
+
   test("19. VM workload is never attributed to containers", () => {
     const state = freshState();
     const output = cycle(highTemp(), state);

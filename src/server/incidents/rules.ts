@@ -71,6 +71,8 @@ export interface RuleOutput {
 interface Trackers {
   /** container name → restart event timestamps (bounded to window). */
   restarts: Record<string, number[]>;
+  /** Active incidents — needed for threshold HYSTERESIS (thermal). */
+  incidents: Record<string, import("@/lib/api-types").Incident>;
 }
 
 function sourceStatus(observation: IncidentObservation, source: SourceId): string {
@@ -747,12 +749,49 @@ function resourceRules(observation: IncidentObservation): RuleOutput {
  * temp + threshold + correlated workloads with correlation language.
  * -------------------------------------------------------------------------- */
 
-function thermalRules(observation: IncidentObservation): RuleOutput {
+function thermalRules(observation: IncidentObservation, trackers: Trackers): RuleOutput {
   const candidates: RuleCandidate[] = [];
   const undecidable: RuleOutput["undecidable"] = [];
   const at = iso(observation.now);
 
   const package5m = observation.thermal?.package5mAvgC ?? null;
+  /* Threshold hysteresis (same contract as the v0.6 episode logic): the
+     incident OPENS at the warning threshold but only CLEARS below
+     (warning − 5 °C). A 5m average hovering ON the threshold (81 → 79.6 →
+     81, seen in production) is not a flap — without the hold band it
+     would toggle the condition and trip flap-detection. */
+  const THERMAL_HOLD_C = CPU_TEMP_WARNING_C - 5;
+  const thermalOpen = trackers.incidents["host:thermal:package"]?.status === "active";
+  const atHoldBand = package5m != null && package5m >= THERMAL_HOLD_C && package5m < CPU_TEMP_WARNING_C;
+  if (thermalOpen && atHoldBand) {
+    candidates.push({
+      id: "host:thermal:package",
+      entity: "host",
+      kind: "thermal",
+      title: `CPU package averaging ${Math.round(package5m)}°C (cooling, still held)`,
+      source: "prometheus",
+      evidence: [
+        buildEvidence({
+          entity: "host",
+          signal: "thermal.package5mAvgC",
+          source: "prometheus",
+          observedAt: at,
+          expectedIntervalMs: 30_000,
+          value: `${Math.round(package5m)}°C averaged over 5 minutes — below the ${CPU_TEMP_WARNING_C}°C warning threshold, held until below ${THERMAL_HOLD_C}°C (hysteresis)`,
+          rule: "thermal.package5m.hold",
+          evidenceType: "derived",
+          now: observation.now,
+        }),
+      ],
+      impact: ["sustained package temperature above the warning threshold"],
+      actionable: true,
+      safeCheck: "Check case airflow and recent load; Beacon correlates but never claims causation.",
+      debounceMs: 0,
+      requiresUsable: ["prometheus"],
+      impactWhenSuppressed: ["thermal attribution unavailable (Prometheus down)"],
+      severityOverride: "warning",
+    });
+  }
   if (package5m != null && package5m >= CPU_TEMP_WARNING_C) {
     const atCriticalBand = package5m >= CPU_TEMP_CRITICAL_C;
     const evidence: Evidence[] = [
@@ -889,7 +928,7 @@ export function evaluateRules(observation: IncidentObservation, trackers: Tracke
     () => dockerRules(observation, trackers),
     () => storageRules(observation),
     () => resourceRules(observation),
-    () => thermalRules(observation),
+    () => thermalRules(observation, trackers),
     () => backlogRule(observation),
   ];
   for (const ruleSet of ruleSets) {

@@ -143,7 +143,7 @@ export function applyIncidentCycle(input: CycleInput): CycleOutput {
 
   updateRestartTrackers(observation, state);
 
-  const { candidates, undecidable } = evaluateRules(observation, { restarts: state.restarts });
+  const { candidates, undecidable } = evaluateRules(observation, { restarts: state.restarts, incidents: state.incidents });
   const candidateById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
 
   /* Suppression pass (Fase 6): withhold blocked candidates, collect the
