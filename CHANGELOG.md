@@ -3,6 +3,30 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.6.0
+
+### Added
+
+- **Operational Intelligence engine** (`/insights`): deterministic, no-ML insights over Beacon's EXISTING local history — what degrades slowly, what grows structurally, what repeats. Insights are NOT incidents: separate model, separate page, never pushed by default
+- **Capacity Forecast**: array/cache/disk usage trending (24h/7d; 30d gated by Prometheus retention) with threshold projections at 80/90/95%. Safety rails: medium confidence yields a RANGE ("would reach 90% in ~2–4 weeks"), low confidence yields direction only, and insufficient/noisy data yields "trend unavailable" — never an alarmist exact date
+- **Memory creep detection**: sustained, significant 24h+ growth per container ("Memory usage has increased consistently over 24h"), spike-proof by design
+- **CPU baseline drift**: current rolling average vs the 7d baseline per top container, suppressed when overall host workload explains the rise
+- **Thermal baseline**: idle/p50/p95/hottest-period plus daily-max trend and drift vs the like-for-like prior week
+- **Incident recurrence**: occurrences 24h/7d, total/mean/longest duration per fingerprint — incident retention raised to 30d/500 (bounded) so 7-day recurrence is real
+- **Restart recurrence**: Prometheus start_time-change analysis with cluster detection; planned restarts (update-machine runs, pipeline-owned projects) are correlated, never crash patterns
+- **Update impact**: pre/post 24h windows per update run, correlation-only wording ("After update … no causality claimed")
+- **Source performance**: p50/p95 latency per source from a bounded in-memory latency ring
+- **Canonical insight model**: stable fingerprints, confidence (high/medium/low/insufficient) derived from sample count/coverage/gaps/fit, evidence with data-quality labels, bounded persisted identity (200 fingerprints) for stable firstObserved
+- **API**: GET /api/insights, GET /api/insights/:id, GET /api/insights/entity (server-side aggregation), GET /api/agent/v1/insights (read-only machine view)
+- **Overview strip**: max 2–3 insights, linking into the Insights page
+
+### Improved
+
+- Prometheus remains the history source — Beacon stores only derived insight identity, never samples (bounded JSON)
+- Query budget: range queries TTL-cached (24h→5m, 7d→15m, 30d→1h), insight cycle single-flight with a 2-minute minimum interval; overview strip polls at most every 2 minutes
+- Data gaps are explicit: buckets carry quality (good/partial/stale/missing), gaps never zero-filled, series break on large gaps, confidence drops with coverage
+- Insights push is OPT-IN only (new "insights" notification category, default OFF), limited to capacity-critical-soon and extreme persistent degradation
+
 ## v1.5.1
 
 ### Fixed

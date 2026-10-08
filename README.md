@@ -27,6 +27,7 @@ and never sends it to the browser.
 
 ## Highlights
 
+- **Operational intelligence (v1.6.0)** — capacity forecasts, memory-creep/CPU-drift/thermal-baseline detection and incident/restart recurrence: deterministic statistics over local history, no ML, confidence-labeled, never alarmist
 - **Incident intelligence (v1.5.0)** — every warning/critical is an incident with evidence, source, freshness, impact, timeline and a safe next check; source outages collapse into one root incident instead of a cascade; the Incident Center replaces scattered problem lists
 - **System overview** — metric cards, resource history, storage summary and an incident-derived health verdict
 - **Docker visibility** — searchable, filterable fleet with live CPU/memory, compose grouping and confirmed start/stop; healthcheck explainability (failing streak, exit code, bounded output) on unhealthy containers; crash-loop detection on proven patterns only
@@ -178,6 +179,7 @@ Browser ──▶ Beacon (Next.js BFF) ──▶ Unraid GraphQL API
 | [docs/UPDATING.md](docs/UPDATING.md) | strict remote updates, digest verification, rollback |
 | [docs/SECURITY.md](docs/SECURITY.md) | threat model, key isolation, write boundaries, vulnerability reporting |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | components, data flows, SSE, boundaries |
+| [docs/RELEASE_NOTES_v1.6.0.md](docs/RELEASE_NOTES_v1.6.0.md) | operational intelligence & capacity forecasting (v1.6.0) |
 | [docs/RELEASE_NOTES_v1.5.0.md](docs/RELEASE_NOTES_v1.5.0.md) | incident intelligence & self-diagnostics (v1.5.0) |
 | [docs/AGENT_API.md](docs/AGENT_API.md) | read-only machine API v1 |
 | [docs/PWA.md](docs/PWA.md) | installation, icons, iOS specifics |

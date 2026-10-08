@@ -78,6 +78,12 @@
 - `src/server/unraid/` — queries, mappers, section providers
 - `src/server/incidents/` — v1.5.0 incident engine: source health,
   freshness, evidence, rules, lifecycle, persistence, support bundle
+- `src/server/insights/` — v1.6.0 operational intelligence: trend layer
+  (bounded aggregates, quality/gap handling), capacity forecasts with
+  confidence gating, deterministic anomaly statistics (memory creep,
+  CPU drift, thermal baseline), recurrence and source-performance
+  analysis. Prometheus stays the history source; Beacon persists only
+  bounded insight identity
 - `src/server/actions/` — guarded action pipeline + audit
 - `src/server/update/` — helper client, release chain, eligibility
 - `src/server/automation/` — scheduler, policy, capability context
