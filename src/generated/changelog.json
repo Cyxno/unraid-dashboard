@@ -1,7 +1,20 @@
 {
   "generatedFrom": "CHANGELOG.md",
-  "latestVersion": "v1.4.2",
+  "latestVersion": "v1.4.3",
   "releases": [
+    {
+      "version": "v1.4.3",
+      "anchor": "v1-4-3",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Fixed",
+          "items": [
+            "**Metrics section dead since v1.3.20 (silent, found by the post-stable audit's own deploy check)**: `METRICS_QUERY` carried a `/* … */` block comment inside the GraphQL document. The Unraid API rejects block comments with `GRAPHQL_PARSE_FAILED` (HTTP 400) — GraphQL documents only allow `#` comments — so the realtime cpu/memory/network section had been silently unavailable for every release since the v1.3.20 polling change. The comment moved to a JS comment outside the document, and a regression test now pins every exported query document block-comment-free"
+          ]
+        }
+      ]
+    },
     {
       "version": "v1.4.2",
       "anchor": "v1-4-2",

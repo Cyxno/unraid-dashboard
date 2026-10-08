@@ -3,6 +3,12 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.4.3
+
+### Fixed
+
+- **Metrics section dead since v1.3.20 (silent, found by the post-stable audit's own deploy check)**: `METRICS_QUERY` carried a `/* … */` block comment inside the GraphQL document. The Unraid API rejects block comments with `GRAPHQL_PARSE_FAILED` (HTTP 400) — GraphQL documents only allow `#` comments — so the realtime cpu/memory/network section had been silently unavailable for every release since the v1.3.20 polling change. The comment moved to a JS comment outside the document, and a regression test now pins every exported query document block-comment-free
+
 ## v1.4.2
 
 ### Fixed

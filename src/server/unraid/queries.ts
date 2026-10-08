@@ -22,6 +22,10 @@ export const IDENTITY_QUERY = /* GraphQL */ `
   }
 `;
 
+// NOTE: temperature/sensors live in the dedicated slow-poll query below
+// (standby-aware, 15 min TTL). Keep query DOCUMENTS free of /* */ comments:
+// the Unraid GraphQL endpoint rejects block comments with a parse error
+// (HTTP 400) — only # line comments are valid inside a document.
 export const METRICS_QUERY = /* GraphQL */ `
   query Metrics {
     metrics {
@@ -42,7 +46,6 @@ export const METRICS_QUERY = /* GraphQL */ `
         bytesSent
         operstate
       }
-    /* sensoren verhuisd naar de aparte traag-pollende query hieronder (standby-aware, 15 min TTL) */
     }
   }
 `;
