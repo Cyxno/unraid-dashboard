@@ -3,6 +3,20 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.5.1
+
+### Fixed
+
+- **Persistence boot false-positive**: "Persistence failing" opened for one cycle after every (re)start because "never observed" (no save yet) counted as failing evidence — only a recorded save error or an unwritable probe opens the incident now
+- **Source-outage cascade shape**: a real Prometheus outage also fails the scrape queries behind it and would open separate cAdvisor/node-exporter incidents; both now collapse under the Prometheus ROOT incident, and dependent rules (CPU/thermal/memory) always emit so the engine's withholding + impact attribution handles source outages uniformly
+- **Thermal threshold hysteresis**: the package 5m average oscillating across 80 °C (81 → 79.6 → 81) tripped flap-detection; the incident now OPENS at the warning threshold but only CLEARS below warning − 5 °C (same hold-band contract as the v0.6 episode logic)
+- **Demo mode false source incident**: a purely synthetic demo showcase recorded the Unraid API as unavailable and opened a false critical source incident; demo sections now count as usable with an explicit "demo mode" detail
+- **Persistence probe race**: concurrent probes (engine cycle + diagnostics request) shared one probe-file path and one unlink lost the race, briefly reading "persistence degraded" in diagnostics; probe paths are now unique per call and a lost-race unlink no longer downgrades the verdict
+
+Pure stabilization patch: no features, no redesign, no architecture changes —
+exactly the five post-v1.5.0 production findings plus their regression tests
+(967/967 green) and documentation.
+
 ## v1.5.0
 
 ### Added

@@ -83,7 +83,7 @@ let inventoryStatus = {
 let inventoryRefreshPromise = null; // single-flight coalescing
 function invalidateInventory() { inventoryCache = null; inventoryRefreshPromise = null; }
 
-const HELPER_VERSION = "1.5.0";
+const HELPER_VERSION = "1.5.1";
 
 /**
  * v1.5.0 (Fase 9): bounded healthcheck explainability from a docker
