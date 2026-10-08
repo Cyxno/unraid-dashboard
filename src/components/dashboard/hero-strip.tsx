@@ -17,7 +17,6 @@ export interface HeroStripProps {
   osVersion: string | null;
   uptimeSeconds: number | null;
   healthLevel: string | null;
-  healthReasons: string[];
   containersRunning: number | null;
   containersTotal: number | null;
 }
@@ -40,7 +39,6 @@ export function HeroStrip({
   osVersion,
   uptimeSeconds,
   healthLevel,
-  healthReasons,
   containersRunning,
   containersTotal,
 }: HeroStripProps) {
@@ -69,7 +67,8 @@ export function HeroStrip({
         </h2>
         <p className="mt-0.5 truncate text-sm text-muted-foreground">
           {osVersion ? `Unraid OS v${osVersion}` : "Unraid OS"}
-          {healthReasons.length > 0 ? ` · ${healthReasons.slice(0, 2).join(" · ")}` : ""}
+          {/* v1.5.0: reasons live in the health banner + Incident Center —
+              the server card shows the verdict only (no triple-duplication). */}
         </p>
       </div>
       <dl className="flex shrink-0 gap-6">

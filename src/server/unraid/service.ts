@@ -48,7 +48,6 @@ import {
 } from "./mappers";
 import { mockOverview } from "./mock";
 import { SectionProvider } from "./section";
-import { deriveHealth } from "@/server/health";
 import { getMetricsHistory } from "@/server/history";
 import {
   getOverviewExtras,
@@ -392,23 +391,9 @@ export async function getOverview(
   }
 
   // Prefer the Unraid-side memory % (authoritative); Prometheus load/thermal enrich only.
-  const health = deriveHealth({
-    storage,
-    docker,
-    notifications,
-    memoryPercent: metrics.data?.memoryPercent ?? null,
-    temperatureCriticalCount: temperatureSection.data?.criticalCount ?? null,
-    cpuPackageC: extras?.thermal?.packageC ?? null,
-    cpuPackage5mAvgC: extras?.thermal?.package5mAvgC ?? null,
-    sustainedCpuPercent: extras?.sustainedCpuPercent ?? null,
-    loadLevel: extras?.load?.level ?? null,
-    prometheusStatus: extras
-      ? extras.prometheus.configured
-        ? extras.prometheus.status
-        : null
-      : null,
-  });
-
+  // v1.5.0: health is DERIVED FROM INCIDENTS — the engine evaluates rules
+  // over this payload (cached data only) and produces the verdict, so the
+  // Overview, Incident Center and notifications share ONE source of truth.
   const payload: OverviewPayload = {
     identity: withDemo(identity, demo.identity),
     cpu: withDemo(cpuSection, demo.cpu),
@@ -424,11 +409,15 @@ export async function getOverview(
     network: withDemo(networkSection, demo.network),
     docker: withDemo(docker, demo.docker),
     notifications: withDemo(notifications, demo.notifications),
-    health,
+    health: { level: null, reasons: [] },
     history: historyBlock,
     extras: extras ?? null,
     generatedAt: new Date().toISOString(),
   };
+
+  const { runIncidentCycle } = await import("@/server/incidents/cycle");
+  const incidentSnapshot = await runIncidentCycle(payload);
+  payload.health = incidentSnapshot.health;
   return payload;
 }
 

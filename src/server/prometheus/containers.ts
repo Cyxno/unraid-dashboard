@@ -17,6 +17,7 @@ import type {
   HistoryPoint,
   TopConsumers,
 } from "@/lib/api-types";
+import { noteSourceAttempt } from "@/server/incidents/source-health";
 
 /**
  * Per-container runtime metrics from cAdvisor (via Prometheus), selected
@@ -78,6 +79,15 @@ export async function getContainerMetrics(
       ...usedMap.keys(),
       ...limitMap.keys(),
     ]);
+
+    /* v1.5.0 source health: cAdvisor is the canonical container-metrics
+       source. Prometheus answering with ZERO fresh container series means
+       the cAdvisor scrape target is down/stale — never silently healthy. */
+    noteSourceAttempt("cadvisor", {
+      ok: names.size > 0,
+      at: Date.now(),
+      safeError: names.size > 0 ? null : "no fresh container metric series",
+    });
 
     const result = new Map<string, ContainerMetrics>();
     for (const name of names) {

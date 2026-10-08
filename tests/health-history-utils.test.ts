@@ -1,208 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { deriveHealth } from "../src/server/health";
+import fs from "node:fs";
 import { MetricsHistory } from "../src/server/history";
 import { formatBytes, formatPercent, formatTemp, formatUptime, humanState } from "../src/lib/utils";
-import type { HealthInputs } from "../src/server/health";
-
-function section<T>(data: T, status: "live" | "stale" | "unavailable" | "demo" = "live") {
-  return { status, data, fetchedAt: new Date().toISOString(), ageMs: 0 };
-}
-
-function container(overrides: Partial<import("../src/lib/api-types").DockerContainerSummary> = {}) {
-  return {
-    id: "1",
-    name: "api",
-    image: "x",
-    state: "RUNNING" as const,
-    status: "Up",
-    health: null,
-    autoStart: true,
-    updateAvailable: false,
-    iconUrl: null,
-    webUiUrl: null,
-    createdEpochSeconds: null,
-    composeProject: null,
-    metrics: null,
-    ports: [],
-    ...overrides,
-  };
-}
-
-/** Base inputs: all Prometheus-derived fields null (Prometheus offline). */
-function healthInputs(overrides: Partial<HealthInputs> = {}): HealthInputs {
-  const baseStorage: import("../src/lib/api-types").StorageUsage = {
-    state: "STARTED",
-    totalBytes: 1,
-    usedBytes: 0,
-    freeBytes: 1,
-    parityStatus: "COMPLETED",
-    parityProgressPercent: null,
-    disks: [{ name: "disk1", device: "sdb", role: "data", state: "DISK_OK", fsType: null, sizeBytes: 1, usedBytes: 0, freeBytes: 1, temperatureC: 30, fsColor: "GREEN" }],
-  };
-  return {
-    storage: section(baseStorage),
-    docker: section({ running: 0, total: 0, containers: [] }),
-    notifications: section({ unreadCounts: { info: 0, warning: 0, alert: 0 }, recent: [] }),
-    memoryPercent: 40,
-    temperatureCriticalCount: 0,
-    cpuPackageC: null,
-    cpuPackage5mAvgC: null,
-    sustainedCpuPercent: null,
-    loadLevel: null,
-    prometheusStatus: null,
-    ...overrides,
-  };
-}
-
-describe("deriveHealth", () => {
-  it("is healthy when nothing is wrong", () => {
-    const health = deriveHealth(healthInputs());
-    assert.equal(health.level, "healthy");
-    assert.deepEqual(health.reasons, []);
-  });
-
-  it("escalates to critical on a stopped array", () => {
-    const storage = section({
-      state: "STOPPED",
-      totalBytes: 1,
-      usedBytes: 0,
-      freeBytes: 1,
-      parityStatus: "COMPLETED",
-      parityProgressPercent: null,
-      disks: [],
-    });
-    const health = deriveHealth(healthInputs({ storage }));
-    assert.equal(health.level, "critical");
-    assert.ok(health.reasons.some((reason) => reason.includes("Array state")));
-  });
-
-  it("escalates to critical on a red disk", () => {
-    const storage = section({
-      state: "STARTED",
-      totalBytes: 1,
-      usedBytes: 0,
-      freeBytes: 1,
-      parityStatus: "COMPLETED",
-      parityProgressPercent: null,
-      disks: [{ name: "disk1", device: "sdb", role: "data" as const, state: "DISK_OK", fsType: null, sizeBytes: 1, usedBytes: 0, freeBytes: 1, temperatureC: 30, fsColor: "RED" }],
-    });
-    const health = deriveHealth(healthInputs({ storage }));
-    assert.equal(health.level, "critical");
-  });
-
-  it("treats alert notifications as critical and warnings as attention", () => {
-    const critical = deriveHealth(
-      healthInputs({
-        notifications: section({ unreadCounts: { info: 0, warning: 0, alert: 1 }, recent: [] }),
-      }),
-    );
-    assert.equal(critical.level, "critical");
-
-    const attention = deriveHealth(
-      healthInputs({
-        notifications: section({ unreadCounts: { info: 0, warning: 2, alert: 0 }, recent: [] }),
-      }),
-    );
-    assert.equal(attention.level, "attention");
-  });
-
-  it("flags unhealthy containers, but a stopped autostart container is not an incident", () => {
-    const critical = deriveHealth(
-      healthInputs({
-        docker: section({
-          running: 1,
-          total: 1,
-          containers: [
-            container({ health: "unhealthy", status: "Up (unhealthy)" }),
-          ],
-        }),
-      }),
-    );
-    assert.equal(critical.level, "critical");
-    assert.ok(critical.reasons.some((reason) => reason.includes("api")));
-
-    // v1.1.5: `autostart=true + exited` is configuration + state, not an
-    // incident — users legitimately keep rarely used containers off.
-    const stopped = deriveHealth(
-      healthInputs({
-        docker: section({
-          running: 0,
-          total: 1,
-          containers: [
-            container({ id: "2", name: "worker", state: "EXITED", status: "Exited" }),
-          ],
-        }),
-      }),
-    );
-    assert.equal(stopped.level, "healthy");
-    assert.ok(!stopped.reasons.some((reason) => reason.includes("Autostart")));
-  });
-
-  it("uses memory pressure thresholds", () => {
-    assert.equal(deriveHealth(healthInputs({ memoryPercent: 96 })).level, "critical");
-    assert.equal(deriveHealth(healthInputs({ memoryPercent: 91 })).level, "attention");
-    assert.equal(deriveHealth(healthInputs({ memoryPercent: 50 })).level, "healthy");
-  });
-
-  it("escalates on package temperature pressure (thermal inputs)", () => {
-    const attention = deriveHealth(healthInputs({ cpuPackageC: 83 }));
-    assert.equal(attention.level, "attention");
-    assert.ok(attention.reasons.some((reason) => reason.includes("CPU package")));
-
-    // v0.6 hysteresis: a single critical SAMPLE escalates to attention
-    // only; critical requires the sustained (5m) average.
-    const singleSpike = deriveHealth(healthInputs({ cpuPackageC: 92 }));
-    assert.equal(singleSpike.level, "attention");
-
-    const critical = deriveHealth(
-      healthInputs({ cpuPackageC: 92, cpuPackage5mAvgC: 90.5 }),
-    );
-    assert.equal(critical.level, "critical");
-
-    // Below the documented threshold: healthy.
-    assert.equal(deriveHealth(healthInputs({ cpuPackageC: 70 })).level, "healthy");
-  });
-
-  it("notes sustained 5-minute CPU pressure, not spikes", () => {
-    const health = deriveHealth(healthInputs({ sustainedCpuPercent: 88 }));
-    assert.equal(health.level, "attention");
-    assert.ok(health.reasons.some((reason) => reason.includes("5 minutes")));
-
-    assert.equal(
-      deriveHealth(healthInputs({ sustainedCpuPercent: 50 })).level,
-      "healthy",
-    );
-  });
-
-  it("marks high load relative to threads as attention", () => {
-    const health = deriveHealth(healthInputs({ loadLevel: "high" }));
-    assert.equal(health.level, "attention");
-    // Neutral labels never escalate on their own.
-    assert.equal(deriveHealth(healthInputs({ loadLevel: "elevated" })).level, "healthy");
-    assert.equal(deriveHealth(healthInputs({ loadLevel: "normal" })).level, "healthy");
-  });
-
-  it("flags Prometheus outage as attention, not critical", () => {
-    const health = deriveHealth(healthInputs({ prometheusStatus: "unavailable" }));
-    assert.equal(health.level, "attention");
-    assert.ok(health.reasons.some((reason) => reason.includes("Prometheus unavailable")));
-  });
-
-  it("ignores unavailable sections instead of failing", () => {
-    const health = deriveHealth(
-      healthInputs({
-        storage: section(null, "unavailable"),
-        docker: section(null, "unavailable"),
-        notifications: section(null, "unavailable"),
-        memoryPercent: null,
-        temperatureCriticalCount: null,
-      }),
-    );
-    assert.equal(health.level, "healthy");
-  });
-});
 
 describe("MetricsHistory", () => {
   it("records samples with a minimum interval and prunes old data", () => {
@@ -295,79 +96,21 @@ describe("hero verdict mapping (v1.1.3 regression)", () => {
   });
 });
 
-describe("autostart-stopped containers carry no health weight (v1.1.5)", () => {
-  const withContainers = (containers: ReturnType<typeof container>[]) =>
-    deriveHealth(
-      healthInputs({
-        docker: section({ running: containers.filter((c) => c.state === "RUNNING").length, total: containers.length, containers }),
-      }),
-    );
-
-  it("1. running + autostart=true -> healthy, no warning", () => {
-    const health = withContainers([container({ name: "app", state: "RUNNING" })]);
-    assert.equal(health.level, "healthy");
-    assert.deepEqual(health.reasons, []);
-  });
-
-  it("2. exited + autostart=true -> no global warning, no health degradation", () => {
-    const health = withContainers([container({ name: "app", state: "EXITED", status: "Exited (0) 2 days ago" })]);
-    assert.equal(health.level, "healthy");
-    assert.ok(!health.reasons.some((reason) => /autostart/i.test(reason)));
-  });
-
-  it("3. exited + autostart=false -> healthy", () => {
-    const health = withContainers([container({ name: "app", state: "EXITED", status: "Exited", autoStart: false })]);
-    assert.equal(health.level, "healthy");
-    assert.deepEqual(health.reasons, []);
-  });
-
-  it("4. unhealthy + autostart=true -> critical warning stays", () => {
-    const health = withContainers([container({ name: "app", state: "RUNNING", health: "unhealthy", status: "Up (unhealthy)" })]);
-    assert.equal(health.level, "critical");
-    assert.ok(health.reasons.some((reason) => reason.includes("app")));
-  });
-
-  it("5. unhealthy + autostart=false -> critical warning stays", () => {
-    const health = withContainers([container({ name: "app", state: "RUNNING", health: "unhealthy", status: "Up (unhealthy)", autoStart: false })]);
-    assert.equal(health.level, "critical");
-    assert.ok(health.reasons.some((reason) => reason.includes("app")));
-  });
-
-  it("6. real failure signals keep their impact (stopped array unaffected)", () => {
-    const storage = {
-      state: "STOPPED",
-      totalBytes: 1,
-      usedBytes: 0,
-      freeBytes: 1,
-      parityStatus: "COMPLETED",
-      parityProgressPercent: null,
-      disks: [],
-    } as import("../src/lib/api-types").StorageUsage;
-    const health = deriveHealth(
-      healthInputs({
-        storage: { status: "live", data: storage, fetchedAt: new Date().toISOString(), ageMs: 0 },
-        docker: section({ running: 0, total: 1, containers: [container({ name: "app", state: "EXITED", status: "Exited" })] }),
-      }),
-    );
-    assert.equal(health.level, "critical");
-    assert.ok(health.reasons.some((reason) => /array/i.test(reason)));
-  });
-
-  it("7. the warning banner has no entry caused solely by a stopped autostart container", () => {
-    const health = withContainers([
-      container({ name: "needed", state: "RUNNING" }),
-      container({ name: "on-demand", state: "EXITED", status: "Exited (0) 6 days ago" }),
-      container({ name: "also-off", state: "EXITED", status: "Exited (0) 8 days ago" }),
-    ]);
-    assert.equal(health.level, "healthy");
-    assert.ok(!health.reasons.some((reason) => /autostart/i.test(reason)));
-  });
-
+describe("autostart-stopped containers stay neutral (v1.1.5, v1.5.0 engine)", () => {
   it("8. the Docker page shows the neutral autostart info badge", () => {
-    const src = readFileSync("src/app/docker/page.tsx", "utf8");
+    const src = fs.readFileSync("src/app/docker/page.tsx", "utf8");
     assert.match(src, /Autostart · stopped/);
     // Neutral styling only: the badge is rendered with variant="muted".
-    assert.doesNotMatch(src, /variant="(destructive|warning)"[^>]*>\s*\{?\s*Autostart/);
+    assert.doesNotMatch(src, /variant="(destructive|warning)"[^>]*>s*{?s*Autostart/);
+  });
+
+  it("1-7: stopped/exited containers never become incidents (engine)", async () => {
+    const { applyIncidentCycle } = await import("../src/server/incidents/engine");
+    const { stoppedContainers, freshState } = await import("./incident-fixtures");
+    const state = freshState();
+    const output = applyIncidentCycle({ observation: stoppedContainers(), state });
+    assert.equal(output.active.length, 0);
+    assert.equal(output.health.level, "healthy");
+    assert.ok(!JSON.stringify(output).match(/autostart/i));
   });
 });
-

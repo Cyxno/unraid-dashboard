@@ -65,6 +65,10 @@ import {
   subscriberCount,
 } from "./events/sampler";
 import { getConnectionStatus, sectionLastSuccess } from "./unraid/service";
+import { noteSourceAttempt } from "./incidents/source-health";
+import { getAllSourceHealth } from "./incidents/source-health";
+import { deriveConfidence } from "./incidents/engine";
+import { getPersistenceHealth } from "./incidents/persistence-check";
 import type {
   ContainerHistoryPayload,
   DiagnosticsPayload,
@@ -122,6 +126,27 @@ function noteSuccess(domain: string): void {
   lastSuccessMap().set(domain, Date.now());
 }
 
+/* v1.5.0: map Prometheus query domains to the canonical SOURCE that
+   actually serves them (the scrape target behind the query). cAdvisor
+   serves per-container metrics; node-exporter serves host metrics. */
+const DOMAIN_SOURCE: Record<string, "cadvisor" | "node-exporter"> = {
+  system: "node-exporter",
+  "disk-io": "node-exporter",
+  "storage-history": "node-exporter",
+  "network-history": "node-exporter",
+  "overview-history": "node-exporter",
+  "sustained-cpu": "node-exporter",
+  "thermal-peak": "node-exporter",
+  "thermal-5m": "node-exporter",
+  "top-consumers": "cadvisor",
+};
+
+function domainSource(domain: string): "cadvisor" | "node-exporter" {
+  if (domain.startsWith("container-history:")) return "cadvisor";
+  if (domain.startsWith("history:")) return "node-exporter";
+  return DOMAIN_SOURCE[domain] ?? "node-exporter";
+}
+
 /**
  * Runs a Prometheus fetch with TTL caching, last-known-good retention and
  * normalized degradation. `fn` should return the DTO payload WITHOUT the
@@ -149,6 +174,7 @@ async function withDegrade<T>(
     const data = await withCache(cacheKey, ttlMs, fn);
     noteSuccess(domain);
     lastGoodMap().set(cacheFullKey, { at: Date.now(), value: data });
+    noteSourceAttempt(domainSource(domain), { ok: true, at: Date.now() });
     return {
       meta: { source: "prometheus", status: "live", sampledAt: new Date().toISOString() },
       data,
@@ -160,6 +186,7 @@ async function withDegrade<T>(
         : error instanceof Error
           ? error.message
           : "unknown Prometheus error";
+    noteSourceAttempt(domainSource(domain), { ok: false, at: Date.now(), safeError: reason.slice(0, 160) });
     const lastGood = lastGoodMap().get(cacheFullKey);
     if (lastGood) {
       return {
@@ -689,6 +716,15 @@ export async function getDiagnostics(): Promise<DiagnosticsPayload> {
     },
   };
 
+  /* v1.5.0: canonical source health + self-observability confidence +
+     persistence self-check (Fase 2/24/25). */
+  const sourceHealth = getAllSourceHealth();
+  const persistence = await getPersistenceHealth().catch(() => null);
+  const confidence = deriveConfidence(
+    sourceHealth.map((entry) => ({ source: entry.source, status: entry.status })),
+    isPrometheusConfigured(),
+  );
+
   return {
     version: getBuildInfo(),
     sources: {
@@ -706,6 +742,15 @@ export async function getDiagnostics(): Promise<DiagnosticsPayload> {
         lastSuccessAt: promSuccess ? new Date(promSuccess).toISOString() : null,
       },
     },
+    sourceHealth,
+    confidence,
+    persistence: persistence
+      ? {
+          dataDirWritable: persistence.dataDirWritable,
+          lastSuccessfulPersistAt: persistence.lastPersistAt,
+          incidentsStateBytes: null,
+        }
+      : undefined,
     sections,
     self,
     generatedAt: new Date().toISOString(),

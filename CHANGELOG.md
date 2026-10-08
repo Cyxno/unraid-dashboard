@@ -3,6 +3,35 @@
 All notable Beacon releases, newest first. Groups are optional per release;
 only non-empty groups are shown. No dates — versions are ordered by semver.
 
+## v1.5.0
+
+### Added
+
+- **Incident Intelligence engine**: every warning/critical now carries one canonical incident — entity, title, severity, evidence (direct/derived/correlated), source, freshness, impact, timeline, notification status, duration and a safe next check. The Problems view IS the Incident Center (`/incidents`: ACTIVE + RECENTLY RECOVERED); the Overview banner summarizes ("N critical · M warning incident(s)") with a single top reason and links there instead of repeating every reason three times
+- **Canonical source-health contract** (`healthy | degraded | stale | unavailable`) for all nine signal sources (Unraid API, Prometheus, cAdvisor, node-exporter, helper, docker-inventory, web-push, persistence, beacon-update) with `lastSuccessAt / lastAttemptAt / ageMs / expectedIntervalMs / latencyMs / safeError / freshness`. A source whose last successful data is too old is NEVER reported healthy — no fetch attempt needed to expose silent aging
+- **Canonical freshness function**: the one shared `fresh → aging → stale` classifier, banded per source's own interval (a 5s poll goes stale after 60s; 15m SMART/temperature only after 90m). All scattered `Date.now() - ts > …` staleness checks are superseded for incident classification
+- **Cascade suppression + root-cause grouping**: a source outage (e.g. Prometheus unavailable) produces ONE root incident with an explicit impact list ("container runtime metrics unknown", "host history unavailable", …). Dependent rules are withheld — no per-entity "unknown" problems, no 60-container cascades. Recovery of incidents is withheld while the governing source is down (no false recoveries during outages)
+- **Docker healthcheck explainability**: the helper inventory now carries bounded, sanitized healthcheck detail (failing streak, last exit code, ≤300-char output, last check / last success time) plus `restartCount`; unhealthy-container incidents show it as direct evidence
+- **Crash-loop detection on proven patterns only**: Docker's own sustained "Restarting" status or a restart-count delta (≥2 in 10m). A single manual restart never opens one
+- **Flap detection**: repeated healthy↔unhealthy toggles inside 15m hold ONE `FLAPPING` incident open — no notification storm; recovery requires a stable healthy streak (10m)
+- **Incident persistence**: `incidents-state.json` under `/app/data` (atomic, debounced, boot-safe hydration), bounded recovered history (50 episodes / 24h). Incidents and their durations survive container recreates
+- **Incident detail view**: what happened, evidence with freshness badges, timeline, impact, notification status (only proven facts: "push provider accepted" / "delivered in-app"), and a safe non-destructive next check
+- **Settings → Source diagnostics**: per-source status/last success/age/latency/safe error, the "health of health" confidence banner (`full | degraded | blind`) and the persistence self-check (probe-write, expected mount, last successful persist) with a loud warning when `/app/data` looks ephemeral
+- **Support bundle**: Settings → Source diagnostics → "Generate diagnostics" produces a bounded, sanitized JSON (versions, source health, active incidents, persistence, recent safe errors) — redaction-tested against API keys, tokens, Authorization headers, VAPID private material, push keys and raw endpoints
+
+### Improved
+
+- **Severity policy centralized** (`incidents/severity.ts`), audited against v1.4.x: sustained thermal is WARNING (evidence carries temp/threshold/duration and "correlated with" language — never "caused by" unless directly proven); container unhealthy starts WARNING and escalates to CRITICAL only after 15 minutes sustained; the unread Unraid notification backlog is INFO (historical signal — live conditions get their own incidents); array/data-integrity problems stay CRITICAL; update availability stays INFO and never a health problem
+- **Health verdict is derived from incidents** — `deriveHealth` (the v0.x heuristic block) is replaced by a pure function over active incidents; Overview, Incident Center, notifications and the SSE bus share one source of truth
+- Notification sources now derive health-class events exclusively from incidents (stable fingerprints preserved where v1.4.x had them); update availability remains a separate non-health event source
+- Prometheus/cAdvisor/node-exporter/unraid/helper/persistence attempts are recorded into the source-health registry from the existing fetch paths — zero extra probing requests
+
+### Fixed
+
+- **No false healthy**: helper inventory contract violations, structurally degraded inventory, a configured-but-down helper, failing push delivery and persistence save errors are all visible incidents/diagnostics states instead of silent green
+
+- **Migration is fully additive**: no config, notification, subscription, dashboard or history state is reset. Active v1.4.x conditions become incidents on the first cycle and are ingested silently (baseline guard) — an upgrade cannot flood devices; fingerprints that already existed (unhealthy container, storage disk, helper unreachable) keep deduping across the upgrade
+
 ## v1.4.3
 
 ### Fixed

@@ -4,6 +4,7 @@ import { containerStatsBatch } from "@/server/update/history";
 import { computeAutoEligibility, pilotAllowlist } from "@/server/update/eligibility";
 import { checkRemoteDigest, type RegistryCheckResult } from "./registry";
 import { describeInventoryIssues, helperInventorySchema } from "./helper-contract";
+import { noteSourceAttempt } from "@/server/incidents/source-health";
 import {
   buildManagedContainer,
   updateVerdictForFacts,
@@ -92,6 +93,7 @@ export async function fetchInventory(): Promise<{
       console.error(
         `[docker-updates] helper inventory contract violation: ${describeInventoryIssues(parsed.error)}`,
       );
+      noteSourceAttempt("docker-inventory", { ok: false, at: Date.now(), safeError: "inventory contract violation" });
       const cache = globalStore.__dockerInventoryCache;
       return cache ? { containers: cache.containers, storage: cache.storage, at: cache.at, degraded: true } : null;
     }
@@ -101,6 +103,12 @@ export async function fetchInventory(): Promise<{
       containers: validated.containers as unknown as ContainerFacts[],
       storage: validated.storage,
     };
+    noteSourceAttempt("docker-inventory", {
+      ok: !validated.diagnostics?.structurallyDegraded,
+      at: Date.now(),
+      detail: validated.diagnostics?.structurallyDegraded ? "structurally degraded inventory" : "inventory ok",
+      safeError: validated.diagnostics?.structurallyDegraded ? "imageId coverage collapsed" : null,
+    });
     return {
       containers: validated.containers as unknown as ContainerFacts[],
       storage: validated.storage,
@@ -108,9 +116,21 @@ export async function fetchInventory(): Promise<{
       degraded: false,
     };
   } catch {
+    noteSourceAttempt("docker-inventory", { ok: false, at: Date.now(), safeError: "helper inventory unreachable" });
     const cache = globalStore.__dockerInventoryCache;
     return cache ? { containers: cache.containers, storage: cache.storage, at: cache.at, degraded: true } : null;
   }
+}
+
+/** Read-only peek at the dashboard-side inventory LKG cache (v1.5.0).
+ *  Never fetches: the incident engine uses this for additive crash-loop /
+ *  healthcheck evidence without adding a helper poll. Null when the cache
+ *  is cold or older than the LKG ceiling. */
+export function peekInventoryLkg(): { containers: ContainerFacts[]; at: number } | null {
+  const cache = globalStore.__dockerInventoryCache;
+  if (!cache) return null;
+  if (Date.now() - cache.at > INVENTORY_LKG_MAX_AGE_MS) return null;
+  return { containers: cache.containers, at: cache.at };
 }
 
 /** Pure TTL decision for a cached registry check (exported for tests). */

@@ -36,6 +36,7 @@ import { UpdatesSection } from "@/components/settings/updates-section";
 import { NotificationsSection } from "@/components/settings/notifications-section";
 import { SecuritySection as SecurityStatusSection } from "@/components/settings/security-section";
 import { ConfigurationSection } from "@/components/settings/configuration-section";
+import { DiagnosticsSection } from "@/components/settings/diagnostics-section";
 import type {
   ConnectionStatus,
   DiagnosticsPayload,
@@ -647,6 +648,9 @@ export default function SettingsPage() {
             </Card>
 
             <SecuritySection />
+
+            {/* v1.5.0: canonical per-source diagnostics + support bundle. */}
+            <DiagnosticsSection />
 
             {/* Diagnostics lives left (v0.9.12): keeps both columns meaningfully
                 populated to near-equal heights — no half-page empty column. */}

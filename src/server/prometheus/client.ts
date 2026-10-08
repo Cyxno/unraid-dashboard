@@ -1,5 +1,6 @@
 import { getEnv, isPrometheusConfigured } from "@/server/env";
 import { PROMETHEUS_STALE_MS } from "@/server/thresholds";
+import { noteSourceAttempt } from "@/server/incidents/source-health";
 
 /**
  * Server-only Prometheus HTTP client.
@@ -103,6 +104,7 @@ export class PromClient {
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const startedAt = Date.now();
     let response: Response;
     try {
       response = await fetch(url.toString(), {
@@ -110,6 +112,14 @@ export class PromClient {
         cache: "no-store",
       });
     } catch (error) {
+      noteSourceAttempt("prometheus", {
+        ok: false,
+        at: Date.now(),
+        latencyMs: Date.now() - startedAt,
+        safeError: error instanceof Error && error.name === "AbortError"
+          ? "query timeout"
+          : "cannot reach prometheus",
+      });
       if (error instanceof Error && error.name === "AbortError") {
         throw new PrometheusError(
           "timeout",
@@ -125,6 +135,12 @@ export class PromClient {
     }
 
     if (!response.ok) {
+      noteSourceAttempt("prometheus", {
+        ok: false,
+        at: Date.now(),
+        latencyMs: Date.now() - startedAt,
+        safeError: `HTTP ${response.status}`,
+      });
       throw new PrometheusError(
         "bad-response",
         `Prometheus responded with HTTP ${response.status}`,
@@ -135,17 +151,20 @@ export class PromClient {
     try {
       body = (await response.json()) as ApiVectorResponse;
     } catch {
+      noteSourceAttempt("prometheus", { ok: false, at: Date.now(), latencyMs: Date.now() - startedAt, safeError: "malformed JSON" });
       throw new PrometheusError(
         "bad-response",
         "Prometheus returned malformed JSON",
       );
     }
     if (body.status !== "success" || !body.data) {
+      noteSourceAttempt("prometheus", { ok: false, at: Date.now(), latencyMs: Date.now() - startedAt, safeError: "query failed" });
       throw new PrometheusError(
         "bad-response",
         `Prometheus query failed: ${body.error ?? "unknown error"}`,
       );
     }
+    noteSourceAttempt("prometheus", { ok: true, at: Date.now(), latencyMs: Date.now() - startedAt });
     return body.data as unknown as T;
   }
 

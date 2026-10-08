@@ -83,7 +83,40 @@ let inventoryStatus = {
 let inventoryRefreshPromise = null; // single-flight coalescing
 function invalidateInventory() { inventoryCache = null; inventoryRefreshPromise = null; }
 
-const HELPER_VERSION = "1.4.3";
+const HELPER_VERSION = "1.5.0";
+
+/**
+ * v1.5.0 (Fase 9): bounded healthcheck explainability from a docker
+ * inspect State.Health object. Sanitized + hard-capped — the healthcheck
+ * command line and env are NEVER exposed, only the observed outcome:
+ *   status, failingStreak, last exit code, last output (≤300 chars,
+ *   control chars stripped), last check time and last SUCCESS time.
+ */
+function healthDetailFromInspect(health) {
+  if (!health || typeof health !== "object") return null;
+  const log = Array.isArray(health.Log) ? health.Log : [];
+  const last = log.length > 0 ? log[log.length - 1] : null;
+  const sanitizeOutput = (value) => {
+    if (typeof value !== "string") return null;
+    const cleaned = value.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+    return cleaned.length > 300 ? `${cleaned.slice(0, 299)}…` : cleaned || null;
+  };
+  let lastSuccessAt = null;
+  for (let index = log.length - 1; index >= 0; index--) {
+    if (log[index] && log[index].ExitCode === 0 && log[index].End) {
+      lastSuccessAt = log[index].End;
+      break;
+    }
+  }
+  return {
+    status: typeof health.Status === "string" ? health.Status : null,
+    failingStreak: typeof health.FailingStreak === "number" ? health.FailingStreak : null,
+    lastExitCode: last && typeof last.ExitCode === "number" ? last.ExitCode : null,
+    lastOutput: sanitizeOutput(last?.Output),
+    lastCheckedAt: last?.End ?? null,
+    lastSuccessAt,
+  };
+}
 
 /** Strict remote mode (v0.7.14): when UPDATE_REQUIRE_REMOTE=true, a
  * self-update pull failure aborts BEFORE any mutation — the local-image
@@ -1603,6 +1636,11 @@ const server = http.createServer(async (req, res) => {
               state,
               status,
               health: current?.State?.Health?.Status ?? null,
+              // v1.5.0: bounded healthcheck explainability (Fase 9). Output
+              // is sanitized + hard-capped; never env/secrets. Additive —
+              // older dashboard consumers ignore these fields.
+              restartCount: typeof current?.State?.RestartCount === "number" ? current.State.RestartCount : null,
+              healthDetail: healthDetailFromInspect(current?.State?.Health),
               imageId: current?.Image ?? null,
               repoDigests,
               networks: Object.keys(current?.NetworkSettings?.Networks ?? {}).slice(0, 8),
