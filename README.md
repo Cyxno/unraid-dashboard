@@ -27,13 +27,14 @@ and never sends it to the browser.
 
 ## Highlights
 
-- **System overview** — metric cards, resource history, storage summary and derived health with explained reasons
-- **Docker visibility** — searchable, filterable fleet with live CPU/memory, compose grouping and confirmed start/stop
+- **Incident intelligence (v1.5.0)** — every warning/critical is an incident with evidence, source, freshness, impact, timeline and a safe next check; source outages collapse into one root incident instead of a cascade; the Incident Center replaces scattered problem lists
+- **System overview** — metric cards, resource history, storage summary and an incident-derived health verdict
+- **Docker visibility** — searchable, filterable fleet with live CPU/memory, compose grouping and confirmed start/stop; healthcheck explainability (failing streak, exit code, bounded output) on unhealthy containers; crash-loop detection on proven patterns only
 - **Storage monitoring** — array and cache usage, per-disk status and temperatures, parity state
-- **VMs and network** — at-a-glance visibility, read-only by design
-- **System and thermal health** — load/CPU history, package-temperature analysis, hot-episode correlation with top consumers
-- **Notifications, incidents and logs** — one place for what needs attention, backed by an audit trail of every mutation
-- **Push notifications** — opt-in Web Push (browser + installed PWA) for critical conditions, recovery events and updates, with per-device subscriptions, severity/category filters, deduplication and a notification history
+- **VMs and network** — at-a-glance visibility, read-only by design; VM workload is never attributed to containers
+- **System and thermal health** — load/CPU history, package-temperature analysis, thermal episodes with "correlated with" workload evidence
+- **Source diagnostics** — per-source health (status, last success, age, latency, safe error), observability confidence and a persistence self-check; a sanitized support bundle on demand
+- **Notifications** — opt-in Web Push for critical conditions, recovery events and updates, incident-aware and deduped on incident fingerprints, with per-device subscriptions and a notification history
 - **Operations** — verified updates (registry digest match, automatic rollback) and opt-in pilot auto-update
 - **NOC mode** — read-only wallboard for always-on displays
 - **Mobile and PWA** — installable app with mobile-first shells and live SSE updates
@@ -171,6 +172,7 @@ Browser ──▶ Beacon (Next.js BFF) ──▶ Unraid GraphQL API
 | [docs/UPDATING.md](docs/UPDATING.md) | strict remote updates, digest verification, rollback |
 | [docs/SECURITY.md](docs/SECURITY.md) | threat model, key isolation, write boundaries, vulnerability reporting |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | components, data flows, SSE, boundaries |
+| [docs/RELEASE_NOTES_v1.5.0.md](docs/RELEASE_NOTES_v1.5.0.md) | incident intelligence & self-diagnostics (v1.5.0) |
 | [docs/AGENT_API.md](docs/AGENT_API.md) | read-only machine API v1 |
 | [docs/PWA.md](docs/PWA.md) | installation, icons, iOS specifics |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | common failures and fixes |
