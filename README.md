@@ -48,6 +48,11 @@ data is included.
 ### Desktop
 
 <p align="center">
+  <img src="docs/screenshots/incident-center-v150.png" alt="Beacon Incident Center: active incidents with severity, entity, duration, source and freshness" width="720" />
+</p>
+<p align="center"><em>Incident Center (v1.5.0) — ACTIVE + RECENTLY RECOVERED, every incident with evidence, source and freshness (simulated demo outage).</em></p>
+
+<p align="center">
   <img src="docs/screenshots/storage.png" alt="Beacon storage page: array and cache usage, per-disk status and temperatures" width="720" />
 </p>
 <p align="center"><em>Storage — array and cache usage, per-disk status and temperatures, parity state.</em></p>
@@ -55,13 +60,14 @@ data is included.
 ### Mobile
 
 <p align="center">
-  <img src="docs/screenshots/overview-mobile.png" alt="Beacon overview page on a phone: metric cards, health and recent events" width="300" hspace="12" />
-  <img src="docs/screenshots/docker-mobile.png" alt="Beacon Docker page on a phone: container cards with state and actions" width="300" hspace="12" />
+  <img src="docs/screenshots/incident-center-mobile-v150.png" alt="Beacon Incident Center on a phone: active incidents list" width="300" hspace="12" />
+  <img src="docs/screenshots/overview-mobile-v150.png" alt="Beacon overview page on a phone: metric cards, health and recent events" width="300" hspace="12" />
 </p>
-<p align="center"><em>Overview and Docker at phone width (390&nbsp;px viewport).</em></p>
+<p align="center"><em>Incident Center and Overview at phone width (390&nbsp;px viewport).</em></p>
 
-More screenshots — overview, system, automation, settings, changelog and the
-NOC wallboard — are available in [docs/screenshots/](docs/screenshots/).
+More screenshots — overview, incident detail, source diagnostics, system,
+automation, settings, changelog and the NOC wallboard — are available in
+[docs/screenshots/](docs/screenshots/).
 
 ## Install Beacon
 
