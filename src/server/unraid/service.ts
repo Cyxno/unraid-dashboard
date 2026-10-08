@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- raw GraphQL payloads at
    the boundary; all access goes through defensive mappers. */
 import { getUnraidClient, UnraidClient } from "./client";
+import { noteSourceAttempt } from "@/server/incidents/source-health";
 import type { ContainerDetailPayload } from "@/lib/api-types";
 
 import {
@@ -703,10 +704,13 @@ export async function getConnectionStatus(): Promise<ConnectionStatus> {
   const started = Date.now();
   try {
     const payload = (await client.request(CONNECTION_PING_QUERY)) as any;
+    const latencyMs = Date.now() - started;
+    // v1.6.0 source-performance ring (bounded, in-memory).
+    noteSourceAttempt("unraid-api", { ok: payload?.online === true, at: Date.now(), latencyMs });
     return {
       targetHost,
       reachable: payload?.online === true,
-      latencyMs: Date.now() - started,
+      latencyMs,
       roles: Array.isArray(payload?.me?.roles) ? payload.me.roles : [],
       lastSuccessAt: new Date().toISOString(),
     };

@@ -70,6 +70,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   "beacon-updates": "Beacon updates",
   services: "Service & integration warnings",
   resolved: "Resolved / recovery events",
+  insights: "Operational insights (capacity/degradation — opt-in)",
 };
 
 const SEVERITY_LABELS: Record<string, string> = {

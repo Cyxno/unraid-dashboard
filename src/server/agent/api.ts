@@ -16,6 +16,7 @@ export type AgentEndpoint =
   | "system"
   | "operations"
   | "events"
+  | "insights"
   | "capabilities"
   | "stream";
 

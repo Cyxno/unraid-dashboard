@@ -17,7 +17,7 @@
  * mid-action by a version flip.
  */
 
-const VERSION = "v1.5.1";
+const VERSION = "v1.6.0";
 /** Build identity for the SW version handshake (GET_VERSION postMessage).
  *  The server injects the git revision at build time when available. */
 const BEACON_SW_REVISION = "dev";

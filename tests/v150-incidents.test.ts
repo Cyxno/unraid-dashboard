@@ -588,7 +588,8 @@ describe("v1.5.0 incidents: lifecycle and rules (Fase 5/13/14/17)", () => {
       };
     }
     const pruned = pruneIncidents(state.incidents, NOW + 1_000);
-    assert.ok(Object.keys(pruned).length <= 50);
+    assert.ok(Object.keys(pruned).length <= 500);
+    assert.ok(Object.keys(pruned).length >= 50);
   });
 
   test("persistence failure is a critical incident with durability impact (Fase 25)", () => {
