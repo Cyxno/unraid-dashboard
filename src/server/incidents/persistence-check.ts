@@ -38,6 +38,13 @@ const globalCache = globalThis as unknown as {
 const PROBE_CACHE_MS = 60_000;
 const PROBE_FILE = ".beacon-persistence-probe";
 
+/** Unique per probe: concurrent callers (observe cycle + diagnostics
+ *  request) raced on one shared probe file — one unlink hit ENOENT and
+ *  briefly read as "degraded" (production 2h-observation finding). */
+function probePath(dataDir: string): string {
+  return join(dataDir, `${PROBE_FILE}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`);
+}
+
 async function probeOnce(): Promise<PersistenceHealth> {
   const env = getEnvSafe();
   const dataDir = env.AUDIT_DIR;
@@ -54,14 +61,20 @@ async function probeOnce(): Promise<PersistenceHealth> {
   }
 
   if (dataDirExists) {
-    const probePath = join(dataDir, PROBE_FILE);
+    const probe = probePath(dataDir);
     try {
-      await writeFile(probePath, String(Date.now()), { mode: 0o600 });
-      await unlink(probePath);
+      await writeFile(probe, String(Date.now()), { mode: 0o600 });
+      await unlink(probe);
       dataDirWritable = true;
     } catch (error) {
       dataDirWritable = false;
       probeError = error instanceof Error ? error.message : String(error);
+      // A lost race on the probe file (ENOENT at unlink) proves nothing
+      // about writability — the WRITE succeeded, which is the question.
+      if (probeError.includes("ENOENT") && probeError.includes("unlink")) {
+        dataDirWritable = true;
+        probeError = null;
+      }
     }
   } else {
     dataDirWritable = false;
