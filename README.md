@@ -5,7 +5,7 @@ VMs, network and system health in one dark-first, installable web app.
 
 [![Latest release](https://img.shields.io/github/v/release/Cyxno/unraid-dashboard)](https://github.com/Cyxno/unraid-dashboard/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/Cyxno/unraid-dashboard/ci.yml?branch=main)](https://github.com/Cyxno/unraid-dashboard/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/github/license/Cyxno/unraid-dashboard?cacheSeconds=3600)](LICENSE)
+ [![License: AGPL-3.0-only](https://img.shields.io/github/license/Cyxno/unraid-dashboard?cacheSeconds=3600)](LICENSE)
 [![Requires Unraid 7.x](https://img.shields.io/badge/Unraid-7.x-blue)](https://docs.unraid.net)
 
 <p align="center">
@@ -210,4 +210,4 @@ of scope; iOS PWA validation is operator-dependent. No dates are promised.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+AGPL-3.0-only (GNU Affero General Public License v3.0) — see [LICENSE](LICENSE).
