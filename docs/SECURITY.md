@@ -189,6 +189,31 @@ Beacon serves plain HTTP on its listen port. Recommendations:
 - Logs scrub credential-looking assignments before audit entries are
   written.
 
+## Safe remediation (v1.7.0)
+
+Beacon does not autonomously remediate destructive system problems. The
+v1.7.0 remediation layer adds NO new write capability:
+
+- Diagnostics ("safe actions") only re-read Beacon's own caches/state —
+  incident evidence refresh, persistence probe, registry HEAD-checks,
+  push test probe. They mutate no system state.
+- Guarded actions are ONLY the pre-existing confirmed mutations (docker
+  start/stop via the action key, verified container update via the
+  helper), offered solely where the incident runbook makes them the
+  logical step. Before every execution the server re-checks
+  preconditions against LIVE state (incident active, target in live
+  inventory, no conflicting operation, helper healthy, cooldown clear) —
+  stale UI state can never start a mutation.
+- A request accepted (HTTP 200) is recorded as `executing`/`verifying`,
+  never `succeeded`: success requires the effect to be observed in the
+  live inventory (or the helper's own health verification for updates).
+- One active operation per entity (central registry, persisted under
+  `/app/data`), request-id idempotency for double-clicks, bounded
+  timeouts after which the ACTUAL state is re-read instead of assumed.
+- No restart action, no shell execution, no AI/LLM in the remediation
+  path, no privilege expansion. Thermal/capacity/disk/array incidents
+  are guidance-only, always.
+
 ## Known limitations
 
 - With `AUTH_MODE=disabled`, identity is not asserted on the direct-LAN

@@ -27,6 +27,7 @@ and never sends it to the browser.
 
 ## Highlights
 
+- **Safe remediation & runbooks (v1.7.0)** — every incident detail page carries a deterministic, evidence-based runbook: what happened, what is safe to check now (one-click, read-only), what needs confirmation, what must stay manual, how recovery is PROVEN afterwards and when to escalate. Risk badges (SAFE / REQUIRES CONFIRMATION / MANUAL), an operation lifecycle where an HTTP 200 is only "accepted" — success requires the effect to be observed — and a persisted operation registry with conflict and cooldown guards. Beacon does not autonomously remediate destructive system problems
 - **Operational intelligence (v1.6.0)** — capacity forecasts, memory-creep/CPU-drift/thermal-baseline detection and incident/restart recurrence: deterministic statistics over local history, no ML, confidence-labeled, never alarmist
 - **Incident intelligence (v1.5.0)** — every warning/critical is an incident with evidence, source, freshness, impact, timeline and a safe next check; source outages collapse into one root incident instead of a cascade; the Incident Center replaces scattered problem lists
 - **System overview** — metric cards, resource history, storage summary and an incident-derived health verdict
@@ -145,6 +146,7 @@ Beacon is deliberately read-first:
 | --- | --- | --- |
 | Docker Start/Stop | opt-in | confirmed, SSE-verified, audit-logged |
 | Docker Restart | not supported | the verified Unraid API exposes no restart mutation |
+| Remediation actions (v1.7.0) | diagnostics + existing confirmed mutations | runbook-scoped only; preconditions re-checked on live state; no restart, no shell, no autonomous remediation |
 | Container updates | supported | helper-driven, policy-gated, proven rollback |
 | Auto-update | opt-in pilot | allowlist + track-record + proven snapshot required |
 | VM power actions | read-only | VM manipulation intentionally out of scope |

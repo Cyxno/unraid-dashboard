@@ -1,7 +1,36 @@
 {
   "generatedFrom": "CHANGELOG.md",
-  "latestVersion": "v1.6.0",
+  "latestVersion": "v1.7.0",
   "releases": [
+    {
+      "version": "v1.7.0",
+      "anchor": "v1-7-0",
+      "prerelease": false,
+      "groups": [
+        {
+          "name": "Added",
+          "items": [
+            "**Safe Remediation & Operational Runbooks**: incident detail now carries a deterministic, evidence-based runbook per incident kind — explanation, prerequisites, diagnostic checks, how recovery is PROVEN, manual operator steps and the escalation condition. All text is fixed and factual; there is no AI/LLM in the remediation path",
+            "**Canonical remediation action model**: one catalog defines every action Beacon can offer (`safe` / `guarded` / `manual-only`), with explicit preconditions, verification steps, cooldowns and privilege requirements. The UI renders risk badges: SAFE, REQUIRES CONFIRMATION, MANUAL",
+            "**Safe diagnostic actions**: refresh incident evidence (re-runs the incident cycle over already-cached data), re-run the persistence probe, re-check registry update state (HEAD-only) and re-probe Web Push delivery — all read-only over system state, cooldown-bounded and audited",
+            "**Guarded actions from runbooks**: crash-loop incidents can offer the EXISTING confirmed Docker stop as containment; update-failed incidents can retry the EXISTING verified update flow. Nothing new in privilege terms: still `start`/`stop` only, still confirmation-gated, still disabled without the action key",
+            "**Operation registry with explicit lifecycle**: pending → executing → verifying → succeeded / failed / timed-out / rolled-back / cancelled, persisted under `/app/data` (survives reloads and restarts). An HTTP 200 is \"accepted\", never \"succeeded\" — success requires the effect to be OBSERVED in live state",
+            "**Precondition re-check before execution**: guarded actions re-verify incident state, live inventory, conflicts, helper health and cooldowns on the server just before mutating — stale UI state can never start a mutation",
+            "**Central conflict model + idempotency**: one active operation per entity (an update running blocks stop/start), request-id dedupe for double-clicks/retries, and bounded cooldowns reused from the central action policy",
+            "**Incident timeline integration**: action offered / user confirmed / request accepted / observed result / verification / recovery or failure are recorded on the incident timeline; operations are listed on the incident detail page",
+            "**Audit trail extension**: remediation audit entries carry incidentId, operationId and traceId (kind `remediation`)",
+            "**Support bundle**: includes recent safe remediation operation metadata (ids, states, verified outcomes) — never tokens, auth or push details",
+            "**Demo mode contract**: runbooks and action previews render with synthetic data and a clear DEMO banner; all mutations are refused"
+          ]
+        },
+        {
+          "name": "Added",
+          "items": [
+            "**Explicitly NOT added (by design)**: no autonomous destructive remediation; no restart action (Unraid 7.3.2 exposes start/stop only and restart was deliberately never surfaced); no Docker daemon restart, no host reboot, no VM power control, no shell execution API, no broadened privileges; no AI/LLM anywhere in the remediation path; thermal and capacity incidents are guidance-only — Beacon never kills workloads, deletes data or runs the mover"
+          ]
+        }
+      ]
+    },
     {
       "version": "v1.6.0",
       "anchor": "v1-6-0",

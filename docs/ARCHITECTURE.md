@@ -85,6 +85,11 @@
   analysis. Prometheus stays the history source; Beacon persists only
   bounded insight identity
 - `src/server/actions/` — guarded action pipeline + audit
+- `src/server/remediation/` — v1.7.0 safe remediation: canonical action
+  catalog (safe/guarded/manual-only), deterministic runbooks, the
+  persisted operation registry (explicit lifecycle, conflicts, timeouts),
+  live precondition re-checks and post-action verification. NO new
+  mutations: guarded actions wrap the existing confirmed pipelines only
 - `src/server/update/` — helper client, release chain, eligibility
 - `src/server/automation/` — scheduler, policy, capability context
 - `src/server/prometheus/` — metrics clients, thermal intelligence

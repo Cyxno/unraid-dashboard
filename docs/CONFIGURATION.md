@@ -42,8 +42,18 @@ or logs (verified by the test suite).
 | --- | --- | --- | --- | --- |
 | `ENABLE_ACTIONS` | yes for actions | — | Master switch; actions stay disabled without the key | no |
 | `UNRAID_ACTION_API_KEY` | for actions | — | Dedicated key, `DOCKER: UPDATE_ANY` only — never the read key | **secret** |
-| `ACTION_COOLDOWN_MS` | no | `10000` | Per-target cooldown between actions | no |
+| `ACTION_COOLDOWN_MS` | no | `10000` | Per-target cooldown between actions (also applies to runbook remediation actions) | no |
 | `ACTION_RATE_PER_MINUTE` | no | `12` | Global action rate limit | no |
+
+## Safe remediation (v1.7.0)
+
+No new configuration variables. Runbooks and safe diagnostic actions work
+with an authenticated session only. Guarded runbook actions (confirmed
+Docker stop on a crash loop, verified update retry) reuse the exact
+lifecycle-action configuration above — without `ENABLE_ACTIONS` + the
+action key (and the helper token for updates) they are refused. There is
+no flag that enables autonomous remediation: Beacon does not autonomously
+remediate destructive system problems, by design.
 
 ## Agent API
 

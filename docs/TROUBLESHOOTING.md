@@ -76,3 +76,25 @@ history chart, thermal cards show the reason.
 - Metrics carry their own status (`live`/`stale`/`unavailable`) with a reason.
   Stale means Prometheus responded but samples lagged — check Prometheus
   targets/scrape health.
+
+## Runbooks / safe actions unavailable
+
+Runbooks and actions appear on every incident detail page (v1.7.0+).
+
+- No **SAFE** actions work: diagnostics only need an authenticated
+  session — check that you are logged in and that the incident page is
+  not showing the DEMO banner (demo refuses all mutations).
+- **REQUIRES CONFIRMATION** action refused with "Preconditions not met":
+  this is the safety model working. The server re-checks live state just
+  before executing; resolve the listed precondition (e.g. write actions
+  disabled → configure the action key; "container not in the live
+  inventory" → refresh the Docker page; "update in progress" → wait).
+- Action blocked with "Another operation is in progress": one operation
+  per entity at a time. The Operations card shows state and timeline;
+  stuck operations time out on their own bound and re-read actual state.
+- Operation stuck at `verifying` after an update retry: verification
+  follows the helper's own phase machine — check Docker → Updates for
+  the job log. An accepted request alone is never shown as success.
+- "Run now" did nothing visible: diagnostics are cooldown-bounded
+  (default 30–60 s) and rate-limited; the incident timeline records the
+  attempt either way.
