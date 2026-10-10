@@ -402,10 +402,10 @@ export default function IncidentDetailPage({ params }: { params: Promise<{ id: s
                     variant="warning"
                     size="sm"
                     className="mt-2"
-                    disabled={busy || Boolean(data.demoActive) || Boolean(activeOperation)}
+                    disabled={busy || Boolean(activeOperation)}
                     onClick={() => openConfirm(action)}
                   >
-                    Open confirmation
+                    {data.demoActive ? "Preview confirmation" : "Open confirmation"}
                   </Button>
                 </div>
               ))}
@@ -530,6 +530,7 @@ export default function IncidentDetailPage({ params }: { params: Promise<{ id: s
         confirmLabel={pendingAction?.type === "verified-update-retry" ? "Retry verified update" : "Execute"}
         severity="warning"
         busy={busy}
+        confirmDisabled={Boolean(data.demoActive)}
         onConfirm={() => pendingAction && void runAction(pendingAction)}
         onCancel={() => setPendingAction(null)}
       >

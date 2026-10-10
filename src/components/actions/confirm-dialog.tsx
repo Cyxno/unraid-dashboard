@@ -20,6 +20,8 @@ export interface ConfirmDialogProps {
   /** Visual weight: start=light, restart=medium, stop=strong. */
   severity?: "info" | "warning" | "destructive";
   busy?: boolean;
+  /** Disables ONLY the execute button (demo previews). */
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -37,6 +39,7 @@ export function ConfirmDialog({
   confirmLabel,
   severity = "warning",
   busy = false,
+  confirmDisabled = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -118,7 +121,7 @@ export function ConfirmDialog({
             variant={styles.button}
             size="sm"
             onClick={onConfirm}
-            disabled={busy}
+            disabled={busy || confirmDisabled}
           >
             {busy ? "Working…" : confirmLabel}
           </Button>
