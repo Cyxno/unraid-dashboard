@@ -55,6 +55,16 @@ data is included.
 <p align="center"><em>Incident Center (v1.5.0) — ACTIVE + RECENTLY RECOVERED, every incident with evidence, source and freshness (simulated demo outage).</em></p>
 
 <p align="center">
+  <img src="docs/screenshots/incident-runbook-v170.png" alt="Beacon incident detail with deterministic runbook, safe actions and risk badges" width="720" />
+</p>
+<p align="center"><em>Runbook (v1.7.0) — deterministic, evidence-based remediation guidance with SAFE / REQUIRES CONFIRMATION badges and operation tracking.</em></p>
+
+<p align="center">
+  <img src="docs/screenshots/guarded-confirmation-v170.png" alt="Guarded action confirmation dialog showing action, target, expected effect, risk and rollback" width="480" />
+</p>
+<p align="center"><em>Guarded action confirmation (v1.7.0) — action, target, expected effect, risk and rollback availability, always explicit.</em></p>
+
+<p align="center">
   <img src="docs/screenshots/storage.png" alt="Beacon storage page: array and cache usage, per-disk status and temperatures" width="720" />
 </p>
 <p align="center"><em>Storage — array and cache usage, per-disk status and temperatures, parity state.</em></p>

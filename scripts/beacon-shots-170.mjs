@@ -24,7 +24,13 @@ const mobile = await browser.newPage();
 await mobile.setViewportSize({ width: 390, height: 844 });
 await mobile.goto(`${BASE}/incidents/beacon%3Apersistence`, { waitUntil: "domcontentloaded" });
 await mobile.waitForTimeout(6000);
-await mobile.getByText("Runbook", { exact: false }).first().scrollIntoViewIfNeeded();
+const runbookHeading = mobile.getByText("Runbook", { exact: false }).first();
+const box = await runbookHeading.boundingBox();
+if (box) {
+  await mobile.evaluate((y) => window.scrollTo(0, y), Math.max(0, box.y + (await mobile.evaluate(() => window.scrollY)) + 300));
+} else {
+  await mobile.evaluate(() => window.scrollTo(0, document.body.scrollHeight * 0.35));
+}
 await mobile.waitForTimeout(800);
 await mobile.screenshot({ path: `${OUT}/mobile-runbook-v170.png` });
 console.log("saved mobile-runbook-v170.png");
