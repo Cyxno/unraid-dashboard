@@ -35,13 +35,17 @@ function sanitizeError(error: unknown): string | undefined {
 export interface AuditInput {
   actor: string;
   sourceIp: string;
-  kind: "docker" | "vm" | "notification" | "dashboard" | "update" | "recovery";
+  kind: "docker" | "vm" | "notification" | "dashboard" | "update" | "recovery" | "remediation";
   action: string;
   targetName: string;
   targetId: string;
   result: AuditEntry["result"];
   durationMs: number;
   error?: unknown;
+  /** v1.7.0 remediation traceability (safe metadata only). */
+  incidentId?: string;
+  operationId?: string;
+  traceId?: string;
 }
 
 /** Writes one audit entry; never throws into the request path. */
@@ -59,6 +63,9 @@ export async function recordAudit(input: AuditInput): Promise<string> {
     result: input.result,
     durationMs: input.durationMs,
     ...(sanitizeError(input.error) ? { error: sanitizeError(input.error) } : {}),
+    ...(input.incidentId ? { incidentId: input.incidentId.slice(0, 200) } : {}),
+    ...(input.operationId ? { operationId: input.operationId.slice(0, 40) } : {}),
+    ...(input.traceId ? { traceId: input.traceId.slice(0, 60) } : {}),
   };
 
   // Serialize writes through a shared promise to keep the queue honest.

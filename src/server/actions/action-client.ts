@@ -176,6 +176,16 @@ export interface InventoryTarget {
 }
 
 /**
+ * Resolves a container NAME to its live inventory target (v1.7.0
+ * remediation preconditions). Returns null when the container is not in
+ * the current live inventory — callers must refuse to act then.
+ */
+export async function findDockerTarget(name: string): Promise<InventoryTarget | null> {
+  const inventory = await fetchReadInventory("docker");
+  return inventory.find((entry) => entry.name === name) ?? null;
+}
+
+/**
  * Live inventory via the READ path (VIEWER key). Target validation uses
  * the same inventory the UI shows, so users can only act on real,
  * currently-known targets.

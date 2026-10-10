@@ -662,7 +662,7 @@ export interface AuditEntry {
   actor: string;
   /** Client IP as observed by the dashboard. */
   sourceIp: string;
-  kind: "docker" | "vm" | "notification" | "dashboard" | "update" | "recovery";
+  kind: "docker" | "vm" | "notification" | "dashboard" | "update" | "recovery" | "remediation";
   action: string;
   /** Target name (display) and id. */
   targetName: string;
@@ -671,6 +671,10 @@ export interface AuditEntry {
   durationMs: number;
   /** Short error summary, no credential material ever. */
   error?: string;
+  /** v1.7.0 remediation traceability (bounded, safe metadata only). */
+  incidentId?: string;
+  operationId?: string;
+  traceId?: string;
 }
 
 export interface AuditLogPayload {
@@ -1124,4 +1128,128 @@ export interface EntityHistoryPayload {
   insights: Insight[];
   forecast: CapacityForecast | null;
   growth: { perDayPercent: number | null; perWeekPercent: number | null } | null;
+}
+
+/* ==========================================================================
+ * v1.7.0: Safe Remediation & Operational Runbooks
+ *
+ * Beacon helps operators decide what is safe to do now, what needs
+ * confirmation, what must stay manual, what the expected effect is and
+ * how recovery is proven afterwards. There is NO autonomous destructive
+ * remediation, NO shell execution from the browser, NO AI/LLM in the
+ * remediation path: every action below is a fixed, deterministic step
+ * over the existing guarded pipelines.
+ * ========================================================================== */
+
+/** Risk classes: safe = read-only diagnostics; guarded = existing
+ *  confirmed mutation; manual-only = operator must do it themselves. */
+export type RemediationRisk = "safe" | "guarded" | "manual-only";
+
+/** The only remediation step types that exist. The executor is a fixed
+ *  switch over these — nothing free-form can ever run. */
+export type RemediationActionType =
+  | "refresh-incident-evidence"
+  | "re-run-persistence-probe"
+  | "re-check-registry"
+  | "re-probe-push-delivery"
+  | "docker-start"
+  | "docker-stop"
+  | "verified-update-retry";
+
+export interface RemediationAction {
+  /** Stable id, e.g. "diagnostic:refresh-evidence" or "docker:start". */
+  id: string;
+  incidentId: string | null;
+  entity: string;
+  type: RemediationActionType;
+  title: string;
+  description: string;
+  risk: RemediationRisk;
+  requiresConfirmation: boolean;
+  /** Privilege the server side needs: none (own state), actions (Unraid
+   *  action key) or helper (update helper token). */
+  requiresPrivilege: "none" | "actions" | "helper";
+  reversible: boolean;
+  /** Precondition labels — re-checked on the server just before running. */
+  preconditions: string[];
+  /** How success is proven after the action (never just HTTP 200). */
+  verification: string[];
+  /** Bounded cooldown applied per entity+action (ms). */
+  cooldownMs: number;
+}
+
+/** Explicit lifecycle: a green check requires OBSERVED state, never just
+ *  an accepted request. */
+export type OperationState =
+  | "pending"
+  | "executing"
+  | "verifying"
+  | "succeeded"
+  | "failed"
+  | "timed-out"
+  | "rolled-back"
+  | "cancelled";
+
+export interface OperationRecord {
+  id: string;
+  entity: string;
+  operation: RemediationActionType;
+  incidentId: string | null;
+  actor: string;
+  state: OperationState;
+  startedAt: string;
+  updatedAt: string;
+  /** Wall-clock bound; a timeout triggers a state re-read, never a
+   *  conclusion about the system. */
+  timeoutAt: string | null;
+  traceId: string | null;
+  message: string | null;
+  timeline: TimelineEvent[];
+}
+
+export interface RunbookStep {
+  title: string;
+  detail: string;
+}
+
+/** Deterministic runbook for an incident kind. All text is fixed; no
+ *  generated/free-form content is ever shown. */
+export interface Runbook {
+  scope: string;
+  explanation: string;
+  prerequisites: string[];
+  diagnosticChecks: RunbookStep[];
+  /** RemediationAction ids offered for this incident (safe + guarded). */
+  actionIds: string[];
+  verification: RunbookStep[];
+  /** Operator-performed recovery steps (guidance only, no secrets, no
+   *  dangerous one-liners). */
+  manualRecovery: string[];
+  escalation: string;
+}
+
+/** Incident detail payload extension (v1.7.0): runbook + offered actions
+ *  + recent operations for this incident's entity. */
+export interface IncidentDetailPayload {
+  incident: Incident;
+  source: SourceHealth | null;
+  confidence: ObservabilityConfidence;
+  runbook: Runbook | null;
+  actions: RemediationAction[];
+  operations: OperationRecord[];
+  /** Demo substitution active: runbooks are shown, mutations refused. */
+  demoActive?: boolean;
+}
+
+/** Payload for POST /api/remediation/action. */
+export interface RemediationResult {
+  ok: boolean;
+  /** Operation state after the synchronous part of the action. */
+  state: OperationState | "rejected" | "blocked";
+  message: string;
+  operation: OperationRecord | null;
+  /** Diagnostic result detail (safe actions). */
+  detail?: string;
+  duplicate?: boolean;
+  preconditionResults?: Array<{ id: string; ok: boolean; detail: string }>;
 }

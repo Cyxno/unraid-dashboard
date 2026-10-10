@@ -237,7 +237,9 @@ const systemProvider = new SectionProvider<SystemInfo>(
  * an honest degraded state — never as demo. Prometheus, helper and history
  * failures never gate demo: they only feed enrichments.
  */
-function unraidDemoActive(): boolean {
+/** True while NO section has live data this process (demo substitution).
+ *  Exported for the v1.7.0 remediation demo contract. */
+export function unraidDemoActive(): boolean {
   return !(
     identityProvider.hasLive ||
     metricsProvider.hasLive ||

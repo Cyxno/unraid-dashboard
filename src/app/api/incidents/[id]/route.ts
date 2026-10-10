@@ -1,6 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { guardRead } from "@/server/auth/guard";
 import { currentIncidentSnapshot } from "@/server/incidents/cycle";
+import { actionsForIncident, runbookForIncident } from "@/server/remediation/runbooks";
+import { ensureOperationsState, operationsForIncident } from "@/server/remediation/operations";
+import { unraidDemoActive } from "@/server/unraid/service";
+import type { IncidentDetailPayload } from "@/lib/api-types";
 
 export const dynamic = "force-dynamic";
 
@@ -35,8 +39,17 @@ export async function GET(
     );
   }
   const source = snapshot.sources.find((entry) => entry.source === incident.source) ?? null;
-  return NextResponse.json(
-    { incident, source, confidence: snapshot.confidence },
-    { headers: { "cache-control": "no-store" } },
-  );
+  // v1.7.0: deterministic runbook, canonical actions and recent operations
+  // for this incident — pure derived data over the existing incident model.
+  await ensureOperationsState();
+  const payload: IncidentDetailPayload = {
+    incident,
+    source,
+    confidence: snapshot.confidence,
+    runbook: runbookForIncident(incident),
+    actions: actionsForIncident(incident),
+    operations: operationsForIncident(incident.id),
+    demoActive: unraidDemoActive(),
+  };
+  return NextResponse.json(payload, { headers: { "cache-control": "no-store" } });
 }
