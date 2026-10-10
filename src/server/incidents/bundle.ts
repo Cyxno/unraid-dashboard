@@ -5,6 +5,7 @@ import { getPersistenceHealth } from "./persistence-check";
 import { getAllSourceHealth } from "./source-health";
 import { redactValue } from "./redact";
 import { lastIncidentsSaveError } from "./store";
+import { operationsForEntity } from "@/server/remediation/operations";
 
 /**
  * Support bundle (v1.5.0 Fase 28): a bounded, sanitized diagnostics
@@ -59,6 +60,29 @@ export function buildSupportBundle(): SupportBundlePayload {
     recentSafeErrors,
     counts: { sources: sources.length, activeIncidents: active.length },
   };
+
+  /* v1.7.0: recent remediation operations — safe metadata only (no
+     tokens, no auth, no push details; the redactor runs regardless). */
+  try {
+    const entities = new Set<string>();
+    for (const incident of active) entities.add(incident.entity);
+    const collected: NonNullable<SupportBundlePayload["remediationOperations"]> = [];
+    for (const entity of Array.from(entities).slice(0, 10)) {
+      for (const operation of operationsForEntity(entity, 3)) {
+        collected.push({
+          id: operation.id,
+          entity: operation.entity,
+          operation: operation.operation,
+          state: operation.state,
+          startedAt: operation.startedAt,
+          message: operation.message ? operation.message.slice(0, 160) : null,
+        });
+      }
+    }
+    bundle.remediationOperations = collected.slice(0, 15);
+  } catch {
+    bundle.remediationOperations = [];
+  }
 
   return redactValue(bundle);
 }

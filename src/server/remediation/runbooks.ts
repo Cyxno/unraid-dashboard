@@ -350,6 +350,9 @@ function thermalRunbook(incident: Incident): Runbook {
     isDisk ? null : step("Check sensor evidence", "The Unraid temperature sensors panel shows per-sensor warnings/criticals if the owner configured thresholds."),
   ].filter((entry): entry is RunbookStep => entry !== null);
   runbook.actionIds = ["diagnostic:refresh-incident-evidence"];
+  runbook.verification = [
+    step("Temperature returns below threshold", "The 5-minute average drops below the warning threshold (the hysteresis hold clears) — recovery is proven when the incident closes itself."),
+  ];
   runbook.manualRecovery = [
     "Check physical airflow, fans and ambient temperature.",
     "Reduce load or schedule it; adjust fan curves in the BIOS/HBA tooling yourself.",

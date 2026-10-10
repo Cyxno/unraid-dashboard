@@ -116,6 +116,11 @@ async function saveNow(): Promise<void> {
   }
 }
 
+/** Immediate save (tests + critical paths). */
+export function saveOperationsNow(): Promise<void> {
+  return saveNow();
+}
+
 /** Test hook. */
 export function resetOperationsState(): void {
   globalStore.__remediationOperations = undefined;
@@ -207,7 +212,7 @@ export function operationEvent(id: string, event: string, detail?: string | null
  * on by an accidental double call.
  */
 const LEGAL: Record<OperationState, OperationState[]> = {
-  pending: ["executing", "verifying", "cancelled", "failed"],
+  pending: ["executing", "verifying", "failed", "timed-out", "cancelled"],
   executing: ["verifying", "failed", "timed-out", "cancelled"],
   verifying: ["succeeded", "failed", "timed-out", "rolled-back"],
   succeeded: [],

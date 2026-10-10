@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, ArrowDownRight, ArrowUpRight, Gauge, Minus, RefreshCw, Repeat2, Thermometer, Timer } from "lucide-react";
+import { AlertTriangle, ArrowDownRight, ArrowUpRight, Gauge, Hand, Minus, RefreshCw, Repeat2, Thermometer, Timer } from "lucide-react";
 import { usePoll } from "@/hooks/use-poll";
+import { CAPACITY_RUNBOOK } from "@/server/remediation/runbooks";
 import { EmptyPanel, ErrorPanel, LoadingPanel, PageHeader } from "@/components/dashboard/page-primitives";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -162,6 +163,25 @@ export default function InsightsPage() {
                   .slice(0, 6)
                   .map((forecast) => <ForecastCard key={forecast.entity} forecast={forecast} />)
               )}
+              <div className="rounded-lg border border-border/60 bg-card/40 p-3" data-testid="capacity-runbook">
+                <span className="flex items-center gap-1.5 text-sm font-medium">
+                  <Hand className="size-3.5 text-muted-foreground" aria-hidden="true" /> Capacity runbook — guidance only
+                </span>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Forecasts are ranges with explicit confidence, not alarmist dates. Beacon never deletes data and never
+                  runs the mover automatically.
+                </p>
+                <ul className="mt-1.5 space-y-1 text-xs text-muted-foreground">
+                  {CAPACITY_RUNBOOK.diagnosticChecks.map((check) => (
+                    <li key={check.title}>
+                      {check.title} — {check.detail}
+                    </li>
+                  ))}
+                  {CAPACITY_RUNBOOK.manualRecovery.map((entry) => (
+                    <li key={entry}>{entry}</li>
+                  ))}
+                </ul>
+              </div>
             </CardContent>
           </Card>
 

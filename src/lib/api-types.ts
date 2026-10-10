@@ -967,6 +967,9 @@ export interface SupportBundlePayload {
   inventoryDiagnostics: Record<string, unknown> | null;
   recentSafeErrors: string[];
   counts: { sources: number; activeIncidents: number };
+  /** v1.7.0: safe remediation operation metadata (ids, states, verified
+   *  outcomes) — never tokens, env secrets, auth or push details. */
+  remediationOperations?: Array<Pick<OperationRecord, "id" | "entity" | "operation" | "state" | "startedAt"> & { message: string | null }>;
 }
 
 /* ==========================================================================
