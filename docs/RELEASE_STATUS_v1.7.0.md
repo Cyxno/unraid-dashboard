@@ -83,10 +83,20 @@ test-suite en blijft bij live incidenten beschikbaar.
 
 ## 2-uurs stabiliteit (Fase 42)
 
-Monitor draait (`/root/soak/beacon-170-stability.log`, 24 samples × 5
-min): health, incident-tellingen, confidence, dashboard CPU/RAM,
-container-log-errors, duplicate-detectie, helper health. Uitslag wordt
-hieronder aangevuld na afronding.
+Afgerond: 24/24 samples over 2h (20:25–22:21 UTC), log
+`/root/soak/beacon-170-stability.log`. Geconstateerd:
+
+- Health ok op élk sample; confidence `full`; geen incident-churn.
+- Eén echte conditie vanzelf aanwezig (`beacon:notifications:backlog`,
+  correct info-severity) — stabiel, geen flapping, geen push-storm.
+- Dashboard CPU 0.01–17.9% (idle-profiel), RSS 103–126 MiB — geen
+  monotone groei (geen leak-signaal).
+- 0 container-log-errors, 0 duplicate-operation meldingen per 5m-window.
+- Helper 1.7.0 healthy met `inventoryStatus: healthy` op élk sample.
+
+Geen false actions, geen duplicate operations, geen action-lock
+bijzonderheden, geen SSE/frontend fouten, geen incident- of
+notification-regressies gedurende de observatie.
 
 ## Expliciete veiligheidsverklaring
 
